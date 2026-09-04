@@ -3,10 +3,9 @@ name = "language-tools"
 version = "0.1.0"
 description = "Bilingual document -> translation-memory corpus conversion (docx/xlsx/csv -> sdltm/tmx, plus corpus interconversion)"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["openpyxl>=3.1"]
 
 [project.optional-dependencies]
-xlsx = ["openpyxl>=3.1"]
 dev = ["pytest>=8"]
 
 [build-system]
