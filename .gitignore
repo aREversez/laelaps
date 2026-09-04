@@ -9,3 +9,4 @@ dist/
 *.tmx
 *.csv
 !tests/fixtures/expected/*.csv
+!tests/fixtures/csv/*.csv
