@@ -8,6 +8,9 @@ dependencies = ["openpyxl>=3.1"]
 [project.optional-dependencies]
 dev = ["pytest>=8"]
 
+[project.scripts]
+biconvert = "language_tools.cli:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
