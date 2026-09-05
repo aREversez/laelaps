@@ -1,19 +1,21 @@
 [project]
 name = "language-tools"
 version = "0.1.0"
-description = "Bilingual document -> translation-memory corpus conversion (docx/xlsx/csv -> sdltm/tmx, plus corpus interconversion)"
+description = "Language management toolbox: bilingual document <-> translation-memory corpus conversion (docx/xlsx/csv <-> sdltm/tmx) as the first tool, with more planned. Ships both a library/CLI and a native desktop GUI (PySide6)."
 requires-python = ">=3.10"
 dependencies = ["openpyxl>=3.1"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "pytest-qt>=4"]
+gui = ["PySide6>=6.5"]
 
 [project.scripts]
 biconvert = "language_tools.cli:main"
+language-toolbox = "toolbox.main:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["language_tools*"]
+include = ["language_tools*", "toolbox*"]
