@@ -38,7 +38,7 @@ def _length_ratio(units):
 
 def convert(input_path, output_base, src_lang=None, tgt_lang=None,
             repair_path=None, name=None, formats=('sdltm', 'tmx', 'csv'),
-            reader_opts=None, qa=False):
+            reader_opts=None, qa=False, min_confidence=0.0):
     """Read ``input_path``, align (if needed), and write ``output_base.<fmt>``
     for each format in ``formats``. Returns a dict with unit count and
     length ratio.
@@ -60,6 +60,13 @@ def convert(input_path, output_base, src_lang=None, tgt_lang=None,
     issues columns to the CSV output; defaults to False so existing callers
     (including the Phase 1 regression baseline) get the unchanged 3-column
     CSV unless they opt in.
+
+    ``min_confidence`` (implies ``qa=True``) excludes units whose QA
+    confidence falls below the threshold from the sdltm/tmx output -- the
+    CSV always gets the full, unfiltered list regardless, so it still works
+    as a QA report showing what got left out and why. This logic lives here
+    rather than in the CLI so a future GUI gets the same behavior for free
+    (DESIGN.md section 12: CLI and GUI both call this one Pipeline API).
     """
     ext = os.path.splitext(input_path)[1].lower()
 
@@ -81,18 +88,23 @@ def convert(input_path, output_base, src_lang=None, tgt_lang=None,
     else:
         raise ValueError('no reader registered for %r files' % ext)
 
-    if qa:
+    run_qa = qa or min_confidence > 0
+    if run_qa:
         qa_module.run(units, ratio)
+
+    corpus_units = units
+    if min_confidence > 0:
+        corpus_units = [u for u in units if u.meta.get('qa_confidence', 1.0) >= min_confidence]
 
     tm_name = (name or os.path.splitext(os.path.basename(input_path))[0])[:80]
     written = {}
     if 'sdltm' in formats:
-        written['sdltm'] = sdltm_writer.write(output_base + '.sdltm', units, src_lang, tgt_lang, tm_name)
+        written['sdltm'] = sdltm_writer.write(output_base + '.sdltm', corpus_units, src_lang, tgt_lang, tm_name)
     if 'tmx' in formats:
-        tmx_writer.write(output_base + '.tmx', units, src_lang, tgt_lang)
-        written['tmx'] = len(units)
+        tmx_writer.write(output_base + '.tmx', corpus_units, src_lang, tgt_lang)
+        written['tmx'] = len(corpus_units)
     if 'csv' in formats:
-        csv_writer.write(output_base + '.csv', units, include_qa=qa)
+        csv_writer.write(output_base + '.csv', units, include_qa=run_qa)
         written['csv'] = len(units)
 
-    return {'units': len(units), 'length_ratio': ratio, 'written': written}
+    return {'units': len(units), 'exported': len(corpus_units), 'length_ratio': ratio, 'written': written}
