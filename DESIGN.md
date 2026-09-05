@@ -223,13 +223,86 @@ convert("input.docx", "output.tmx", src_lang="en-US", tgt_lang="zh-CN")
 - **Phase 2（优先级最高）** — 新增双语源格式：docx 表格版式、xlsx（openpyxl）、csv/tsv，QA 层从这一步开始逐步引入
 - **Phase 3** — 语料库互转：tmx reader、sdltm reader，明确 SDLTM Level 2 兼容目标
 - **Phase 4** — 统一 CLI，包装已经定型的 Python API
-- **Phase 5（可选）** — GUI，调用同一套 API
+- **Phase 5** — 桌面 GUI 工具箱，见第 13 节（已确定要做，架构已定，非"可选待定"）
 
 ---
 
 ## 12. 交付与协作方式
 
 - 走既定流程：opencode 在新仓库的 `dev` 分支实现，GitHub 作为同步媒介，Claude 后续负责审查 + 出 patch。
-- 建议仓库名：`bi-corpus-tools`（或 Eliot 定）。
+- 仓库：`aREversez/language-tools`。GUI 工具箱和核心库同仓库，不拆独立仓库（见第13节）。
 - 每个 Phase 建议拆成独立 PR/commit 序列，不要把 Phase 1 重构和 Phase 2 新功能混在一次提交里（符合"一次提交一个语义改动"的既有约定）。
 - Phase 0 的基线必须先跑通、Phase 1 对照基线验证语义不变之后，再开始 Phase 2，避免在不稳定的地基上加新 reader。
+
+---
+
+## 13. Phase 5 — 桌面 GUI 工具箱
+
+### 定位
+
+这个项目的终局不是"docx转sdltm的库"，而是**语言管理（翻译/本地化等）工具箱**——语料转换只是第一个工具，以后会陆续加术语管理、QA报告查看器等。所以 GUI 从一开始就要按"壳 + 可插拔工具"的结构设计，不能做成绑死单一功能的界面。
+
+**不做 Web UI**（不是 FastAPI+浏览器那套），做**原生桌面应用，打包成 exe**。技术选型 **PySide6**（Qt for Python）：
+- 侧边栏导航 + `QStackedWidget` 天然适合"一个壳、N个工具页"这种会持续长大的结构
+- 以后工具如果需要复杂数据展示（比如 QA 报告要能排序筛选），Qt 的 `QTableView` 比其他轻量方案能力强得多
+- PyInstaller 打包 PySide6 是成熟路径
+
+代价：包体积比 tkinter 系方案大。如果以后发现这是实际痛点，CustomTkinter 是轻量备选，但届时要重新评估迁移成本。
+
+### 架构：壳与工具解耦
+
+```
+toolbox/                    # 与 language_tools/ 同仓库同级，GUI层
+├── main.py                 # 入口: python -m toolbox.main
+├── main_window.py           # MainWindow: 侧边栏 + QStackedWidget，不感知具体工具
+├── registry.py               # ToolSpec 数据结构 + register()/discover()
+├── resources/                 # 图标、样式，未来共享设计规范放这里
+└── tools/
+    ├── corpus_convert/       # 第一个工具，包装 language_tools.api.convert()
+    │   ├── __init__.py       # 注册 ToolSpec
+    │   └── page.py            # QWidget 表单 + QThread worker（避免转换时卡UI）
+    └── <future_tool>/        # 新工具照此结构新增文件夹即可，main_window.py 不用改
+```
+
+`language_tools` 核心库完全不知道 GUI 的存在——`corpus_convert/page.py` 只是把它当依赖 `import`，直接调用 `api.convert()`（不经过 HTTP，纯函数调用），和 CLI 用的是同一个入口。这保证了：
+- 核心库的回归测试（Phase 0-4 那一整套）完全不受 GUI 变动影响
+- 新增工具不需要碰 `main_window.py`，只要新建文件夹 + 调用 `register(ToolSpec(...))`
+
+### 工具契约
+
+```python
+@dataclass
+class ToolSpec:
+    id: str
+    name: str
+    description: str
+    icon: str
+    page_factory: Callable[[], QWidget]   # 返回这个工具的一个新页面实例
+```
+
+`registry.discover()` 在启动时用 `pkgutil.iter_modules` 扫描 `toolbox/tools/` 下所有子包并 import 一遍（触发各自 `__init__.py` 里的 `register()` 调用），`MainWindow` 只读 `registry.TOOLS` 渲染侧边栏，不硬编码任何具体工具。
+
+### 转换耗时与线程
+
+GUI 直接函数调用 `api.convert()`，为避免大文件转换时界面卡死，放进 `QThread`（`ConvertWorker`）跑，通过 Qt 信号（`finished_ok`/`finished_err`）把结果送回主线程更新界面。这个模式后续每个新工具但凡涉及可能耗时的操作都应该沿用，不要在主线程里跑重活。
+
+### 测试
+
+`QT_QPA_PLATFORM=offscreen` 环境变量可以让 Qt 在没有显示器的环境（比如 CI）里跑，配合 `pytest-qt` 的 `qtbot` fixture可以写真实的交互测试（点按钮、等信号、检查界面状态），不用退化成"只测非GUI逻辑"。已验证：包括一次端到端的真实转换（点转换按钮 → 等 QThread 完成 → 检查输出文件确实生成）都能在无头环境里测。
+
+### 打包
+
+`packaging/language-toolbox.spec`（PyInstaller spec，已提交到仓库，可复现构建）：
+```bash
+pip install -e ".[gui]"
+pyinstaller packaging/language-toolbox.spec
+```
+默认 `onedir`（启动更快、方便排查缺失依赖），`ONEFILE=True` 切换成单文件 exe。**PyInstaller 不能跨平台编译**，最终的 Windows exe 必须在 Windows 上跑这条命令产出；本项目在 Linux 沙盒里跑通过同一份 spec（产出 Linux 二进制，成功启动），验证的是打包链路本身没有缺失依赖/隐藏 import 之类的问题，不是最终 Windows 产物本身。
+
+### 后续工具接入的最小步骤
+
+1. `toolbox/tools/<new_tool_id>/` 新建文件夹
+2. `page.py` 写一个 `QWidget` 子类作为这个工具的界面，需要调用某个库就直接 `import`
+3. 涉及耗时操作照抄 `ConvertWorker` 的 `QThread` + 信号模式
+4. `__init__.py` 里 `register(ToolSpec(id=..., name=..., description=..., icon=..., page_factory=YourPage))`
+5. 不需要碰 `main_window.py`、`registry.py`、其他工具的任何代码
