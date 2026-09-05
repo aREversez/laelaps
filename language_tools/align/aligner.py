@@ -16,8 +16,27 @@ from language_tools.align.repair import NULL_REPAIRER
 from language_tools.align.splitters import nolen, pick_splitter
 from language_tools.model import ParagraphPair, TranslationUnit
 
-MATCHES = [(1, 1), (2, 1), (1, 2), (2, 2), (3, 2), (2, 3), (1, 3), (3, 1), (3, 3)]
+MATCHES = [(1, 1), (2, 1), (1, 2), (2, 2), (3, 2), (2, 3), (1, 3), (3, 1), (3, 3), (1, 0), (0, 1)]
 INF = float('inf')
+
+# GAP is deliberately large relative to typical MP-scale costs (~2-6), so
+# in practice (1,0)/(0,1) only fire when NO other move can possibly connect
+# the DP endpoints -- i.e. when one side of the pair has zero sentences
+# after splitting. It will not realistically get chosen over a bad-but-
+# possible merge for a single untranslated sentence buried among several
+# translated ones (confirmed: merging costs ~5, a lone gap costs 60). That
+# would need GAP recalibrated against real cost distributions, which is a
+# separate, more invasive tuning decision -- not bundled into this fix.
+#
+# What this fix DOES address, confirmed by reverting and reproducing:
+# before adding (1,0)/(0,1), a ParagraphPair where one side splits to zero
+# sentences (e.g. an empty string) had no reachable DP path to (n, m) at
+# all, and _align_sentences silently returned [] -- the whole pair's
+# content vanished with no warning. The current shipped readers all filter
+# one-sided-empty rows before calling the aligner (see e.g. _rowreader.py's
+# "missing" warning), so this isn't known to be reachable through the
+# normal pipeline today -- this is a defense-in-depth fix to the aligner's
+# own API contract, not a fix for an actively manifesting pipeline bug.
 
 
 def _align_sentences(e, z, join_src, join_tgt, R, S2, MP, MP0, GAP):
@@ -59,7 +78,7 @@ def _align_sentences(e, z, join_src, join_tgt, R, S2, MP, MP0, GAP):
     res, i, j = [], n, m
     while (i, j) != (0, 0):
         pi, pj = bt[i][j]
-        res.append((join_src.join(e[pi:i]), join_tgt.join(z[pj:j])))
+        res.append((join_src.join(e[pi:i]), join_tgt.join(z[pj:j]), cost(e[pi:i], z[pj:j])))
         i, j = pi, pj
     res.reverse()
     return res
@@ -87,10 +106,11 @@ def align_paragraph_pairs(pairs, src_lang, tgt_lang, repairer=NULL_REPAIRER,
     units = []
     for pair in pairs:
         e, z = split[pair.key]
-        for src_text, tgt_text in _align_sentences(e, z, join_src, join_tgt, R, S2, MP, MP0, GAP):
+        for src_text, tgt_text, align_cost in _align_sentences(e, z, join_src, join_tgt, R, S2, MP, MP0, GAP):
             units.append(TranslationUnit(
                 src_lang=src_lang, tgt_lang=tgt_lang,
                 src_text=src_text, tgt_text=tgt_text,
                 source_file=source_file, source_key=pair.key,
+                meta={'alignment_cost': round(align_cost, 4)},
             ))
     return units, R
