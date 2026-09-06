@@ -17,11 +17,11 @@ ONEFILE = False
 
 REPO_ROOT = Path(SPECPATH).parent  # noqa: F821 -- SPECPATH is injected by PyInstaller
 
-a = Analysis(  # noqa: F821
+a = Analysis(  # noqa: F821 -- SPECPATH is injected by PyInstaller
     [str(REPO_ROOT / 'toolbox' / 'main.py')],
     pathex=[str(REPO_ROOT)],
     binaries=[],
-    datas=[],
+    datas=[(str(REPO_ROOT / 'toolbox' / 'resources'), 'toolbox/resources')],
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
@@ -35,11 +35,13 @@ if ONEFILE:
     exe = EXE(  # noqa: F821
         pyz, a.scripts, a.binaries, a.zipfiles, a.datas, [],
         name='language-toolbox', console=False, onefile=True,
+        icon=str(REPO_ROOT / 'toolbox' / 'resources' / 'icons' / 'app.ico'),
     )
 else:
     exe = EXE(  # noqa: F821
         pyz, a.scripts, [], exclude_binaries=True,
         name='language-toolbox', console=False,
+        icon=str(REPO_ROOT / 'toolbox' / 'resources' / 'icons' / 'app.ico'),
     )
     coll = COLLECT(  # noqa: F821
         exe, a.binaries, a.zipfiles, a.datas,
