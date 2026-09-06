@@ -1,0 +1,159 @@
+/* language-tools desktop toolbox stylesheet.
+ * Design tokens (documented in DESIGN.md section 13 for reuse by future
+ * tools -- keep this file as the single source of truth, don't hardcode
+ * these colors again in a new tool's page.py):
+ *   ink       #1A1D23   primary text
+ *   slate     #6B7280   secondary text / muted labels
+ *   paper     #F6F7F9   app background
+ *   surface   #FFFFFF   panels / input fields
+ *   hairline  #E3E6EB   borders / dividers
+ *   indigo    #2E4374   the one accent -- primary actions, selection, focus
+ *   success   #2F855A / danger #B23B3B -- semantic only, not decorative
+ */
+
+QMainWindow, QWidget {
+    background: #F6F7F9;
+    color: #1A1D23;
+    font-family: "Segoe UI", "PingFang SC", sans-serif;
+    font-size: 13px;
+}
+
+/* ---------------------------------------------------------------- sidebar */
+QListWidget#sidebar {
+    background: #FFFFFF;
+    border: none;
+    border-right: 1px solid #E3E6EB;
+    padding: 6px;
+    outline: 0;
+}
+QListWidget#sidebar::item {
+    padding: 9px 12px;
+    border-radius: 6px;
+    margin: 1px 0;
+    color: #1A1D23;
+}
+QListWidget#sidebar::item:hover {
+    background: #F0F2F6;
+}
+QListWidget#sidebar::item:selected {
+    background: #EAEEF6;
+    color: #2E4374;
+    font-weight: 600;
+    border-left: 3px solid #2E4374;
+    padding-left: 9px;
+}
+
+QLabel#sidebarHeaderTitle {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1A1D23;
+}
+
+/* ------------------------------------------------------------- sections */
+QLabel[role="sectionTitle"] {
+    font-size: 12px;
+    font-weight: 600;
+    color: #6B7280;
+}
+QFrame[role="hairline"] {
+    background: #E3E6EB;
+    max-height: 1px;
+    min-height: 1px;
+    border: none;
+}
+
+/* ---------------------------------------------------------------- inputs */
+QLineEdit, QComboBox {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 20px;
+    selection-background-color: #2E4374;
+}
+QLineEdit:focus, QComboBox:focus {
+    border: 1px solid #2E4374;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 22px;
+}
+QComboBox::down-arrow {
+    image: none;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #6B7280;
+    width: 0;
+    height: 0;
+    margin-right: 8px;
+}
+QCheckBox {
+    spacing: 8px;
+    padding: 2px 0;
+}
+
+/* --------------------------------------------------------------- buttons */
+QPushButton {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 6px;
+    padding: 7px 16px;
+    color: #1A1D23;
+}
+QPushButton:hover {
+    background: #F0F2F6;
+}
+QPushButton:pressed {
+    background: #E3E6EB;
+}
+QPushButton:disabled {
+    color: #A6ACB6;
+    background: #F6F7F9;
+}
+QPushButton#primaryButton {
+    background: #2E4374;
+    border: 1px solid #2E4374;
+    color: #FFFFFF;
+    font-weight: 600;
+    padding: 9px 20px;
+}
+QPushButton#primaryButton:hover {
+    background: #263A63;
+}
+QPushButton#primaryButton:pressed {
+    background: #1F3053;
+}
+QPushButton#primaryButton:disabled {
+    background: #B7C0D6;
+    border: 1px solid #B7C0D6;
+    color: #FFFFFF;
+}
+
+/* -------------------------------------------------------------- log/console */
+QTextEdit#logConsole {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 8px;
+    padding: 10px;
+    color: #1A1D23;
+    font-family: "Cascadia Code", "Consolas", monospace;
+    font-size: 12px;
+}
+
+/* ------------------------------------------------------------- scrollbars */
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #D5D9E0;
+    border-radius: 5px;
+    min-height: 24px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #B7C0D6;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
