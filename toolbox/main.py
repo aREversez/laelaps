@@ -5,6 +5,7 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
+from toolbox import tooltips
 from toolbox.main_window import MainWindow
 from toolbox.paths import RESOURCES_DIR
 
@@ -26,6 +27,7 @@ def main():
     app = QApplication(sys.argv)
     app.setStyleSheet(_load_stylesheet())
     app.setWindowIcon(QIcon(os.path.join(RESOURCES_DIR, 'logo.svg')))
+    tooltips.install(app)
 
     window = MainWindow()
     window.show()

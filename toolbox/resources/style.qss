@@ -147,6 +147,17 @@ QTextEdit#logConsole {
     font-size: 12px;
 }
 
+/* ------------------------------------------------------------- tooltips */
+QToolTip {
+    background: #1A1D23;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
+    font-size: 12px;
+}
+
 /* ------------------------------------------------------------- scrollbars */
 QScrollBar:vertical {
     background: transparent;
