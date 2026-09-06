@@ -4,6 +4,18 @@ native desktop app, the GUI just imports and calls the library).
 
 Conversion runs in a QThread (``ConvertWorker``) so the UI doesn't freeze
 on larger files; results/errors come back via Qt signals.
+
+Copy guidelines for this page (and for any future tool page -- keep this
+consistent): write for someone glancing at the screen, not someone
+reading documentation. Prefer "翻译记忆库" (the term CAT-tool users
+actually use daily) over "语料库格式" (a linguistics/computational term
+that's technically accurate but not what a translator recognizes at a
+glance). Explain what a control DOES in one plain sentence rather than
+naming its underlying parameter/column names (e.g. describe what the QA
+check looks for, don't say "adds a confidence/status/issues column").
+Enum-like choices (docx layout) get human-readable labels in the UI while
+the underlying value passed to the library stays the technical string
+(QComboBox.addItem(display_text, value) + .currentData()).
 """
 import html
 import os
@@ -21,12 +33,27 @@ _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.s
 
 _LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
+_LAYOUT_CHOICES = [
+    ('自动识别（推荐）', 'auto'),
+    ('编号分段（先列全部原文段落，再列全部译文段落，各自从①开始编号）', 'numbered'),
+    ('表格对照（一个两列表格，左边原文右边译文）', 'table'),
+    ('逐段对照（一段原文紧接一段译文，如此交替）', 'alternating'),
+]
 
-def _section(title, content_widget):
-    """A section header (label + hairline rule) above a content widget --
-    used instead of QGroupBox, whose native chrome can't be made to look
-    clean via QSS alone. Shared shape for every section on this page; a
-    future tool page should follow the same pattern for visual consistency.
+
+def _hint(text):
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setStyleSheet('color: #6B7280; font-size: 12px;')
+    return label
+
+
+def _section(title, content_widget, hint=None):
+    """A section header (label + hairline rule) above a content widget,
+    with an optional one-line plain-language hint in between -- used
+    instead of QGroupBox, whose native chrome can't be made to look clean
+    via QSS alone. Shared shape for every section on this page; a future
+    tool page should follow the same pattern for visual consistency.
     """
     wrapper = QWidget()
     layout = QVBoxLayout(wrapper)
@@ -40,6 +67,9 @@ def _section(title, content_widget):
     rule = QFrame()
     rule.setProperty('role', 'hairline')
     layout.addWidget(rule)
+
+    if hint:
+        layout.addWidget(_hint(hint))
 
     layout.addWidget(content_widget)
     return wrapper
@@ -78,7 +108,10 @@ class CorpusConvertPage(QWidget):
         title = QLabel('语料转换')
         title.setStyleSheet('font-size: 20px; font-weight: 600;')
         outer.addWidget(title)
-        subtitle = QLabel('双语文件 (docx/xlsx/csv) ↔ 语料库格式 (sdltm/tmx) 互转')
+        subtitle = QLabel(
+            '把双语对照的 Word/Excel/表格文档，转换成 Trados 等 CAT 工具能用的翻译记忆库；'
+            '也可以在两种记忆库格式之间互相转换。')
+        subtitle.setWordWrap(True)
         subtitle.setStyleSheet('color: #6B7280;')
         outer.addWidget(subtitle)
 
@@ -92,7 +125,7 @@ class CorpusConvertPage(QWidget):
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
         file_layout.addWidget(browse_btn)
-        outer.addWidget(_section('输入文件', file_row))
+        outer.addWidget(_section('第一步：选择文件', file_row))
 
         # --- language ---
         lang_widget = QWidget()
@@ -100,18 +133,26 @@ class CorpusConvertPage(QWidget):
         lang_form.setContentsMargins(0, 0, 0, 0)
         self.src_edit = QLineEdit('en-US')
         self.tgt_edit = QLineEdit('zh-CN')
-        lang_form.addRow('源语言', self.src_edit)
-        lang_form.addRow('目标语言', self.tgt_edit)
-        outer.addWidget(_section('语言（双语源文件必填；语料库文件可留空，自动识别）', lang_widget))
+        lang_form.addRow('原文语言', self.src_edit)
+        lang_form.addRow('译文语言', self.tgt_edit)
+        outer.addWidget(_section(
+            '第二步：确认语言',
+            lang_widget,
+            hint='双语文档（docx/xlsx/csv）必须填写；如果选的是翻译记忆库文件（tmx/sdltm），'
+                 '留空即可，系统会自动从文件里识别。'))
 
         # --- docx layout ---
         layout_widget = QWidget()
         layout_form = QFormLayout(layout_widget)
         layout_form.setContentsMargins(0, 0, 0, 0)
         self.layout_combo = QComboBox()
-        self.layout_combo.addItems(['auto', 'numbered', 'table', 'alternating'])
-        layout_form.addRow('版式', self.layout_combo)
-        outer.addWidget(_section('docx 版式（仅 docx 输入时生效）', layout_widget))
+        for display_text, value in _LAYOUT_CHOICES:
+            self.layout_combo.addItem(display_text, value)
+        layout_form.addRow('文档排版方式', self.layout_combo)
+        outer.addWidget(_section(
+            'Word 文档排版方式（仅 .docx 需要关心）',
+            layout_widget,
+            hint='不确定就选"自动识别"，系统会自己判断；只有识别错了才需要手动指定。'))
 
         # --- output formats ---
         fmt_widget = QWidget()
@@ -124,12 +165,16 @@ class CorpusConvertPage(QWidget):
             cb.setChecked(True)
             fmt_row.addWidget(cb)
         fmt_row.addStretch(1)
-        outer.addWidget(_section('输出格式', fmt_widget))
+        outer.addWidget(_section(
+            '第三步：要生成哪些格式',
+            fmt_widget,
+            hint='sdltm 是 Trados 用的记忆库；tmx 是各家 CAT 工具通用的记忆库；'
+                 'csv 是方便人工打开核对的表格，三个可以都要。'))
 
-        self.chk_qa = QCheckBox('运行 QA 检查（csv 增加 confidence/status/issues 列）')
+        self.chk_qa = QCheckBox('顺便检查一下有没有漏译、数字对不上这类明显问题')
         outer.addWidget(self.chk_qa)
 
-        self.convert_btn = QPushButton('转换')
+        self.convert_btn = QPushButton('开始转换')
         self.convert_btn.setObjectName('primaryButton')
         self.convert_btn.clicked.connect(self._start_convert)
         btn_row = QHBoxLayout()
@@ -140,7 +185,7 @@ class CorpusConvertPage(QWidget):
         self.log = QTextEdit()
         self.log.setObjectName('logConsole')
         self.log.setReadOnly(True)
-        self.log.setPlaceholderText('转换结果和日志会显示在这里')
+        self.log.setPlaceholderText('转换结果会显示在这里')
         outer.addWidget(self.log, 1)
 
     # ------------------------------------------------------------ logging
@@ -158,22 +203,22 @@ class CorpusConvertPage(QWidget):
         """Returns an error string, or None if the form is valid."""
         input_path = self.input_edit.text().strip()
         if not input_path:
-            return '请先选择输入文件'
+            return '请先选择要转换的文件'
         if not os.path.exists(input_path):
-            return '文件不存在: %s' % input_path
+            return '找不到这个文件，请重新选择'
 
         ext = os.path.splitext(input_path)[1].lower()
         if ext in _BILINGUAL_EXTS and (not self.src_edit.text().strip() or not self.tgt_edit.text().strip()):
-            return '该输入格式（%s）需要填写源/目标语言' % ext
+            return '这类文件需要先填写原文语言和译文语言，才能开始转换'
 
         if not any(cb.isChecked() for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv)):
-            return '至少选择一个输出格式'
+            return '请至少勾选一种要生成的格式'
         return None
 
     def _start_convert(self):
         error = self._validate()
         if error:
-            self._log('错误：%s' % error, 'error')
+            self._log(error, 'error')
             return
 
         input_path = self.input_edit.text().strip()
@@ -181,8 +226,8 @@ class CorpusConvertPage(QWidget):
         formats = tuple(f for f, cb in (
             ('sdltm', self.chk_sdltm), ('tmx', self.chk_tmx), ('csv', self.chk_csv)) if cb.isChecked())
         reader_opts = {}
-        if ext == '.docx' and self.layout_combo.currentText() != 'auto':
-            reader_opts['layout'] = self.layout_combo.currentText()
+        if ext == '.docx' and self.layout_combo.currentData() != 'auto':
+            reader_opts['layout'] = self.layout_combo.currentData()
 
         kwargs = dict(
             input_path=input_path,
@@ -203,13 +248,16 @@ class CorpusConvertPage(QWidget):
 
     def _on_done(self, result):
         self.convert_btn.setEnabled(True)
-        self._log(
-            '完成：units=%d exported=%d ratio=%.3f' %
-            (result['units'], result['exported'], result['length_ratio']),
-            'success')
+        units, exported = result['units'], result['exported']
+        if exported == units:
+            self._log('转换完成！共对齐 %d 组双语句子，全部导出。' % units, 'success')
+        else:
+            self._log(
+                '转换完成：共对齐 %d 组，其中 %d 组导出，%d 组因质量问题被过滤（在 csv 里能看到详情）。'
+                % (units, exported, units - exported), 'success')
         for fmt, count in result['written'].items():
-            self._log('  写入 .%s（%d 条）' % (fmt, count))
+            self._log('· 生成了 %s 文件，共 %d 条' % (fmt, count))
 
     def _on_error(self, message):
         self.convert_btn.setEnabled(True)
-        self._log('错误：%s' % message, 'error')
+        self._log('出错了：%s' % message, 'error')
