@@ -10,17 +10,23 @@ consistent): write for someone glancing at the screen, not someone
 reading documentation. Prefer "翻译记忆库" (the term CAT-tool users
 actually use daily) over "语料库格式" (a linguistics/computational term
 that's technically accurate but not what a translator recognizes at a
-glance). Explain what a control DOES in one plain sentence rather than
-naming its underlying parameter/column names (e.g. describe what the QA
-check looks for, don't say "adds a confidence/status/issues column").
-Enum-like choices (docx layout) get human-readable labels in the UI while
-the underlying value passed to the library stays the technical string
+glance).
+
+Explanation belongs in a tooltip on the relevant control, not as
+permanently-visible text -- an earlier version put a full explanatory
+sentence under every section title and it made the page "眼花缭乱" (busy/
+overwhelming) even though every individual sentence was fine on its own.
+Default view stays compact (short labels only); hovering a field/checkbox/
+dropdown item reveals detail via .setToolTip() (or, for QComboBox items,
+Qt.ToolTipRole via setItemData). Enum-like choices (docx layout) get
+short human-readable labels in the visible list while the underlying
+value passed to the library stays the technical string
 (QComboBox.addItem(display_text, value) + .currentData()).
 """
 import html
 import os
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
@@ -33,27 +39,29 @@ _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.s
 
 _LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
+# (short label shown in the dropdown, technical value passed to the library, tooltip detail)
 _LAYOUT_CHOICES = [
-    ('自动识别（推荐）', 'auto'),
-    ('编号分段（先列全部原文段落，再列全部译文段落，各自从①开始编号）', 'numbered'),
-    ('表格对照（一个两列表格，左边原文右边译文）', 'table'),
-    ('逐段对照（一段原文紧接一段译文，如此交替）', 'alternating'),
+    ('自动识别（推荐）', 'auto', '系统自己判断用哪种版式；识别错了再手动指定其他选项。'),
+    ('编号分段', 'numbered', '先列出全部原文段落，再列出全部译文段落，编号各自从 1 开始。'),
+    ('表格对照', 'table', '一个两列表格，左边原文右边译文，一行一句。'),
+    ('逐段对照', 'alternating', '一段原文后面紧跟着一段译文，这样交替排列。'),
 ]
 
+_LANG_TOOLTIP = ('双语文档（docx/xlsx/csv）必须填写；如果选的是翻译记忆库文件（tmx/sdltm），'
+                 '留空即可，系统会自动从文件里识别。')
+_QA_TOOLTIP = '检查有没有漏译、数字对不上这类明显问题，结果会记在 csv 里。'
+_FORMAT_TOOLTIPS = {
+    'sdltm': 'Trados 用的翻译记忆库格式。',
+    'tmx': '各家 CAT 工具通用的翻译记忆库格式。',
+    'csv': '方便人工打开核对的表格。',
+}
 
-def _hint(text):
-    label = QLabel(text)
-    label.setWordWrap(True)
-    label.setStyleSheet('color: #6B7280; font-size: 12px;')
-    return label
 
-
-def _section(title, content_widget, hint=None):
-    """A section header (label + hairline rule) above a content widget,
-    with an optional one-line plain-language hint in between -- used
-    instead of QGroupBox, whose native chrome can't be made to look clean
-    via QSS alone. Shared shape for every section on this page; a future
-    tool page should follow the same pattern for visual consistency.
+def _section(title, content_widget):
+    """A section header (label + hairline rule) above a content widget --
+    used instead of QGroupBox, whose native chrome can't be made to look
+    clean via QSS alone. Shared shape for every section on this page; a
+    future tool page should follow the same pattern for visual consistency.
     """
     wrapper = QWidget()
     layout = QVBoxLayout(wrapper)
@@ -67,9 +75,6 @@ def _section(title, content_widget, hint=None):
     rule = QFrame()
     rule.setProperty('role', 'hairline')
     layout.addWidget(rule)
-
-    if hint:
-        layout.addWidget(_hint(hint))
 
     layout.addWidget(content_widget)
     return wrapper
@@ -133,26 +138,23 @@ class CorpusConvertPage(QWidget):
         lang_form.setContentsMargins(0, 0, 0, 0)
         self.src_edit = QLineEdit('en-US')
         self.tgt_edit = QLineEdit('zh-CN')
+        self.src_edit.setToolTip(_LANG_TOOLTIP)
+        self.tgt_edit.setToolTip(_LANG_TOOLTIP)
         lang_form.addRow('原文语言', self.src_edit)
         lang_form.addRow('译文语言', self.tgt_edit)
-        outer.addWidget(_section(
-            '第二步：确认语言',
-            lang_widget,
-            hint='双语文档（docx/xlsx/csv）必须填写；如果选的是翻译记忆库文件（tmx/sdltm），'
-                 '留空即可，系统会自动从文件里识别。'))
+        outer.addWidget(_section('第二步：确认语言', lang_widget))
 
         # --- docx layout ---
         layout_widget = QWidget()
         layout_form = QFormLayout(layout_widget)
         layout_form.setContentsMargins(0, 0, 0, 0)
         self.layout_combo = QComboBox()
-        for display_text, value in _LAYOUT_CHOICES:
+        self.layout_combo.setToolTip('文档是 Word (.docx) 时才需要关心这个选项。')
+        for i, (display_text, value, item_tip) in enumerate(_LAYOUT_CHOICES):
             self.layout_combo.addItem(display_text, value)
+            self.layout_combo.setItemData(i, item_tip, Qt.ToolTipRole)
         layout_form.addRow('文档排版方式', self.layout_combo)
-        outer.addWidget(_section(
-            'Word 文档排版方式（仅 .docx 需要关心）',
-            layout_widget,
-            hint='不确定就选"自动识别"，系统会自己判断；只有识别错了才需要手动指定。'))
+        outer.addWidget(_section('文档排版方式', layout_widget))
 
         # --- output formats ---
         fmt_widget = QWidget()
@@ -161,17 +163,15 @@ class CorpusConvertPage(QWidget):
         self.chk_sdltm = QCheckBox('sdltm')
         self.chk_tmx = QCheckBox('tmx')
         self.chk_csv = QCheckBox('csv')
-        for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv):
+        for cb, key in ((self.chk_sdltm, 'sdltm'), (self.chk_tmx, 'tmx'), (self.chk_csv, 'csv')):
             cb.setChecked(True)
+            cb.setToolTip(_FORMAT_TOOLTIPS[key])
             fmt_row.addWidget(cb)
         fmt_row.addStretch(1)
-        outer.addWidget(_section(
-            '第三步：要生成哪些格式',
-            fmt_widget,
-            hint='sdltm 是 Trados 用的记忆库；tmx 是各家 CAT 工具通用的记忆库；'
-                 'csv 是方便人工打开核对的表格，三个可以都要。'))
+        outer.addWidget(_section('第三步：要生成哪些格式', fmt_widget))
 
-        self.chk_qa = QCheckBox('顺便检查一下有没有漏译、数字对不上这类明显问题')
+        self.chk_qa = QCheckBox('运行内容检查')
+        self.chk_qa.setToolTip(_QA_TOOLTIP)
         outer.addWidget(self.chk_qa)
 
         self.convert_btn = QPushButton('开始转换')
