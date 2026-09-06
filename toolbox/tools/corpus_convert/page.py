@@ -18,10 +18,17 @@ sentence under every section title and it made the page "眼花缭乱" (busy/
 overwhelming) even though every individual sentence was fine on its own.
 Default view stays compact (short labels only); hovering a field/checkbox/
 dropdown item reveals detail via .setToolTip() (or, for QComboBox items,
-Qt.ToolTipRole via setItemData). Enum-like choices (docx layout) get
-short human-readable labels in the visible list while the underlying
-value passed to the library stays the technical string
-(QComboBox.addItem(display_text, value) + .currentData()).
+Qt.ToolTipRole via setItemData). Keep tooltip text itself short too (one
+short phrase, not a full sentence with a subject/verb/object) -- a
+tooltip is a hint glanced at mid-hover, not something meant to be read in
+full the way a sentence is. Timing/position for all tooltips app-wide is
+tuned once in toolbox/tooltips.py (shorter wake-up delay, offset from the
+cursor so the pointer doesn't cover the tooltip's own text) -- don't
+reach for a per-widget fix for either of those, the app-wide one already
+covers it. Enum-like choices (docx layout) get short human-readable
+labels in the visible list while the underlying value passed to the
+library stays the technical string (QComboBox.addItem(display_text,
+value) + .currentData()).
 """
 import html
 import os
@@ -41,19 +48,18 @@ _LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
 # (short label shown in the dropdown, technical value passed to the library, tooltip detail)
 _LAYOUT_CHOICES = [
-    ('自动识别（推荐）', 'auto', '系统自己判断用哪种版式；识别错了再手动指定其他选项。'),
-    ('编号分段', 'numbered', '先列出全部原文段落，再列出全部译文段落，编号各自从 1 开始。'),
-    ('表格对照', 'table', '一个两列表格，左边原文右边译文，一行一句。'),
-    ('逐段对照', 'alternating', '一段原文后面紧跟着一段译文，这样交替排列。'),
+    ('自动识别（推荐）', 'auto', '自动判断版式，错了再手动选'),
+    ('编号分段', 'numbered', '先列全部原文段落，再列全部译文段落'),
+    ('表格对照', 'table', '两列表格，左边原文右边译文'),
+    ('逐段对照', 'alternating', '原文译文逐段交替排列'),
 ]
 
-_LANG_TOOLTIP = ('双语文档（docx/xlsx/csv）必须填写；如果选的是翻译记忆库文件（tmx/sdltm），'
-                 '留空即可，系统会自动从文件里识别。')
-_QA_TOOLTIP = '检查有没有漏译、数字对不上这类明显问题，结果会记在 csv 里。'
+_LANG_TOOLTIP = '双语文档必填；tmx/sdltm 留空会自动识别'
+_QA_TOOLTIP = '检查漏译、数字不一致等问题'
 _FORMAT_TOOLTIPS = {
-    'sdltm': 'Trados 用的翻译记忆库格式。',
-    'tmx': '各家 CAT 工具通用的翻译记忆库格式。',
-    'csv': '方便人工打开核对的表格。',
+    'sdltm': 'Trados 记忆库格式',
+    'tmx': 'CAT 工具通用记忆库格式',
+    'csv': '可人工核对的表格',
 }
 
 
@@ -113,10 +119,7 @@ class CorpusConvertPage(QWidget):
         title = QLabel('语料转换')
         title.setStyleSheet('font-size: 20px; font-weight: 600;')
         outer.addWidget(title)
-        subtitle = QLabel(
-            '把双语对照的 Word/Excel/表格文档，转换成 Trados 等 CAT 工具能用的翻译记忆库；'
-            '也可以在两种记忆库格式之间互相转换。')
-        subtitle.setWordWrap(True)
+        subtitle = QLabel('双语文档转翻译记忆库，支持 sdltm/tmx 互转')
         subtitle.setStyleSheet('color: #6B7280;')
         outer.addWidget(subtitle)
 
@@ -149,7 +152,7 @@ class CorpusConvertPage(QWidget):
         layout_form = QFormLayout(layout_widget)
         layout_form.setContentsMargins(0, 0, 0, 0)
         self.layout_combo = QComboBox()
-        self.layout_combo.setToolTip('文档是 Word (.docx) 时才需要关心这个选项。')
+        self.layout_combo.setToolTip('仅 .docx 需要关心')
         for i, (display_text, value, item_tip) in enumerate(_LAYOUT_CHOICES):
             self.layout_combo.addItem(display_text, value)
             self.layout_combo.setItemData(i, item_tip, Qt.ToolTipRole)
