@@ -5,18 +5,44 @@ native desktop app, the GUI just imports and calls the library).
 Conversion runs in a QThread (``ConvertWorker``) so the UI doesn't freeze
 on larger files; results/errors come back via Qt signals.
 """
+import html
 import os
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
-    QLineEdit, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from language_tools import api
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.sdltm)'
+
+_LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
+
+
+def _section(title, content_widget):
+    """A section header (label + hairline rule) above a content widget --
+    used instead of QGroupBox, whose native chrome can't be made to look
+    clean via QSS alone. Shared shape for every section on this page; a
+    future tool page should follow the same pattern for visual consistency.
+    """
+    wrapper = QWidget()
+    layout = QVBoxLayout(wrapper)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+
+    label = QLabel(title)
+    label.setProperty('role', 'sectionTitle')
+    layout.addWidget(label)
+
+    rule = QFrame()
+    rule.setProperty('role', 'hairline')
+    layout.addWidget(rule)
+
+    layout.addWidget(content_widget)
+    return wrapper
 
 
 class ConvertWorker(QThread):
@@ -45,52 +71,82 @@ class CorpusConvertPage(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(28, 24, 28, 24)
+        outer.setSpacing(18)
 
-        file_row = QHBoxLayout()
+        title = QLabel('语料转换')
+        title.setStyleSheet('font-size: 20px; font-weight: 600;')
+        outer.addWidget(title)
+        subtitle = QLabel('双语文件 (docx/xlsx/csv) ↔ 语料库格式 (sdltm/tmx) 互转')
+        subtitle.setStyleSheet('color: #6B7280;')
+        outer.addWidget(subtitle)
+
+        # --- file ---
+        file_row = QWidget()
+        file_layout = QHBoxLayout(file_row)
+        file_layout.setContentsMargins(0, 0, 0, 0)
         self.input_edit = QLineEdit()
         self.input_edit.setPlaceholderText('选择要转换的文件…')
         browse_btn = QPushButton('浏览…')
         browse_btn.clicked.connect(self._browse_input)
-        file_row.addWidget(self.input_edit)
-        file_row.addWidget(browse_btn)
-        layout.addLayout(file_row)
+        file_layout.addWidget(self.input_edit, 1)
+        file_layout.addWidget(browse_btn)
+        outer.addWidget(_section('输入文件', file_row))
 
-        lang_group = QGroupBox('语言（双语源文件必填；语料库文件可留空，自动识别）')
-        lang_form = QFormLayout(lang_group)
+        # --- language ---
+        lang_widget = QWidget()
+        lang_form = QFormLayout(lang_widget)
+        lang_form.setContentsMargins(0, 0, 0, 0)
         self.src_edit = QLineEdit('en-US')
         self.tgt_edit = QLineEdit('zh-CN')
         lang_form.addRow('源语言', self.src_edit)
         lang_form.addRow('目标语言', self.tgt_edit)
-        layout.addWidget(lang_group)
+        outer.addWidget(_section('语言（双语源文件必填；语料库文件可留空，自动识别）', lang_widget))
 
-        layout_group = QGroupBox('docx 版式（仅 docx 输入时生效）')
-        layout_form = QFormLayout(layout_group)
+        # --- docx layout ---
+        layout_widget = QWidget()
+        layout_form = QFormLayout(layout_widget)
+        layout_form.setContentsMargins(0, 0, 0, 0)
         self.layout_combo = QComboBox()
         self.layout_combo.addItems(['auto', 'numbered', 'table', 'alternating'])
         layout_form.addRow('版式', self.layout_combo)
-        layout.addWidget(layout_group)
+        outer.addWidget(_section('docx 版式（仅 docx 输入时生效）', layout_widget))
 
-        fmt_group = QGroupBox('输出格式')
-        fmt_row = QHBoxLayout(fmt_group)
+        # --- output formats ---
+        fmt_widget = QWidget()
+        fmt_row = QHBoxLayout(fmt_widget)
+        fmt_row.setContentsMargins(0, 0, 0, 0)
         self.chk_sdltm = QCheckBox('sdltm')
         self.chk_tmx = QCheckBox('tmx')
         self.chk_csv = QCheckBox('csv')
         for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv):
             cb.setChecked(True)
             fmt_row.addWidget(cb)
-        layout.addWidget(fmt_group)
+        fmt_row.addStretch(1)
+        outer.addWidget(_section('输出格式', fmt_widget))
 
         self.chk_qa = QCheckBox('运行 QA 检查（csv 增加 confidence/status/issues 列）')
-        layout.addWidget(self.chk_qa)
+        outer.addWidget(self.chk_qa)
 
         self.convert_btn = QPushButton('转换')
+        self.convert_btn.setObjectName('primaryButton')
         self.convert_btn.clicked.connect(self._start_convert)
-        layout.addWidget(self.convert_btn)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.convert_btn)
+        btn_row.addStretch(1)
+        outer.addLayout(btn_row)
 
-        self.log = QPlainTextEdit()
+        self.log = QTextEdit()
+        self.log.setObjectName('logConsole')
         self.log.setReadOnly(True)
-        layout.addWidget(self.log, 1)
+        self.log.setPlaceholderText('转换结果和日志会显示在这里')
+        outer.addWidget(self.log, 1)
+
+    # ------------------------------------------------------------ logging
+    def _log(self, message, kind='info'):
+        color = _LOG_COLORS.get(kind, _LOG_COLORS['info'])
+        self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))
 
     # ------------------------------------------------------------ actions
     def _browse_input(self):
@@ -117,7 +173,7 @@ class CorpusConvertPage(QWidget):
     def _start_convert(self):
         error = self._validate()
         if error:
-            self.log.appendPlainText('错误：%s' % error)
+            self._log('错误：%s' % error, 'error')
             return
 
         input_path = self.input_edit.text().strip()
@@ -139,7 +195,7 @@ class CorpusConvertPage(QWidget):
         )
 
         self.convert_btn.setEnabled(False)
-        self.log.appendPlainText('正在转换…')
+        self._log('正在转换…')
         self._worker = ConvertWorker(kwargs, parent=self)
         self._worker.finished_ok.connect(self._on_done)
         self._worker.finished_err.connect(self._on_error)
@@ -147,12 +203,13 @@ class CorpusConvertPage(QWidget):
 
     def _on_done(self, result):
         self.convert_btn.setEnabled(True)
-        self.log.appendPlainText(
+        self._log(
             '完成：units=%d exported=%d ratio=%.3f' %
-            (result['units'], result['exported'], result['length_ratio']))
+            (result['units'], result['exported'], result['length_ratio']),
+            'success')
         for fmt, count in result['written'].items():
-            self.log.appendPlainText('  写入 .%s（%d 条）' % (fmt, count))
+            self._log('  写入 .%s（%d 条）' % (fmt, count))
 
     def _on_error(self, message):
         self.convert_btn.setEnabled(True)
-        self.log.appendPlainText('错误：%s' % message)
+        self._log('错误：%s' % message, 'error')
