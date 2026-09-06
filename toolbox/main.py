@@ -12,7 +12,14 @@ from toolbox.paths import RESOURCES_DIR
 def _load_stylesheet():
     path = os.path.join(RESOURCES_DIR, 'style.qss')
     with open(path, encoding='utf-8') as f:
-        return f.read()
+        content = f.read()
+    # QSS url() needs a real filesystem path, not one relative to an
+    # unpredictable CWD -- substitute in the actual resources dir (already
+    # resolved correctly for both source and frozen builds by paths.py).
+    # Forward slashes: Qt's QSS parser accepts them on every platform,
+    # including Windows, so no os.sep juggling needed here.
+    icons_dir = os.path.join(RESOURCES_DIR, 'icons').replace(os.sep, '/')
+    return content.replace('{ICONS_DIR}', icons_dir)
 
 
 def main():
