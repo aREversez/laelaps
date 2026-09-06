@@ -323,6 +323,12 @@ pyinstaller packaging/language-toolbox.spec
 
 **PyInstaller 不能跨平台编译**，最终的 Windows exe 必须在 Windows 上跑这条命令产出；本项目在 Linux 沙盒里跑通过同一份 spec（产出 Linux 二进制，成功启动，资源文件路径解析也验证过没问题），验证的是打包链路本身没有缺失依赖/隐藏 import/资源路径这类问题，不是最终 Windows 产物本身。
 
+### 已知的验证盲区：字体和原生控件渲染
+
+**Linux 沙盒开发环境验证不了 Windows 上的字体/控件渲染效果**，这是本项目开发过程中吃过一次真实的亏：字体栈最初写的是 `"Segoe UI", "PingFang SC", sans-serif`——Segoe UI 不含中文字形，PingFang SC 是 macOS 专属字体在 Windows 上根本不存在，结果 Windows 上中文实际走的是某个未声明的兜底字体，且不同控件解析到的兜底字体不一致，出现"某个字突然变粗"这类字重错乱的观感问题（用户在真机截图里发现的，沙盒里的离屏渲染完全看不出这个问题，因为 Linux 环境装的是别的中文字体，不会触发 Windows 特有的字体替换链）。
+
+已修复为 `"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif"`（Windows 中文应用的标准选择），复选框指示器和下拉框箭头也从"CSS三角形技巧"/"原生渲染"换成了自绘 SVG 图标（`icons/checkbox_checked.svg`、`icons/checkbox_unchecked.svg`、`icons/chevron_down.svg`），避免依赖平台原生控件渲染的不确定性。**这些改动本身的正确性有把握（是 Windows 中文桌面应用的标准做法），但视觉效果本身没有、也没法在这个沙盒环境里用真实 Windows 机器肉眼确认**，需要在真机上跑一遍确认。以后任何"看起来是字体/原生控件渲染"的问题，都要假设沙盒环境验证不出来，直接问用户要真机截图确认，不要凭 Linux 离屏渲染的结果下结论。
+
 ### 后续工具接入的最小步骤
 
 1. `toolbox/tools/<new_tool_id>/` 新建文件夹
