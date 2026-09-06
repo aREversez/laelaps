@@ -290,6 +290,26 @@ GUI 直接函数调用 `api.convert()`，为避免大文件转换时界面卡死
 
 `QT_QPA_PLATFORM=offscreen` 环境变量可以让 Qt 在没有显示器的环境（比如 CI）里跑，配合 `pytest-qt` 的 `qtbot` fixture可以写真实的交互测试（点按钮、等信号、检查界面状态），不用退化成"只测非GUI逻辑"。已验证：包括一次端到端的真实转换（点转换按钮 → 等 QThread 完成 → 检查输出文件确实生成）都能在无头环境里测。
 
+**坑**：任何用到 `QIcon`/`QSvgRenderer`/`QPixmap` 这类 GUI 相关类的测试，哪怕不创建任何 widget，也必须先有一个 `QApplication` 实例存在，否则进程直接 abort（不是抛异常，是段错误级别的崩溃，pytest 输出里看不到正常的 traceback）。写测试时统一让这类测试也接一个 `qtbot` fixture 参数（哪怕用不上它），靠 pytest-qt 保证 QApplication 已经建好，别自己手动 `QApplication([])` 到处建。
+
+### 品牌资源与设计系统
+
+`toolbox/resources/`：
+- `style.qss` —— 全局样式表，Design tokens 都在这一个文件的注释里，新工具要用同样的颜色/间距直接引用这里定义的，不要在某个工具的 `page.py` 里重新写一遍色值
+- `logo.svg` —— 应用 logo，"对齐标记"主题（两行不同长度的色块 + 细连接线），呼应核心技术概念（句级对齐），不是随便找的翻译类 icon
+- `icons/<tool_id>.svg` —— 每个工具在侧边栏用的图标，新工具照此新增一个
+- `icons/app.ico` —— Windows exe 图标，多分辨率（16/32/48/64/128/256），由 `logo.svg` 渲染成 256px PNG 后用 Pillow 转出来的，logo 改了要重新生成这个文件（脚本片段见 git log 里 "Add branding: logo, tool icon, QSS design system" 这次提交的过程，没有单独存成脚本，需要的话重新跑一遍：Qt渲染SVG到256px QImage → 存PNG → `PIL.Image.open(...).save('app.ico', format='ICO', sizes=[...])`）
+
+Design tokens（颜色，命名 hex，别在别处重新定义）：
+- `ink #1A1D23` 主文字 / `slate #6B7280` 次要文字 / `paper #F6F7F9` 背景 / `surface #FFFFFF` 面板与输入框 / `hairline #E3E6EB` 分隔线 / **`indigo #2E4374` 唯一强调色**（主按钮、选中态、焦点框）
+- 语义色（`success #2F855A`/`danger #B23B3B`）只用于状态提示，不作装饰
+
+排版：统一用系统字体（Segoe UI），不引入自定义字体文件——层级完全靠字重/字号区分，这是刻意的选择：桌面工具软件跟着平台走比"用两种字体撑个性"更合适，跟营销页/网站的设计诉求不一样。
+
+布局原则：扁平面板 + 发丝级分隔线，不用 QGroupBox 原生的"盒子套标题"外观（做不出干净的现代感，`page.py` 里的 `_section()` helper 是替代方案：一个小标题 label + 一条分隔线 + 内容），不做千篇一律的"卡片+统一阴影"（SaaS 模板的典型味道）。
+
+新工具的界面要保持一致性：优先复用 `page.py` 里 `_section()` 这样的现成 helper，主按钮统一用 `objectName('primaryButton')`（QSS 已经定义好了这个选择器），日志类输出用 `objectName('logConsole')` 的 `QTextEdit` 走富文本着色（`_log(message, kind='info'|'error'|'success')` 这个模式），不要每个工具各写一套。
+
 ### 打包
 
 `packaging/language-toolbox.spec`（PyInstaller spec，已提交到仓库，可复现构建）：
@@ -297,7 +317,11 @@ GUI 直接函数调用 `api.convert()`，为避免大文件转换时界面卡死
 pip install -e ".[gui]"
 pyinstaller packaging/language-toolbox.spec
 ```
-默认 `onedir`（启动更快、方便排查缺失依赖），`ONEFILE=True` 切换成单文件 exe。**PyInstaller 不能跨平台编译**，最终的 Windows exe 必须在 Windows 上跑这条命令产出；本项目在 Linux 沙盒里跑通过同一份 spec（产出 Linux 二进制，成功启动），验证的是打包链路本身没有缺失依赖/隐藏 import 之类的问题，不是最终 Windows 产物本身。
+默认 `onedir`（启动更快、方便排查缺失依赖），`ONEFILE=True` 切换成单文件 exe。已经在 spec 里把 `toolbox/resources/` 加进 `datas`，并指定了 `icon=...app.ico`（Windows/macOS 才生效，Linux 打包时会有一条"Ignoring icon"的提示，正常，不是错误）。
+
+**已经在打包链路上踩过一个坑并修复**：`toolbox/main.py` 作为 PyInstaller 的入口脚本，冻结后它自己的 `__file__` 解析方式和被正常 import 的子模块不一样——之前 `main.py` 里用 `os.path.dirname(__file__)` 算资源目录，源码跑没问题，但打包成 exe 之后会报 `FileNotFoundError`（实测复现过），因为冻结后入口脚本的 `__file__` 丢失了 `toolbox/` 这层路径前缀。修复方式是把路径计算挪到一个单独的、永远以普通模块方式被 import 的文件（`toolbox/paths.py`），入口脚本和其他模块都从这里拿 `RESOURCES_DIR`，不要自己在入口脚本里现算。**这提醒了一件事：涉及路径解析的改动，必须实际跑一遍 PyInstaller 打包后的产物验证，不能只在源码环境测试就认为没问题**——本项目源码环境的测试当时是全绿的，问题只在实际冻结后的可执行文件里才暴露。
+
+**PyInstaller 不能跨平台编译**，最终的 Windows exe 必须在 Windows 上跑这条命令产出；本项目在 Linux 沙盒里跑通过同一份 spec（产出 Linux 二进制，成功启动，资源文件路径解析也验证过没问题），验证的是打包链路本身没有缺失依赖/隐藏 import/资源路径这类问题，不是最终 Windows 产物本身。
 
 ### 后续工具接入的最小步骤
 
