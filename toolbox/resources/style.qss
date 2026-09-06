@@ -14,7 +14,7 @@
 QMainWindow, QWidget {
     background: #F6F7F9;
     color: #1A1D23;
-    font-family: "Segoe UI", "PingFang SC", sans-serif;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
     font-size: 13px;
 }
 
@@ -76,20 +76,27 @@ QLineEdit:focus, QComboBox:focus {
 }
 QComboBox::drop-down {
     border: none;
-    width: 22px;
+    width: 26px;
 }
 QComboBox::down-arrow {
-    image: none;
-    border-left: 4px solid transparent;
-    border-right: 4px solid transparent;
-    border-top: 5px solid #6B7280;
-    width: 0;
-    height: 0;
-    margin-right: 8px;
+    image: url({ICONS_DIR}/chevron_down.svg);
+    width: 10px;
+    height: 6px;
+    margin-right: 10px;
 }
 QCheckBox {
     spacing: 8px;
     padding: 2px 0;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+QCheckBox::indicator:unchecked {
+    image: url({ICONS_DIR}/checkbox_unchecked.svg);
+}
+QCheckBox::indicator:checked {
+    image: url({ICONS_DIR}/checkbox_checked.svg);
 }
 
 /* --------------------------------------------------------------- buttons */
@@ -136,7 +143,7 @@ QTextEdit#logConsole {
     border-radius: 8px;
     padding: 10px;
     color: #1A1D23;
-    font-family: "Cascadia Code", "Consolas", monospace;
+    font-family: "Cascadia Code", "Consolas", "Microsoft YaHei UI", monospace;
     font-size: 12px;
 }
 
