@@ -33,17 +33,21 @@ def read(path, delimiter=None, src_col_index=None, tgt_col_index=None, header=No
             delimiter = ','
 
     rows = list(csv.reader(text.splitlines(), delimiter=delimiter))
-    rows = [r for r in rows if any(c.strip() for c in r)]
-    if not rows:
+    # Number rows by their real position before dropping blanks, so a
+    # "missing translation" warning points at the actual line the person
+    # would see in a text editor / spreadsheet, not a position among
+    # survivors.
+    numbered_rows = [(i, row) for i, row in enumerate(rows, 1) if any(c.strip() for c in row)]
+    if not numbered_rows:
         return []
-    ncols = max(len(r) for r in rows)
+    ncols = max(len(row) for _, row in numbered_rows)
     if ncols < 2:
         raise ValueError('%s has fewer than 2 columns (delimiter=%r)' % (path, delimiter))
 
-    data_rows = rows
-    has_header = header if header is not None else looks_like_header(rows[0])
+    data_rows = numbered_rows
+    has_header = header if header is not None else looks_like_header(numbered_rows[0][1])
     if has_header:
-        data_rows = rows[1:]
+        data_rows = numbered_rows[1:]
 
     s_idx, t_idx = pick_src_tgt_columns(ncols, src_col_index, tgt_col_index)
     return rows_to_pairs(data_rows, s_idx, t_idx, 'csv')

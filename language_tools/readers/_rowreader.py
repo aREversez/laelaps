@@ -33,22 +33,34 @@ def pick_src_tgt_columns(ncols, src_index=None, tgt_index=None):
     return (0, 1) if ncols == 2 else (ncols - 2, ncols - 1)
 
 
-def rows_to_pairs(data_rows, s_idx, t_idx, warn_label):
+def rows_to_pairs(numbered_rows, s_idx, t_idx, warn_label):
     """Build ParagraphPair list from row data, warning on one-sided rows.
-    Imports ParagraphPair lazily to avoid a circular import at module load."""
+
+    ``numbered_rows`` is an iterable of ``(row_number, row)`` tuples, where
+    ``row_number`` is the row's position in the *original* source (before
+    any header/blank-row filtering the caller already did) -- so a warning
+    like "row 5 missing translation" points at row 5 in the actual xlsx/
+    csv/table the person opened, not row 5 of whatever survived filtering.
+    Callers are responsible for producing that numbering; see
+    xlsx_bilingual.py/csv_bilingual.py/docx_table.py for the shared pattern
+    (number before filtering blanks, then optionally drop row 1 for a
+    header without renumbering anything after it).
+
+    Imports ParagraphPair lazily to avoid a circular import at module load.
+    """
     from language_tools.model import ParagraphPair
 
     pairs, missing = [], []
-    for i, row in enumerate(data_rows, 1):
+    for row_number, row in numbered_rows:
         src_text = (row[s_idx] if s_idx < len(row) else '') or ''
         tgt_text = (row[t_idx] if t_idx < len(row) else '') or ''
         src_text, tgt_text = src_text.strip(), tgt_text.strip()
         if not src_text and not tgt_text:
             continue
         if not src_text or not tgt_text:
-            missing.append(i)
+            missing.append(row_number)
             continue
-        pairs.append(ParagraphPair(key=str(i), src_text=src_text, tgt_text=tgt_text))
+        pairs.append(ParagraphPair(key=str(row_number), src_text=src_text, tgt_text=tgt_text))
     if missing:
         print('warning: %s rows with only one side filled, dropped: %s' % (warn_label, missing))
     return pairs

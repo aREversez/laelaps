@@ -25,10 +25,10 @@ def _read_table(rows, src_col_index, tgt_col_index, header):
     if ncols < 2:
         return []
 
-    data_rows = rows
+    numbered_rows = list(enumerate(rows, 1))
     has_header = header if header is not None else looks_like_header(rows[0])
     if has_header:
-        data_rows = rows[1:]
+        numbered_rows = numbered_rows[1:]
 
     s_idx, t_idx = pick_src_tgt_columns(ncols, src_col_index, tgt_col_index)
-    return rows_to_pairs(data_rows, s_idx, t_idx, 'table')
+    return rows_to_pairs(numbered_rows, s_idx, t_idx, 'table')

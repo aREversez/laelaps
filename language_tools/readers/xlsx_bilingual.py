@@ -25,17 +25,20 @@ def read(path, sheet=None, src_col=None, tgt_col=None, header=None, **opts):
     finally:
         wb.close()
 
-    rows = [r for r in rows if any(c for c in r)]  # drop fully-empty rows
-    if not rows:
+    # Number rows by their real position before dropping blanks, so a
+    # "missing translation" warning points at the actual xlsx row the
+    # person would see in Excel, not a position among survivors.
+    numbered_rows = [(i, row) for i, row in enumerate(rows, 1) if any(c for c in row)]
+    if not numbered_rows:
         return []
-    ncols = max(len(r) for r in rows)
+    ncols = max(len(row) for _, row in numbered_rows)
     if ncols < 2:
         raise ValueError('xlsx sheet has fewer than 2 non-empty columns')
 
-    data_rows = rows
-    has_header = header if header is not None else looks_like_header(rows[0])
+    data_rows = numbered_rows
+    has_header = header if header is not None else looks_like_header(numbered_rows[0][1])
     if has_header:
-        data_rows = rows[1:]
+        data_rows = numbered_rows[1:]
 
     src_index = col_letter_to_index(src_col) if src_col is not None else None
     tgt_index = col_letter_to_index(tgt_col) if tgt_col is not None else None

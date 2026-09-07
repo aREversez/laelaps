@@ -36,3 +36,17 @@ def test_convert_end_to_end_xlsx(tmp_path):
     result = api.convert(xlsx_path('basic.xlsx'), out_base, src_lang='en-US', tgt_lang='zh-CN')
     assert result['units'] == 3
     assert result['written']['sdltm'] == 3
+
+
+def test_missing_row_warning_uses_physical_row_number_across_a_blank_gap(capsys):
+    # Row 3 is entirely blank and gets filtered out before the one-sided
+    # row is even reached; the warning must still say "row 4" (its real
+    # position in the spreadsheet), not "row 3" (its position among the
+    # rows that survived blank-filtering) -- confirmed by reverting to
+    # enumerate-after-filter and reproducing the wrong number.
+    pairs = xlsx_bilingual.read(xlsx_path('blank_row_gap.xlsx'))
+    assert len(pairs) == 2
+    assert pairs[0].src_text == 'First item.'
+    assert pairs[1].src_text == 'Third item.'
+    warning = capsys.readouterr().out
+    assert 'dropped: [4]' in warning
