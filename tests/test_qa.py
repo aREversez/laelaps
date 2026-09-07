@@ -62,6 +62,52 @@ def test_no_number_mismatch_when_numbers_match():
     assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
 
 
+def test_no_number_mismatch_for_thousands_separator_variation():
+    # "$1,000" vs "1000" -- the old raw-digit regex saw {1,000} vs {1000}
+    # and false-fired. After normalization both are {1000}.
+    units = [_tu('Revenue: $1,000 total.', '收入总计1000。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_no_number_mismatch_for_decimal_separator_variation():
+    # "1.5" (en) vs "1,5" (some European locales) -- both normalize to "1.5".
+    units = [_tu('The rate is 1.5 percent.', '比率为1,5%。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_no_number_mismatch_for_trailing_zero_decimal():
+    # "1.20" vs "1.2" -- same number, different formatting. Old regex
+    # saw {"1.20"} vs {"1.2"} and false-fired. Normalization strips
+    # trailing zeros so both become "1.2".
+    units = [_tu('Version 1.20 released.', '版本1.2发布。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_no_number_mismatch_for_currency_prefix_variation():
+    # "USD 50" vs "$50" -- both normalize to {50} after currency stripping.
+    units = [_tu('Price: USD 50 per unit.', '每件价格$50。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_number_mismatch_still_fires_for_real_missing_number():
+    # Sanity: normalization shouldn't make the check miss actual mismatches.
+    # "42 units" vs "43 个" is a real difference.
+    units = [_tu('We shipped 42 units in 2024.', '我们2024年发货了43个。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_number_mismatch_still_fires_for_extra_number_in_translation():
+    # Translation added a number the source doesn't have.
+    units = [_tu('See chapter 5.', '参见第5章第3节。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' in units[0].meta['qa_issues']
+
+
 def test_flags_length_ratio_outlier():
     # length_ratio says target should be roughly src_len/1.0; a target
     # 1/10th the expected length should trip the outlier check.
