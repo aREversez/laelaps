@@ -89,6 +89,16 @@ def align_paragraph_pairs(pairs, src_lang, tgt_lang, repairer=NULL_REPAIRER,
     """list[ParagraphPair] -> (list[TranslationUnit], length_ratio).
 
     ``repairer`` is a ``align.repair.Repairer`` (defaults to a no-op one).
+
+    ``ParagraphPair.key`` is diagnostic metadata only (surfaced on the
+    resulting TranslationUnit.source_key for warnings/QA), not required to
+    be unique -- split results are kept positionally paired with their
+    source ``ParagraphPair``, not looked up by key. An earlier version
+    used ``{p.key: ...}`` as an intermediate dict, which would silently
+    drop/corrupt content for any two pairs sharing a key (each shipped
+    reader happens to always produce unique keys today, so this wasn't
+    reachable through the normal pipeline, but it's a real trap for
+    anyone constructing ParagraphPair lists directly against this API).
     """
     sample_src = next((p.src_text for p in pairs if p.src_text), '')
     sample_tgt = next((p.tgt_text for p in pairs if p.tgt_text), '')
@@ -97,15 +107,14 @@ def align_paragraph_pairs(pairs, src_lang, tgt_lang, repairer=NULL_REPAIRER,
     repair_src = repairer.for_lang(lang_tag_src)
     repair_tgt = repairer.for_lang(lang_tag_tgt)
 
-    split = {p.key: (split_src(p.src_text, repair_src), split_tgt(p.tgt_text, repair_tgt))
-             for p in pairs}
-    src_len = sum(nolen(s) for k in split for s in split[k][0])
-    tgt_len = sum(nolen(s) for k in split for s in split[k][1])
+    split_pairs = [(p, split_src(p.src_text, repair_src), split_tgt(p.tgt_text, repair_tgt))
+                   for p in pairs]
+    src_len = sum(nolen(s) for _, e, _ in split_pairs for s in e)
+    tgt_len = sum(nolen(s) for _, _, z in split_pairs for s in z)
     R = src_len / max(tgt_len, 1)
 
     units = []
-    for pair in pairs:
-        e, z = split[pair.key]
+    for pair, e, z in split_pairs:
         for src_text, tgt_text, align_cost in _align_sentences(e, z, join_src, join_tgt, R, S2, MP, MP0, GAP):
             units.append(TranslationUnit(
                 src_lang=src_lang, tgt_lang=tgt_lang,

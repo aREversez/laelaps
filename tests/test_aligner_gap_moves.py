@@ -34,3 +34,19 @@ def test_alignment_cost_exposed_in_meta():
     units, _ = align_paragraph_pairs(pairs, 'en-US', 'zh-CN')
     assert 'alignment_cost' in units[0].meta
     assert isinstance(units[0].meta['alignment_cost'], float)
+
+
+def test_duplicate_paragraph_pair_keys_do_not_corrupt_content():
+    # ParagraphPair.key is diagnostic metadata, not required to be unique.
+    # An earlier implementation used {p.key: ...} as an intermediate dict,
+    # which would silently collapse two pairs sharing a key down to just
+    # the last one's content -- confirmed by temporarily reverting to that
+    # implementation and reproducing exactly this corruption.
+    pairs = [
+        ParagraphPair(key='1', src_text='The cat sleeps.', tgt_text='猫在睡觉。'),
+        ParagraphPair(key='1', src_text='The dog runs.', tgt_text='狗在跑步。'),
+    ]
+    units, _ = align_paragraph_pairs(pairs, 'en-US', 'zh-CN')
+    assert len(units) == 2
+    assert units[0].src_text == 'The cat sleeps.' and units[0].tgt_text == '猫在睡觉。'
+    assert units[1].src_text == 'The dog runs.' and units[1].tgt_text == '狗在跑步。'
