@@ -71,7 +71,16 @@ def convert(input_path, output_base, src_lang=None, tgt_lang=None,
     ext = os.path.splitext(input_path)[1].lower()
 
     if ext in _CORPUS_READERS:
-        units = _CORPUS_READERS[ext](input_path, **(reader_opts or {}))
+        corpus_reader_opts = dict(reader_opts or {})
+        if src_lang and tgt_lang:
+            # Lets tmx_reader match tuv-by-language instead of blindly
+            # taking the first two (matters for >2-language TMX, or where
+            # tuv order doesn't match the wanted direction) -- only kicks
+            # in when the caller actually knows the pair; sdltm_reader
+            # ignores these via its **opts catch-all.
+            corpus_reader_opts.setdefault('src_lang', src_lang)
+            corpus_reader_opts.setdefault('tgt_lang', tgt_lang)
+        units = _CORPUS_READERS[ext](input_path, **corpus_reader_opts)
         if src_lang is None:
             src_lang = units[0].src_lang if units else ''
         if tgt_lang is None:

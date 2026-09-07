@@ -88,3 +88,131 @@ def test_sdltm_to_tmx_to_sdltm_round_trip_preserves_text(tmp_path):
     original = _sample_units()
     assert [(u.src_text, u.tgt_text) for u in final] == \
            [(u.src_text, u.tgt_text) for u in original]
+
+
+def test_sdltm_reader_handles_entities_beyond_our_own_writer(tmp_path):
+    # Our own writer only ever produces &amp;/&lt;/&gt; (the 3 entities its
+    # hand-rolled esc() emits), and the old unesc() only reversed exactly
+    # those. A real Trados-native .sdltm can contain other valid XML
+    # entities our writer never would (e.g. a numeric character reference
+    # for an apostrophe) -- a real XML parser handles all of them per
+    # spec, a hand-rolled reverse-of-our-own-escaping function wouldn't.
+    import sqlite3
+    from language_tools.writers import sdltm_writer as w
+
+    path = str(tmp_path / 'native_style.sdltm')
+    con = None
+    try:
+        w.write(path, [], 'en-US', 'zh-CN', 'test')  # creates schema, 0 rows
+        con = sqlite3.connect(path)
+        seg = ('<Segment><Elements><Text><Value>It&#39;s ready</Value></Text>'
+               '</Elements><CultureName>en-US</CultureName></Segment>')
+        tgt_seg = ('<Segment><Elements><Text><Value>准备好了</Value></Text>'
+                   '</Elements><CultureName>zh-CN</CultureName></Segment>')
+        con.execute(
+            'INSERT INTO translation_units(guid,translation_memory_id,source_hash,'
+            'source_segment,target_hash,target_segment,creation_date,creation_user,'
+            'change_date,change_user,last_used_date,last_used_user,usage_counter,flags) '
+            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (b'\x00' * 16, 1, 0, seg, 0, tgt_seg, '2024-01-01 00:00:00', 'test',
+             '2024-01-01 00:00:00', 'test', '2024-01-01 00:00:00', 'test', 0, 131073))
+        con.commit()
+    finally:
+        if con:
+            con.close()
+
+    units = sdltm_reader.read(path)
+    assert len(units) == 1
+    assert units[0].src_text == "It's ready"
+
+
+def test_tmx_reader_handles_default_xml_namespace(tmp_path):
+    # Some TMX exports declare a default xmlns on <tmx>; plain
+    # root.find('body') etc. only match unqualified tag names and
+    # silently return nothing at all for such a file -- confirmed by
+    # reverting to that lookup and reproducing zero units found.
+    path = tmp_path / 'namespaced.tmx'
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<tmx xmlns="http://www.lisa.org/tmx14" version="1.4">\n'
+        '<header creationtool="Test" creationtoolversion="1.0" adminlang="en-US" '
+        'srclang="en-US" datatype="unknown" segtype="sentence"/>\n'
+        '<body><tu><tuv xml:lang="en-US"><seg>Hello world.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>你好世界。</seg></tuv></tu></body>\n'
+        '</tmx>', encoding='utf-8')
+    units = tmx_reader.read(str(path))
+    assert len(units) == 1
+    assert units[0].src_text == 'Hello world.'
+    assert units[0].tgt_text == '你好世界。'
+
+
+def test_tmx_reader_preserves_text_around_inline_tags(tmp_path):
+    # seg.text alone only captures text before the first child element;
+    # anything inside/after an inline tag (<bpt>/<ept>/<ph>/<hi>, all
+    # common in real TMX for placeholders/formatting) was silently
+    # dropped -- confirmed: "Click <b>OK</b> to continue." round-tripped
+    # to just "Click" before this fix.
+    path = tmp_path / 'inline_tags.tmx'
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<tmx version="1.4">\n'
+        '<header creationtool="Test" creationtoolversion="1.0" adminlang="en-US" '
+        'srclang="en-US" datatype="unknown" segtype="sentence"/>\n'
+        '<body><tu><tuv xml:lang="en-US"><seg>Click <bpt i="1">&lt;b&gt;</bpt>OK'
+        '<ept i="1">&lt;/b&gt;</ept> to continue.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>继续</seg></tuv></tu></body>\n'
+        '</tmx>', encoding='utf-8')
+    units = tmx_reader.read(str(path))
+    assert len(units) == 1
+    assert units[0].src_text == 'Click <b>OK</b> to continue.'
+
+
+def test_tmx_reader_matches_tuv_by_requested_language(tmp_path):
+    # Without an explicit src_lang/tgt_lang, the reader falls back to
+    # positional (first two tuv); with them given, it should pick the
+    # right tuv by language even if a <tu> has more than two (or the
+    # requested pair isn't first).
+    path = tmp_path / 'multilingual.tmx'
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<tmx version="1.4">\n'
+        '<header creationtool="Test" creationtoolversion="1.0" adminlang="en-US" '
+        'srclang="en-US" datatype="unknown" segtype="sentence"/>\n'
+        '<body><tu>'
+        '<tuv xml:lang="fr-FR"><seg>Bonjour.</seg></tuv>'
+        '<tuv xml:lang="en-US"><seg>Hello.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>你好。</seg></tuv>'
+        '</tu></body>\n'
+        '</tmx>', encoding='utf-8')
+    units = tmx_reader.read(str(path), src_lang='en-US', tgt_lang='zh-CN')
+    assert len(units) == 1
+    assert units[0].src_text == 'Hello.'
+    assert units[0].tgt_text == '你好。'
+
+
+def test_convert_wires_lang_through_to_tmx_reader_for_matching(tmp_path):
+    # api.convert() must actually pass its own src_lang/tgt_lang into the
+    # corpus reader when both are given -- otherwise tmx_reader's language-
+    # matching capability is unreachable through the normal pipeline.
+    from language_tools import api
+
+    tmx_path = tmp_path / 'multilingual.tmx'
+    tmx_path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<tmx version="1.4">\n'
+        '<header creationtool="Test" creationtoolversion="1.0" adminlang="en-US" '
+        'srclang="en-US" datatype="unknown" segtype="sentence"/>\n'
+        '<body><tu>'
+        '<tuv xml:lang="fr-FR"><seg>Bonjour.</seg></tuv>'
+        '<tuv xml:lang="en-US"><seg>Hello.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>你好。</seg></tuv>'
+        '</tu></body>\n'
+        '</tmx>', encoding='utf-8')
+
+    out_base = str(tmp_path / 'out')
+    result = api.convert(str(tmx_path), out_base, src_lang='en-US', tgt_lang='zh-CN', formats=('csv',))
+    assert result['units'] == 1
+    with open(out_base + '.csv', encoding='utf-8-sig') as f:
+        rows = f.readlines()
+    assert 'Hello.' in rows[1]
+    assert '你好。' in rows[1]
