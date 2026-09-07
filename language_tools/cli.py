@@ -16,6 +16,18 @@ _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _ALL_FORMATS = ('sdltm', 'tmx', 'csv')
 
 
+def bounded_confidence(raw):
+    """argparse type= for --min-confidence: rejects out-of-[0,1] values at
+    parse time with a clear error, instead of silently accepting e.g. 1.5
+    and having it behave the same as 1.0 (or worse, being misread as "no
+    filtering" by someone assuming it's a percentage).
+    """
+    value = float(raw)
+    if not 0.0 <= value <= 1.0:
+        raise argparse.ArgumentTypeError('--min-confidence must be between 0 and 1, got %r' % raw)
+    return value
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog='biconvert',
@@ -50,7 +62,7 @@ def build_parser():
                                   '(default: derived from the input filename)')
     p.add_argument('--qa', action='store_true',
                     help='run the QA layer and add confidence/status/issues columns to the CSV')
-    p.add_argument('--min-confidence', type=float, default=0.0, metavar='0..1',
+    p.add_argument('--min-confidence', type=bounded_confidence, default=0.0, metavar='0..1',
                     help='exclude units below this QA confidence from sdltm/tmx output '
                          '(the CSV always lists everything, filtered or not); implies --qa')
     return p

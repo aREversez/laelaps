@@ -82,7 +82,25 @@ def test_cli_docx_layout_override(tmp_path):
 
 def test_cli_min_confidence_reported(tmp_path):
     out_base = str(tmp_path / 'out')
+    # basic.docx has one unit with a real NUMBER_MISMATCH issue (confidence
+    # 0.75) and three clean ones (confidence 1.0) -- 0.9 filters out just
+    # the one with an issue, not everything, which also exercises a normal
+    # (not edge-case) --min-confidence value end to end.
+    result = _run([fixture_path('basic.docx'), '-o', out_base, '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--min-confidence', '0.9'])
+    assert result.returncode == 0, result.stderr
+    assert 'Units=4' in result.stdout
+    assert 'Exported=3' in result.stdout
+
+
+def test_cli_min_confidence_rejects_out_of_range_value(tmp_path):
+    # confidence is a 0..1 score; a value above 1 could be misread as "no
+    # filtering" (assuming it's a percentage) rather than "stricter than
+    # perfect, filters everything" -- CLI-level input validation should
+    # reject it outright with a clear message instead of silently doing
+    # something the person probably didn't intend.
+    out_base = str(tmp_path / 'out')
     result = _run([fixture_path('basic.docx'), '-o', out_base, '--src', 'en-US', '--tgt', 'zh-CN',
                    '--min-confidence', '1.01'])
-    assert result.returncode == 0, result.stderr
-    assert 'Exported=0' in result.stdout
+    assert result.returncode != 0
+    assert 'must be between 0 and 1' in result.stderr
