@@ -6,24 +6,50 @@ timestamps for informational purposes. Doesn't touch source_hash/
 target_hash/fuzzy_data -- see sdltm_writer.py's module docstring for why
 those aren't meaningful to round-trip (private Trados hash algorithm,
 Level 2 compatibility target).
+
+Uses a real XML parser (ElementTree) rather than a regex over the raw
+Segment XML string. Two reasons, not just style preference:
+1. Our own writer's hand-rolled ``unesc()`` only reverses the specific
+   3-entity escaping our own ``esc()`` produces (&amp;/&lt;/&gt;) -- a
+   *real* Trados-native .sdltm could contain other valid XML entities
+   (e.g. numeric character references) that unesc() wouldn't decode
+   correctly. ElementTree handles every valid XML entity per spec, not
+   just the ones our own writer happens to produce.
+2. A regex search for the first ``<Value>...</Value>`` is fragile if the
+   Segment XML is ever nested/structured differently than our own writer's
+   exact output shape (again: relevant for real Trados-native files this
+   reader should also be able to open, not just our own round-trips).
+
+Deliberately does NOT additionally call html.unescape() on the parsed
+text -- ElementTree already fully decodes XML entities during parsing, so
+an extra unescape pass double-decodes any text that legitimately contains
+an entity-like substring (e.g. literal text "R&D output &lt; 5%" would
+come back as "R&D output < 5%", silently corrupting content that was
+never itself an escaped "<"). Confirmed via tests/test_corpus_readers.py's
+adversarial literal-&lt; case, which an earlier draft with an added
+html.unescape() call failed.
 """
-import re
 import sqlite3
+import xml.etree.ElementTree as ET
 
 from language_tools.model import TranslationUnit
-from language_tools.writers.sdltm_writer import unesc
 
-_VALUE_RE = re.compile(r'<Value>(.*?)</Value>', re.S)
-_CULTURE_RE = re.compile(r'<CultureName>(.*?)</CultureName>')
+
+def _local_name(tag):
+    return tag.rsplit('}', 1)[-1]
 
 
 def _extract(seg_xml_text):
     if not seg_xml_text:
         return '', ''
-    vm = _VALUE_RE.search(seg_xml_text)
-    cm = _CULTURE_RE.search(seg_xml_text)
-    text = unesc(vm.group(1)) if vm else ''
-    lang = cm.group(1) if cm else ''
+    try:
+        root = ET.fromstring(seg_xml_text)
+    except ET.ParseError:
+        return '', ''
+    value_el = next((e for e in root.iter() if _local_name(e.tag) == 'Value'), None)
+    culture_el = next((e for e in root.iter() if _local_name(e.tag) == 'CultureName'), None)
+    text = (value_el.text or '') if value_el is not None else ''
+    lang = (culture_el.text or '') if culture_el is not None else ''
     return text, lang
 
 
