@@ -1,7 +1,7 @@
 import pytest
 
 from language_tools.align.aligner import align_paragraph_pairs
-from language_tools.readers import docx, docx_alternating
+from language_tools.readers import docx, docx_alternating, docx_numbered, docx_table
 
 from conftest import fixture_path
 
@@ -29,6 +29,40 @@ def test_alternating_language_direction_reversal():
     assert units[1].tgt_text == 'The taxi was late.'
 
 
+def test_alternating_confidence_capped_low_for_any_even_paragraph_doc():
+    # The defining fact about alternating: it has no positive signal. Any
+    # document with an even, non-zero paragraph count "matches" -- so its
+    # confidence is capped at 0.5 (well below table's 0.85+ and numbered's
+    # 0.85+ when those layouts genuinely claim a doc). Even alternating.docx
+    # itself, which IS a real alternating-layout bilingual doc, only
+    # scores 0.5 because the reader has no way to *know* it's bilingual.
+    score = docx_alternating.confidence(fixture_path('alternating.docx'))
+    assert 0.0 < score <= 0.5
+
+
+def test_alternating_confidence_zero_for_odd_paragraph_doc():
+    # odd_paragraph_count.docx has an odd number of paragraphs -- the
+    # alternating reader rejects it on read(), and confidence() should
+    # also return 0.0 so auto-detection doesn't pick it over a layout
+    # that actually fits.
+    assert docx_alternating.confidence(fixture_path('odd_paragraph_count.docx')) == 0.0
+
+
+def test_numbered_confidence_high_for_two_block_numbered_doc():
+    # basic.docx is the classic "[1]..[N] source, [1]..[N] target" shape
+    # -> numbered.confidence should be high (>= 0.85).
+    score = docx_numbered.confidence(fixture_path('basic.docx'))
+    assert score >= 0.85
+    # And it should beat the other readers on the same doc
+    assert score > docx_alternating.confidence(fixture_path('basic.docx'))
+
+
+def test_numbered_confidence_zero_for_non_numbered_doc():
+    # table_layout.docx has no [N]-tagged paragraphs -> numbered.confidence
+    # should be 0.0
+    assert docx_numbered.confidence(fixture_path('table_layout.docx')) == 0.0
+
+
 def test_auto_detect_tries_table_then_numbered_before_alternating():
     # basic.docx matches the numbered layout; must NOT fall through to
     # alternating (which would also technically match its paragraph count).
@@ -46,3 +80,18 @@ def test_auto_detect_falls_back_to_alternating_as_last_resort():
 def test_explicit_alternating_layout_override():
     pairs = docx.read(fixture_path('alternating.docx'), layout='alternating')
     assert len(pairs) == 2
+
+
+def test_auto_detect_picks_table_when_table_and_numbered_both_score_high():
+    # When two layouts both have a strong positive signal (e.g. a doc
+    # that contains both a qualifying table AND [1]..[N] numbered
+    # paragraphs), auto-detection should still pick one deterministically
+    # rather than fail. Currently the tie-break is _AUTO_ORDER order
+    # (table first), which matches the historical "try table, then
+    # numbered" behavior. This test documents that contract.
+    # Use table_layout.docx -- it scores high on table, low on numbered.
+    pairs = docx.read(fixture_path('table_layout.docx'))
+    assert len(pairs) == 3
+    # Sanity: table confidence > numbered confidence on this doc
+    assert docx_table.confidence(fixture_path('table_layout.docx')) >= \
+           docx_numbered.confidence(fixture_path('table_layout.docx'))

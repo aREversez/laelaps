@@ -20,6 +20,24 @@ def test_table_layout_language_direction_reversal():
     assert units[1].tgt_text == 'The taxi was late.'
 
 
+def test_table_confidence_high_for_table_layout_doc():
+    # table_layout.docx has a 3-row bilingual table -> strong positive
+    # signal, should score >= 0.85 (specifically 0.95 with 4+ populated
+    # rows, or 0.85 with fewer; either way above numbered/alternating).
+    score = docx_table.confidence(fixture_path('table_layout.docx'))
+    assert score >= 0.85
+    # And it should beat the other readers' confidence on the same doc
+    from language_tools.readers import docx_alternating, docx_numbered
+    assert score > docx_numbered.confidence(fixture_path('table_layout.docx'))
+    assert score > docx_alternating.confidence(fixture_path('table_layout.docx'))
+
+
+def test_table_confidence_zero_for_non_table_doc():
+    # basic.docx is the numbered layout, no qualifying tables -> table
+    # confidence should be 0.0 (not "small but non-zero").
+    assert docx_table.confidence(fixture_path('basic.docx')) == 0.0
+
+
 def test_auto_detect_picks_table_layout_when_table_present():
     pairs = docx.read(fixture_path('table_layout.docx'))
     assert len(pairs) == 3
