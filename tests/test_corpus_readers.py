@@ -190,6 +190,102 @@ def test_tmx_reader_matches_tuv_by_requested_language(tmp_path):
     assert units[0].tgt_text == '你好。'
 
 
+def test_tmx_reader_captures_inline_markup_in_seg(tmp_path):
+    # When a <seg> contains <bpt>/<ept>/<ph>/<hi> (or any other inline
+    # element), the reader populates TranslationUnit.src_markup/
+    # tgt_markup with an ordered InlineNode list -- not just the visible
+    # text. The visible text (itertext-joined) is still in src_text/
+    # tgt_text, so existing callers see no change; the markup list lets
+    # tmx_writer round-trip the inline structure losslessly.
+    from language_tools.model import InlineNode
+
+    path = tmp_path / 'inline_tags.tmx'
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<tmx version="1.4">\n'
+        '<header creationtool="Test" creationtoolversion="1.0" adminlang="en-US" '
+        'srclang="en-US" datatype="unknown" segtype="sentence"/>\n'
+        '<body><tu>'
+        '<tuv xml:lang="en-US"><seg>Click <bpt i="1">&lt;b&gt;</bpt>OK'
+        '<ept i="1">&lt;/b&gt;</ept> to continue.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>继续</seg></tuv>'
+        '</tu></body>\n'
+        '</tmx>', encoding='utf-8')
+    units = tmx_reader.read(str(path))
+    assert len(units) == 1
+    # Visible text preserved (unchanged from the pre-markup behavior)
+    assert units[0].src_text == 'Click <b>OK</b> to continue.'
+    # src_markup captured -- interleaved text/tag/text/tag/text
+    markup = units[0].src_markup
+    assert markup is not None
+    assert [n.kind for n in markup] == ['text', 'tag', 'text', 'tag', 'text']
+    assert markup[0].content == 'Click '
+    assert '<bpt' in markup[1].content and 'i="1"' in markup[1].content
+    assert markup[2].content == 'OK'
+    assert '<ept' in markup[3].content
+    assert markup[4].content == ' to continue.'
+    # tgt had no inline tag -> markup stays None (not an empty list),
+    # so callers that don't care about markup can branch on `is not None`.
+    assert units[0].tgt_markup is None
+
+
+def test_tmx_to_tmx_round_trip_preserves_inline_markup(tmp_path):
+    # The pre-markup fix only preserved visible text on TMX->TMX round-trip
+    # (the <bpt>/<ept> wrappers were dropped on read, then couldn't come
+    # back on write). With src_markup/tgt_markup threaded through, a
+    # round-trip through tmx_reader -> tmx_writer -> tmx_reader must
+    # preserve the inline element structure, not just visible text.
+    src_tmx = tmp_path / 'inline.tmx'
+    src_tmx.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<tmx version="1.4">\n'
+        '<header creationtool="Test" creationtoolversion="1.0" adminlang="en-US" '
+        'srclang="en-US" datatype="unknown" segtype="sentence"/>\n'
+        '<body><tu>'
+        '<tuv xml:lang="en-US"><seg>Click <bpt i="1">&lt;b&gt;</bpt>OK'
+        '<ept i="1">&lt;/b&gt;</ept> to continue.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>继续</seg></tuv>'
+        '</tu></body>\n'
+        '</tmx>', encoding='utf-8')
+
+    units_in = tmx_reader.read(str(src_tmx))
+    out_tmx = str(tmp_path / 'round.tmx')
+    tmx_writer.write(out_tmx, units_in, 'en-US', 'zh-CN')
+    units_out = tmx_reader.read(out_tmx)
+
+    assert units_out[0].src_text == units_in[0].src_text == 'Click <b>OK</b> to continue.'
+    # Markup survived -- after writing and re-reading, the InlineNode
+    # list should still have the same shape (text/tag/text/tag/text)
+    # and the same tag fragments.
+    assert units_out[0].src_markup is not None
+    assert [n.kind for n in units_out[0].src_markup] == ['text', 'tag', 'text', 'tag', 'text']
+    # Tag fragments contain the bpt/ept elements with attributes preserved
+    tag_contents = [n.content for n in units_out[0].src_markup if n.kind == 'tag']
+    assert any('<bpt' in c and 'i="1"' in c for c in tag_contents)
+    assert any('<ept' in c and 'i="1"' in c for c in tag_contents)
+
+
+def test_text_only_tu_has_none_markup_after_read(tmp_path):
+    # The common case: a <seg> with no child elements (just text) must
+    # leave src_markup/tgt_markup as None, not as a single-element list
+    # -- so downstream code that checks `if u.src_markup is None` doesn't
+    # have to also handle empty-list and single-text-node-list edge cases.
+    path = tmp_path / 'plain.tmx'
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<tmx version="1.4">\n'
+        '<header creationtool="Test" creationtoolversion="1.0" adminlang="en-US" '
+        'srclang="en-US" datatype="unknown" segtype="sentence"/>\n'
+        '<body><tu>'
+        '<tuv xml:lang="en-US"><seg>Hello world.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>你好世界。</seg></tuv>'
+        '</tu></body>\n'
+        '</tmx>', encoding='utf-8')
+    units = tmx_reader.read(str(path))
+    assert units[0].src_markup is None
+    assert units[0].tgt_markup is None
+
+
 def test_convert_wires_lang_through_to_tmx_reader_for_matching(tmp_path):
     # api.convert() must actually pass its own src_lang/tgt_lang into the
     # corpus reader when both are given -- otherwise tmx_reader's language-
