@@ -13,12 +13,41 @@ def test_flags_empty_source_and_target():
     assert 'EMPTY_TARGET' in units[1].meta['qa_issues']
 
 
-def test_flags_duplicate_tu():
+def test_exact_duplicate_tu_is_allowed():
+    # Repeated boilerplate/UI strings translated the same way every time
+    # is normal TM content (e.g. "Click OK." -> "点击确定。" appearing many
+    # times across a document), not a quality problem -- flagging it would
+    # just be noise.
     units = [_tu('Same text.', '相同文本。'), _tu('Same text.', '相同文本。'), _tu('Different.', '不同。')]
     qa.run(units, length_ratio=1.0)
-    assert 'DUPLICATE_TU' in units[0].meta['qa_issues']
-    assert 'DUPLICATE_TU' in units[1].meta['qa_issues']
-    assert 'DUPLICATE_TU' not in units[2].meta['qa_issues']
+    assert units[0].meta['qa_issues'] == []
+    assert units[1].meta['qa_issues'] == []
+    assert units[2].meta['qa_issues'] == []
+
+
+def test_flags_source_conflict_when_same_source_has_different_targets():
+    # The same source text translated two different ways is a real
+    # inconsistency worth a human's attention.
+    units = [_tu('Click OK.', '点击确定。'), _tu('Click OK.', '单击确定')]
+    qa.run(units, length_ratio=1.0)
+    assert 'SOURCE_CONFLICT' in units[0].meta['qa_issues']
+    assert 'SOURCE_CONFLICT' in units[1].meta['qa_issues']
+
+
+def test_flags_target_conflict_when_same_target_has_different_sources():
+    units = [_tu('Click OK.', '点击确定。'), _tu('Press OK.', '点击确定。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'TARGET_CONFLICT' in units[0].meta['qa_issues']
+    assert 'TARGET_CONFLICT' in units[1].meta['qa_issues']
+
+
+def test_empty_source_or_target_does_not_also_spuriously_flag_conflict():
+    # All-empty src_text units would otherwise all "conflict" with each
+    # other under a naive source->targets grouping keyed on ''.
+    units = [_tu('', 'target one'), _tu('', 'target two')]
+    qa.run(units, length_ratio=1.0)
+    assert 'SOURCE_CONFLICT' not in units[0].meta['qa_issues']
+    assert 'SOURCE_CONFLICT' not in units[1].meta['qa_issues']
 
 
 def test_flags_number_mismatch():

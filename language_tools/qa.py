@@ -2,10 +2,10 @@
 writing: flags likely-bad TUs for human review rather than blocking them.
 
 v1 scope is deliberately four checks, no more: empty segment, length-ratio
-outlier, duplicate TU, number mismatch. Tag/placeholder/URL checks are
-deferred until a tagged input format actually exists to test them against
-(see DESIGN.md section 9) -- adding them now would be untested surface
-area with no real input to validate against.
+outlier, translation-consistency conflict, number mismatch. Tag/
+placeholder/URL checks are deferred until a tagged input format actually
+exists to test them against (see DESIGN.md section 9) -- adding them now
+would be untested surface area with no real input to validate against.
 """
 import re
 
@@ -20,10 +20,21 @@ def run(units, length_ratio):
     """Mutates each unit's meta in place: 'qa_issues' (list[str]) and
     'qa_confidence' (float, 1.0 = no issues found). Returns units for
     chaining convenience.
+
+    Consistency check flags SOURCE_CONFLICT/TARGET_CONFLICT -- the same
+    source text mapping to more than one distinct target (or vice versa)
+    across the document, a real sign of inconsistent translation. An
+    *exact* duplicate pair (same source AND same target, appearing more
+    than once) is NOT flagged: repeated boilerplate/UI strings translated
+    the same way every time is normal, expected TM content, not a quality
+    problem -- flagging it would just be noise in the QA report.
     """
-    seen = {}
+    src_to_targets, tgt_to_sources = {}, {}
     for u in units:
-        seen.setdefault((u.src_text, u.tgt_text), []).append(u)
+        src, tgt = u.src_text.strip(), u.tgt_text.strip()
+        if src and tgt:  # empty src/tgt is EMPTY_SOURCE/EMPTY_TARGET's job, not a conflict
+            src_to_targets.setdefault(src, set()).add(tgt)
+            tgt_to_sources.setdefault(tgt, set()).add(src)
 
     for u in units:
         issues = []
@@ -48,8 +59,10 @@ def run(units, length_ratio):
                     issues.append('LENGTH_RATIO_OUTLIER')
             if _numbers(src) != _numbers(tgt):
                 issues.append('NUMBER_MISMATCH')
-        if len(seen[(u.src_text, u.tgt_text)]) > 1:
-            issues.append('DUPLICATE_TU')
+        if len(src_to_targets.get(src, ())) > 1:
+            issues.append('SOURCE_CONFLICT')
+        if len(tgt_to_sources.get(tgt, ())) > 1:
+            issues.append('TARGET_CONFLICT')
 
         u.meta['qa_issues'] = issues
         u.meta['qa_confidence'] = 1.0 if not issues else max(0.0, 1.0 - 0.25 * len(issues))
