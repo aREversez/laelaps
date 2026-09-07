@@ -109,3 +109,9 @@ pyinstaller packaging/language-toolbox.spec
 ```
 
 架构设计、开发阶段规划、已知限制、新增工具的接入方式见 [DESIGN.md](./DESIGN.md)。
+
+## SDLTM 兼容性验证
+
+本项目生成的 `.sdltm` 目标定位为 **Level 2 — Studio 可读可导入**（Trados Studio 能打开、浏览、搜索、编辑），明确不追求 Level 3（Trados 私有 fuzzy hash 算法位级一致）。
+
+Level 2 的实际验证需要真实的 Trados Studio 环境（授权、Windows、GUI 应用），无法 CI 化。我们用一份人工验证 ledger 记录每次验证的状态：[compatibility/studio-readable.md](./compatibility/studio-readable.md)。如果你手头有 Trados Studio，欢迎按文档里的步骤跑一遍并补充验证条目。
