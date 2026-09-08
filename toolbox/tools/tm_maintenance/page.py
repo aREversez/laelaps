@@ -1,0 +1,466 @@
+"""The TM-maintenance tool's page: three tabs (clean/merge/stats), each a
+thin form wrapping ``language_tools.tm.*`` directly -- same "no HTTP
+layer, just import and call the library" shape as
+``corpus_convert/page.py``, and the same ``QThread`` pattern
+(``TmWorker``) so a large TM doesn't freeze the UI while it's being
+processed.
+
+Unlike ``ConvertWorker`` (specific to ``api.convert()``'s kwargs shape),
+``TmWorker`` is a generic "run this zero-arg callable off the UI thread"
+wrapper -- shared across all three tabs, since none of clean/merge/stats
+needs a specialized ``run()`` body, just a function call that shouldn't
+block. Each tab wires its own callable (``_clean_job``/``_merge_job``/
+``_stats_job``, module-level so they're callable/testable without a
+QWidget) plus its own start/success/error handlers.
+
+Copy and layout conventions follow ``corpus_convert/page.py`` (see that
+file's docstring for the reasoning): short section titles, explanation in
+tooltips, ``_section()`` for headers, ``objectName('primaryButton')`` for
+the action button, ``objectName('logConsole')`` for output -- shared here
+across all three tabs rather than one log per tab, so the user has a
+single place to look regardless of which action they just ran.
+"""
+import html
+import os
+
+from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtWidgets import (
+    QAbstractItemView, QComboBox, QCheckBox, QFileDialog, QFormLayout,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton,
+    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+)
+
+from language_tools.tm import clean as clean_module
+from language_tools.tm import io as tm_io
+from language_tools.tm import merge as merge_module
+from language_tools.tm import stats as stats_module
+
+_CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
+_SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
+
+_LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
+
+_CLEAN_TOOLTIPS = {
+    'normalize': 'Unicode/空白标准化，让格式不同但内容相同的条目能被正确识别为重复',
+    'dedupe': '去除原文+译文完全相同的重复条目',
+    'remove_empty': '去除原文或译文为空的条目',
+    'remove_identical': '连原文=译文的条目也去掉（默认保留——有些内容本来就该原文译文一致，比如产品名）',
+}
+_CLEAN_OUTPUT_TOOLTIP = '留空则覆盖原文件'
+
+# (short label, technical value, tooltip detail) -- same shape as
+# corpus_convert's _LAYOUT_CHOICES.
+_STRATEGY_CHOICES = [
+    ('全部保留（默认）', 'keep-all', '不处理冲突，全部保留，交给后续人工/QA 检查'),
+    ('保留先出现的', 'prefer-first', '同一原文对应不同译文时，保留先出现的那条'),
+    ('保留后出现的', 'prefer-last', '同一原文对应不同译文时，保留后出现的那条'),
+    ('按修改时间取新', 'prefer-newer', '按时间戳保留较新的译文；没有时间戳的条目视为最旧'),
+]
+
+
+def _section(title, content_widget):
+    """Identical to corpus_convert/page.py's _section() -- kept as its own
+    copy rather than imported cross-tool, since a future third tool would
+    otherwise have to decide which existing tool "owns" the shared helper.
+    If a fourth tool needs it too, that's the signal to promote this into
+    a small toolbox/widgets.py shared module instead of a third copy.
+    """
+    wrapper = QWidget()
+    layout = QVBoxLayout(wrapper)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(6)
+
+    label = QLabel(title)
+    label.setProperty('role', 'sectionTitle')
+    layout.addWidget(label)
+
+    rule = QFrame()
+    rule.setProperty('role', 'hairline')
+    layout.addWidget(rule)
+
+    layout.addWidget(content_widget)
+    return wrapper
+
+
+def _clean_job(input_path, output_path, normalize, dedupe, remove_empty, remove_identical):
+    units = tm_io.read_corpus(input_path)
+    src_lang, tgt_lang = tm_io.infer_langs(units)
+    kept, report = clean_module.clean(
+        units, normalize=normalize, dedupe=dedupe,
+        remove_empty=remove_empty, remove_identical=remove_identical)
+    tm_io.write_corpus(output_path, kept, src_lang, tgt_lang)
+    report['output_path'] = output_path
+    return report
+
+
+def _merge_job(input_paths, output_path, strategy):
+    unit_lists = [tm_io.read_corpus(p) for p in input_paths]
+    merged, report = merge_module.merge(unit_lists, strategy=strategy)
+    src_lang, tgt_lang = tm_io.infer_langs(merged)
+    tm_io.write_corpus(output_path, merged, src_lang, tgt_lang)
+    report['output_path'] = output_path
+    report['strategy'] = strategy
+    return report
+
+
+def _stats_job(input_path):
+    units = tm_io.read_corpus(input_path)
+    return stats_module.compute(units)
+
+
+class TmWorker(QThread):
+    """Runs an arbitrary zero-arg callable off the UI thread. See module
+    docstring for why this is generic rather than one subclass per tab.
+    """
+    finished_ok = Signal(object)
+    finished_err = Signal(str)
+
+    def __init__(self, fn, parent=None):
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self):
+        try:
+            result = self._fn()
+        except Exception as e:  # noqa: BLE001 -- surfaced to the user, not swallowed
+            self.finished_err.emit(str(e))
+            return
+        self.finished_ok.emit(result)
+
+
+class TmMaintenancePage(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._clean_worker = None
+        self._merge_worker = None
+        self._stats_worker = None
+        self._build_ui()
+
+    # ---------------------------------------------------------------- UI
+    def _build_ui(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(28, 24, 28, 24)
+        outer.setSpacing(18)
+
+        title = QLabel('语料维护')
+        title.setStyleSheet('font-size: 20px; font-weight: 600;')
+        outer.addWidget(title)
+        subtitle = QLabel('清理、合并、统计翻译记忆库文件（tmx/sdltm）')
+        subtitle.setStyleSheet('color: #6B7280;')
+        outer.addWidget(subtitle)
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self._build_clean_tab(), '清理')
+        self.tabs.addTab(self._build_merge_tab(), '合并')
+        self.tabs.addTab(self._build_stats_tab(), '统计')
+        outer.addWidget(self.tabs)
+
+        self.log = QTextEdit()
+        self.log.setObjectName('logConsole')
+        self.log.setReadOnly(True)
+        self.log.setPlaceholderText('操作结果会显示在这里')
+        outer.addWidget(self.log, 1)
+
+    def _build_clean_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setSpacing(14)
+
+        file_row = QWidget()
+        file_layout = QHBoxLayout(file_row)
+        file_layout.setContentsMargins(0, 0, 0, 0)
+        self.clean_input_edit = QLineEdit()
+        self.clean_input_edit.setPlaceholderText('选择要清理的 tmx/sdltm 文件…')
+        browse_btn = QPushButton('浏览…')
+        browse_btn.clicked.connect(self._browse_clean_input)
+        file_layout.addWidget(self.clean_input_edit, 1)
+        file_layout.addWidget(browse_btn)
+        layout.addWidget(_section('选择文件', file_row))
+
+        output_row = QWidget()
+        output_layout = QHBoxLayout(output_row)
+        output_layout.setContentsMargins(0, 0, 0, 0)
+        self.clean_output_edit = QLineEdit()
+        self.clean_output_edit.setPlaceholderText('留空则覆盖原文件')
+        self.clean_output_edit.setToolTip(_CLEAN_OUTPUT_TOOLTIP)
+        output_browse_btn = QPushButton('另存为…')
+        output_browse_btn.clicked.connect(self._browse_clean_output)
+        output_layout.addWidget(self.clean_output_edit, 1)
+        output_layout.addWidget(output_browse_btn)
+        layout.addWidget(_section('输出到（可选）', output_row))
+
+        opts_row = QWidget()
+        opts_layout = QHBoxLayout(opts_row)
+        opts_layout.setContentsMargins(0, 0, 0, 0)
+        self.clean_chk_normalize = QCheckBox('标准化')
+        self.clean_chk_dedupe = QCheckBox('去重')
+        self.clean_chk_remove_empty = QCheckBox('去空段')
+        self.clean_chk_remove_identical = QCheckBox('去原文=译文')
+        for cb, key, default in (
+            (self.clean_chk_normalize, 'normalize', True),
+            (self.clean_chk_dedupe, 'dedupe', True),
+            (self.clean_chk_remove_empty, 'remove_empty', True),
+            (self.clean_chk_remove_identical, 'remove_identical', False),
+        ):
+            cb.setChecked(default)
+            cb.setToolTip(_CLEAN_TOOLTIPS[key])
+            opts_layout.addWidget(cb)
+        opts_layout.addStretch(1)
+        layout.addWidget(_section('清理选项', opts_row))
+
+        self.clean_btn = QPushButton('开始清理')
+        self.clean_btn.setObjectName('primaryButton')
+        self.clean_btn.clicked.connect(self._start_clean)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.clean_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+        layout.addStretch(1)
+        return tab
+
+    def _build_merge_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setSpacing(14)
+
+        list_widget = QWidget()
+        list_layout = QVBoxLayout(list_widget)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(6)
+        self.merge_list = QListWidget()
+        self.merge_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.merge_list.setToolTip('要合并的 tmx/sdltm 文件，按添加顺序参与冲突判定')
+        list_layout.addWidget(self.merge_list)
+        list_btn_row = QHBoxLayout()
+        self.merge_add_btn = QPushButton('添加文件…')
+        self.merge_add_btn.clicked.connect(self._browse_merge_inputs)
+        self.merge_remove_btn = QPushButton('移除选中')
+        self.merge_remove_btn.clicked.connect(self._remove_selected_merge_inputs)
+        self.merge_clear_btn = QPushButton('清空')
+        self.merge_clear_btn.clicked.connect(self.merge_list.clear)
+        list_btn_row.addWidget(self.merge_add_btn)
+        list_btn_row.addWidget(self.merge_remove_btn)
+        list_btn_row.addWidget(self.merge_clear_btn)
+        list_btn_row.addStretch(1)
+        list_layout.addLayout(list_btn_row)
+        layout.addWidget(_section('第一步：选择要合并的文件（可多选）', list_widget))
+
+        output_row = QWidget()
+        output_layout = QHBoxLayout(output_row)
+        output_layout.setContentsMargins(0, 0, 0, 0)
+        self.merge_output_edit = QLineEdit()
+        self.merge_output_edit.setPlaceholderText('合并结果保存到…')
+        output_browse_btn = QPushButton('另存为…')
+        output_browse_btn.clicked.connect(self._browse_merge_output)
+        output_layout.addWidget(self.merge_output_edit, 1)
+        output_layout.addWidget(output_browse_btn)
+        layout.addWidget(_section('第二步：保存到', output_row))
+
+        strategy_widget = QWidget()
+        strategy_form = QFormLayout(strategy_widget)
+        strategy_form.setContentsMargins(0, 0, 0, 0)
+        self.merge_strategy_combo = QComboBox()
+        self.merge_strategy_combo.setToolTip('同一原文在不同文件里译文不一样时怎么处理')
+        for i, (display_text, value, item_tip) in enumerate(_STRATEGY_CHOICES):
+            self.merge_strategy_combo.addItem(display_text, value)
+            self.merge_strategy_combo.setItemData(i, item_tip, Qt.ToolTipRole)
+        strategy_form.addRow('冲突处理策略', self.merge_strategy_combo)
+        layout.addWidget(_section('第三步：冲突处理', strategy_widget))
+
+        self.merge_btn = QPushButton('开始合并')
+        self.merge_btn.setObjectName('primaryButton')
+        self.merge_btn.clicked.connect(self._start_merge)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.merge_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+        layout.addStretch(1)
+        return tab
+
+    def _build_stats_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setSpacing(14)
+
+        file_row = QWidget()
+        file_layout = QHBoxLayout(file_row)
+        file_layout.setContentsMargins(0, 0, 0, 0)
+        self.stats_input_edit = QLineEdit()
+        self.stats_input_edit.setPlaceholderText('选择要查看统计的 tmx/sdltm 文件…')
+        browse_btn = QPushButton('浏览…')
+        browse_btn.clicked.connect(self._browse_stats_input)
+        file_layout.addWidget(self.stats_input_edit, 1)
+        file_layout.addWidget(browse_btn)
+        layout.addWidget(_section('选择文件', file_row))
+
+        self.stats_btn = QPushButton('查看统计')
+        self.stats_btn.setObjectName('primaryButton')
+        self.stats_btn.clicked.connect(self._start_stats)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.stats_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+        layout.addStretch(1)
+        return tab
+
+    # ------------------------------------------------------------ logging
+    def _log(self, message, kind='info'):
+        color = _LOG_COLORS.get(kind, _LOG_COLORS['info'])
+        self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))
+
+    # ------------------------------------------------------- file dialogs
+    def _browse_clean_input(self):
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _CORPUS_FILTER)
+        if path:
+            self.clean_input_edit.setText(path)
+
+    def _browse_clean_output(self):
+        path, _ = QFileDialog.getSaveFileName(self, '另存为', '', _SAVE_FILTER)
+        if path:
+            self.clean_output_edit.setText(path)
+
+    def _browse_merge_inputs(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件（可多选）', '', _CORPUS_FILTER)
+        existing = {self.merge_list.item(i).text() for i in range(self.merge_list.count())}
+        for path in paths:
+            if path not in existing:
+                self.merge_list.addItem(path)
+
+    def _remove_selected_merge_inputs(self):
+        for item in self.merge_list.selectedItems():
+            self.merge_list.takeItem(self.merge_list.row(item))
+
+    def _browse_merge_output(self):
+        path, _ = QFileDialog.getSaveFileName(self, '另存为', '', _SAVE_FILTER)
+        if path:
+            self.merge_output_edit.setText(path)
+
+    def _browse_stats_input(self):
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _CORPUS_FILTER)
+        if path:
+            self.stats_input_edit.setText(path)
+
+    # ----------------------------------------------------------- clean
+    def _validate_clean(self):
+        input_path = self.clean_input_edit.text().strip()
+        if not input_path:
+            return '请先选择要清理的文件'
+        if not os.path.exists(input_path):
+            return '找不到这个文件，请重新选择'
+        if not any((self.clean_chk_normalize.isChecked(), self.clean_chk_dedupe.isChecked(),
+                    self.clean_chk_remove_empty.isChecked(), self.clean_chk_remove_identical.isChecked())):
+            return '请至少勾选一项清理选项'
+        return None
+
+    def _start_clean(self):
+        error = self._validate_clean()
+        if error:
+            self._log(error, 'error')
+            return
+
+        input_path = self.clean_input_edit.text().strip()
+        output_path = self.clean_output_edit.text().strip() or input_path
+        fn_kwargs = dict(
+            input_path=input_path, output_path=output_path,
+            normalize=self.clean_chk_normalize.isChecked(),
+            dedupe=self.clean_chk_dedupe.isChecked(),
+            remove_empty=self.clean_chk_remove_empty.isChecked(),
+            remove_identical=self.clean_chk_remove_identical.isChecked(),
+        )
+        self.clean_btn.setEnabled(False)
+        self._log('正在清理…')
+        self._clean_worker = TmWorker(lambda: _clean_job(**fn_kwargs), parent=self)
+        self._clean_worker.finished_ok.connect(self._on_clean_ok)
+        self._clean_worker.finished_err.connect(self._on_clean_err)
+        self._clean_worker.start()
+
+    def _on_clean_ok(self, report):
+        self.clean_btn.setEnabled(True)
+        self._log(
+            '清理完成：%d 条 -> %d 条（去重 %d，去空段 %d，去原文=译文 %d，标准化 %d 条）'
+            % (report['input'], report['output'], report['removed_duplicate'],
+               report['removed_empty'], report['removed_identical'], report['normalized']),
+            'success')
+        self._log('已保存到 %s' % report['output_path'])
+
+    def _on_clean_err(self, message):
+        self.clean_btn.setEnabled(True)
+        self._log('出错了：%s' % message, 'error')
+
+    # ----------------------------------------------------------- merge
+    def _validate_merge(self):
+        if self.merge_list.count() == 0:
+            return '请先添加要合并的文件'
+        if not self.merge_output_edit.text().strip():
+            return '请指定合并结果的保存位置'
+        return None
+
+    def _start_merge(self):
+        error = self._validate_merge()
+        if error:
+            self._log(error, 'error')
+            return
+
+        input_paths = [self.merge_list.item(i).text() for i in range(self.merge_list.count())]
+        output_path = self.merge_output_edit.text().strip()
+        strategy = self.merge_strategy_combo.currentData()
+        fn_kwargs = dict(input_paths=input_paths, output_path=output_path, strategy=strategy)
+
+        self.merge_btn.setEnabled(False)
+        self._log('正在合并 %d 个文件…' % len(input_paths))
+        self._merge_worker = TmWorker(lambda: _merge_job(**fn_kwargs), parent=self)
+        self._merge_worker.finished_ok.connect(self._on_merge_ok)
+        self._merge_worker.finished_err.connect(self._on_merge_err)
+        self._merge_worker.start()
+
+    def _on_merge_ok(self, report):
+        self.merge_btn.setEnabled(True)
+        self._log(
+            '合并完成：%d 条 -> %d 条（策略：%s，解决冲突 %d 处）'
+            % (report['input'], report['output'], report['strategy'], report['conflicts_resolved']),
+            'success')
+        self._log('已保存到 %s' % report['output_path'])
+
+    def _on_merge_err(self, message):
+        self.merge_btn.setEnabled(True)
+        self._log('出错了：%s' % message, 'error')
+
+    # ----------------------------------------------------------- stats
+    def _validate_stats(self):
+        input_path = self.stats_input_edit.text().strip()
+        if not input_path:
+            return '请先选择要查看统计的文件'
+        if not os.path.exists(input_path):
+            return '找不到这个文件，请重新选择'
+        return None
+
+    def _start_stats(self):
+        error = self._validate_stats()
+        if error:
+            self._log(error, 'error')
+            return
+
+        input_path = self.stats_input_edit.text().strip()
+        self.stats_btn.setEnabled(False)
+        self._log('正在统计…')
+        self._stats_worker = TmWorker(lambda: _stats_job(input_path), parent=self)
+        self._stats_worker.finished_ok.connect(self._on_stats_ok)
+        self._stats_worker.finished_err.connect(self._on_stats_err)
+        self._stats_worker.start()
+
+    def _on_stats_ok(self, s):
+        self.stats_btn.setEnabled(True)
+        self._log(
+            '共 %d 条，去重后 %d 条（重复率 %.1f%%），空原文 %d 条，空译文 %d 条，长度比 %.3f'
+            % (s['total'], s['unique_pairs'], s['duplicate_rate'] * 100,
+               s['empty_source'], s['empty_target'], s['length_ratio']),
+            'success')
+        for pair, count in sorted(s['lang_pairs'].items()):
+            self._log('· %s：%d 条' % (pair, count))
+
+    def _on_stats_err(self, message):
+        self.stats_btn.setEnabled(True)
+        self._log('出错了：%s' % message, 'error')

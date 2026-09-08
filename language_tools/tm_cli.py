@@ -12,45 +12,17 @@ argument parsing plus a call into ``language_tools.tm.<module>``, so a
 future GUI tool page can call the same functions directly.
 """
 import argparse
-import os
 import sys
 
-from language_tools.corpus_readers import sdltm_reader, tmx_reader
 from language_tools.tm import clean as clean_module
+from language_tools.tm import io as tm_io
 from language_tools.tm import merge as merge_module
 from language_tools.tm import stats as stats_module
-from language_tools.writers import sdltm_writer, tmx_writer
-
-_CORPUS_READERS = {'.tmx': tmx_reader.read, '.sdltm': sdltm_reader.read}
-_CORPUS_WRITERS = {'.tmx': tmx_writer.write, '.sdltm': sdltm_writer.write}
-
-
-def _read_corpus(path):
-    ext = os.path.splitext(path)[1].lower()
-    if ext not in _CORPUS_READERS:
-        raise ValueError('unsupported corpus format %r (expected .tmx or .sdltm)' % ext)
-    return _CORPUS_READERS[ext](path)
-
-
-def _write_corpus(path, units, src_lang, tgt_lang, name):
-    ext = os.path.splitext(path)[1].lower()
-    if ext not in _CORPUS_WRITERS:
-        raise ValueError('unsupported corpus format %r (expected .tmx or .sdltm)' % ext)
-    if ext == '.sdltm':
-        sdltm_writer.write(path, units, src_lang, tgt_lang, name)
-    else:
-        tmx_writer.write(path, units, src_lang, tgt_lang)
-
-
-def _infer_langs(units):
-    if not units:
-        return '', ''
-    return units[0].src_lang, units[0].tgt_lang
 
 
 def _cmd_clean(args):
-    units = _read_corpus(args.input)
-    src_lang, tgt_lang = _infer_langs(units)
+    units = tm_io.read_corpus(args.input)
+    src_lang, tgt_lang = tm_io.infer_langs(units)
     kept, report = clean_module.clean(
         units,
         normalize=not args.no_normalize,
@@ -59,8 +31,7 @@ def _cmd_clean(args):
         remove_identical=args.remove_identical,
     )
     output = args.output or args.input
-    name = os.path.splitext(os.path.basename(output))[0][:80]
-    _write_corpus(output, kept, src_lang, tgt_lang, name)
+    tm_io.write_corpus(output, kept, src_lang, tgt_lang)
     print('Input=%d Output=%d Duplicates=%d Empty=%d Identical=%d Normalized=%d' % (
         report['input'], report['output'], report['removed_duplicate'],
         report['removed_empty'], report['removed_identical'], report['normalized']))
@@ -69,11 +40,10 @@ def _cmd_clean(args):
 
 
 def _cmd_merge(args):
-    unit_lists = [_read_corpus(p) for p in args.inputs]
+    unit_lists = [tm_io.read_corpus(p) for p in args.inputs]
     merged, report = merge_module.merge(unit_lists, strategy=args.strategy)
-    src_lang, tgt_lang = _infer_langs(merged)
-    name = os.path.splitext(os.path.basename(args.output))[0][:80]
-    _write_corpus(args.output, merged, src_lang, tgt_lang, name)
+    src_lang, tgt_lang = tm_io.infer_langs(merged)
+    tm_io.write_corpus(args.output, merged, src_lang, tgt_lang)
     print('Input=%d Output=%d ConflictsResolved=%d Strategy=%s' % (
         report['input'], report['output'], report['conflicts_resolved'], args.strategy))
     print('Wrote %s' % args.output)
@@ -81,7 +51,7 @@ def _cmd_merge(args):
 
 
 def _cmd_stats(args):
-    units = _read_corpus(args.input)
+    units = tm_io.read_corpus(args.input)
     s = stats_module.compute(units)
     print('Total=%d Unique=%d Duplicates=%d (%.1f%%)' % (
         s['total'], s['unique_pairs'], s['duplicate_pairs'], s['duplicate_rate'] * 100))

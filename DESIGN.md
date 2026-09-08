@@ -267,6 +267,9 @@ toolbox/                    # 与 language_tools/ 同仓库同级，GUI层
     ├── corpus_convert/       # 第一个工具，包装 language_tools.api.convert()
     │   ├── __init__.py       # 注册 ToolSpec
     │   └── page.py            # QWidget 表单 + QThread worker（避免转换时卡UI）
+    ├── tm_maintenance/       # 第二个工具，包装 language_tools.tm.*（清理/合并/统计）
+    │   ├── __init__.py       # 注册 ToolSpec
+    │   └── page.py            # 三个标签页（清理/合并/统计），共用一个通用 TmWorker
     └── <future_tool>/        # 新工具照此结构新增文件夹即可，main_window.py 不用改
 ```
 
@@ -290,7 +293,7 @@ class ToolSpec:
 
 ### 转换耗时与线程
 
-GUI 直接函数调用 `api.convert()`，为避免大文件转换时界面卡死，放进 `QThread`（`ConvertWorker`）跑，通过 Qt 信号（`finished_ok`/`finished_err`）把结果送回主线程更新界面。这个模式后续每个新工具但凡涉及可能耗时的操作都应该沿用，不要在主线程里跑重活。
+GUI 直接函数调用 `api.convert()`，为避免大文件转换时界面卡死，放进 `QThread`（`ConvertWorker`）跑，通过 Qt 信号（`finished_ok`/`finished_err`）把结果送回主线程更新界面。这个模式后续每个新工具但凡涉及可能耗时的操作都应该沿用，不要在主线程里跑重活。`tm_maintenance` 工具的三个操作（清理/合并/统计）没有各自独立的 kwargs 形状，所以用了一个更通用的 `TmWorker`（接收任意零参数 callable），而不是像 `ConvertWorker` 那样为单一函数签名定制——如果新工具的耗时操作也是"调一个函数、等结果"这种形状，优先复用/参考 `TmWorker` 这种通用写法，只有当参数/回调形状明显不同时才需要专门的 Worker 子类。
 
 ### 测试
 
