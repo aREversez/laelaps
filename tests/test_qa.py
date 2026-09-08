@@ -1,9 +1,17 @@
+from conftest import tmx_path
+
 from language_tools import qa
-from language_tools.model import TranslationUnit
+from language_tools.corpus_readers import tmx_reader
+from language_tools.model import InlineNode, TranslationUnit
 
 
 def _tu(src, tgt):
     return TranslationUnit(src_lang='en-US', tgt_lang='zh-CN', src_text=src, tgt_text=tgt)
+
+
+def _tu_markup(src, tgt, src_markup=None, tgt_markup=None):
+    return TranslationUnit(src_lang='en-US', tgt_lang='zh-CN', src_text=src, tgt_text=tgt,
+                            src_markup=src_markup, tgt_markup=tgt_markup)
 
 
 def test_flags_empty_source_and_target():
@@ -121,6 +129,119 @@ def test_confidence_is_one_when_no_issues():
     qa.run(units, length_ratio=1.0)
     assert units[0].meta['qa_issues'] == []
     assert units[0].meta['qa_confidence'] == 1.0
+
+
+def test_placeholder_mismatch_flags_renamed_variable():
+    units = [_tu('Welcome, {name}!', '欢迎，{名字}！')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PLACEHOLDER_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_no_placeholder_mismatch_when_token_matches():
+    units = [_tu('Welcome, {name}!', '欢迎，{name}！')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PLACEHOLDER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_placeholder_mismatch_flags_dropped_printf_style_token():
+    units = [_tu('Found %d results.', '找到了结果。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PLACEHOLDER_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_no_placeholder_mismatch_when_neither_side_has_one():
+    units = [_tu('Plain sentence.', '普通句子。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PLACEHOLDER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_url_mismatch_flags_dropped_url():
+    units = [_tu('See https://example.com/docs for details.', '详情见文档。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'URL_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_no_url_mismatch_when_url_matches():
+    units = [_tu('See https://example.com/docs for details.', '详情见 https://example.com/docs。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'URL_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_url_mismatch_flags_altered_url():
+    # Same domain, different path -- a translator (or a bad find/replace)
+    # pointed the link somewhere else.
+    units = [_tu('See https://example.com/docs for details.',
+                 '详情见 https://example.com/other。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'URL_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_tag_mismatch_flags_dropped_formatting():
+    src_markup = [InlineNode(kind='text', content='Please '),
+                  InlineNode(kind='tag', content='<bpt i="1">&lt;b&gt;</bpt>'),
+                  InlineNode(kind='text', content='save'),
+                  InlineNode(kind='tag', content='<ept i="1">&lt;/b&gt;</ept>'),
+                  InlineNode(kind='text', content=' your work.')]
+    units = [_tu_markup('Please save your work.', '请保存您的工作。', src_markup=src_markup)]
+    qa.run(units, length_ratio=1.0)
+    assert 'TAG_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_no_tag_mismatch_when_neither_side_has_markup():
+    units = [_tu_markup('Plain sentence.', '普通句子。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'TAG_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_no_tag_mismatch_when_tag_reordered_but_counts_match():
+    # Translator moved the bold span relative to surrounding words -- a
+    # normal target-language word-order adjustment, not a defect. Only
+    # tag *type counts* are compared, not position.
+    src_markup = [InlineNode(kind='tag', content='<bpt i="1">&lt;b&gt;</bpt>'),
+                  InlineNode(kind='text', content='OK'),
+                  InlineNode(kind='tag', content='<ept i="1">&lt;/b&gt;</ept>'),
+                  InlineNode(kind='text', content=' now')]
+    tgt_markup = [InlineNode(kind='text', content='现在 '),
+                  InlineNode(kind='tag', content='<bpt i="1">&lt;b&gt;</bpt>'),
+                  InlineNode(kind='text', content='确定'),
+                  InlineNode(kind='tag', content='<ept i="1">&lt;/b&gt;</ept>')]
+    units = [_tu_markup('OK now', '现在确定', src_markup=src_markup, tgt_markup=tgt_markup)]
+    qa.run(units, length_ratio=1.0)
+    assert 'TAG_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_tag_mismatch_flags_extra_tag_on_target_side():
+    tgt_markup = [InlineNode(kind='tag', content='<hi>已经</hi>'),
+                  InlineNode(kind='text', content='准备就绪')]
+    units = [_tu_markup('Ready.', '已经准备就绪。', tgt_markup=tgt_markup)]
+    qa.run(units, length_ratio=1.0)
+    assert 'TAG_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_inline_markup_fixture_end_to_end():
+    # Real TMX with hand-written bpt/ept/ph/hi inline tags, read through
+    # the actual tmx_reader (not hand-built InlineNode lists) -- exercises
+    # the real parse path the checks above assume.
+    units = tmx_reader.read(tmx_path('inline_markup_qa.tmx'))
+    qa.run(units, length_ratio=1.0)
+    assert len(units) == 8
+
+    # tu 1: reordered bold span, same tag counts -> no TAG_MISMATCH
+    assert 'TAG_MISMATCH' not in units[0].meta['qa_issues']
+    # tu 2: target dropped the bold formatting entirely
+    assert 'TAG_MISMATCH' in units[1].meta['qa_issues']
+    # tu 3: target added a <hi> span the source doesn't have
+    assert 'TAG_MISMATCH' in units[2].meta['qa_issues']
+    # tu 4: matching <ph> placeholder tag on both sides
+    assert 'TAG_MISMATCH' not in units[3].meta['qa_issues']
+    # tu 5: matching text placeholder token
+    assert 'PLACEHOLDER_MISMATCH' not in units[4].meta['qa_issues']
+    # tu 6: translator renamed the placeholder variable
+    assert 'PLACEHOLDER_MISMATCH' in units[5].meta['qa_issues']
+    # tu 7: URL preserved
+    assert 'URL_MISMATCH' not in units[6].meta['qa_issues']
+    # tu 8: URL dropped
+    assert 'URL_MISMATCH' in units[7].meta['qa_issues']
 
 
 def test_csv_writer_qa_columns_opt_in(tmp_path):

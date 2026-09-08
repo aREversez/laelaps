@@ -1,13 +1,40 @@
 """Lightweight QA layer (DESIGN.md section 9). Runs after alignment, before
 writing: flags likely-bad TUs for human review rather than blocking them.
 
-v1 scope is deliberately four checks, no more: empty segment, length-ratio
-outlier, translation-consistency conflict, number mismatch. Tag/
-placeholder/URL checks are deferred until a tagged input format actually
-exists to test them against (see DESIGN.md section 9) -- adding them now
-would be untested surface area with no real input to validate against.
+v1 scope was deliberately four checks: empty segment, length-ratio outlier,
+translation-consistency conflict, number mismatch. Tag/placeholder/URL
+checks were deferred until a tagged input format actually existed to test
+them against (see DESIGN.md section 9) -- adding them earlier would have
+been untested surface area with no real input to validate against.
 
-Number normalization (added in this commit): the original NUMBER_MISMATCH
+v2 (this commit) adds those three now that ``tmx_reader`` populates
+``src_markup``/``tgt_markup`` for TMX ``<seg>`` elements containing inline
+tags (bpt/ept/ph/hi/...), so there is real tagged input to test against:
+
+- TAG_MISMATCH: compares inline-tag *type counts* between src_markup and
+  tgt_markup (e.g. one ``<bpt>``/``<ept>`` pair on each side). Deliberately
+  narrow, matching the project's existing caution about not over-building
+  (see NUMBER_MISMATCH notes below): this does NOT verify tag *order*,
+  *id*-pairing (TMX ``bpt i="1"``/``ept i="1"``), or nesting -- only that
+  the same tag types appear the same number of times on both sides. A
+  translator who drops a formatting tag, or a tool that mangles one, still
+  gets caught; a translator who legitimately reorders "<b>bold</b> text"
+  to "text <b>bold</b>" does not get flagged for reordering, which is
+  correct (reordering inline formatting to fit target-language word order
+  is normal, not a defect). Units with no markup on either side (the
+  common case -- plain-text TUs from docx/xlsx/csv, or TMX <seg> with no
+  child elements) are skipped entirely, same as before this check existed.
+- PLACEHOLDER_MISMATCH: compares the *set* of placeholder tokens (``{name}``,
+  ``{0}``, ``%s``, ``%d``, ``%(name)s``) found in the visible src/tgt text.
+  Placeholders are code, not prose -- a translation must reproduce them
+  exactly, unlike numbers (which can be reformatted) or tags (which can be
+  reordered). Case-sensitive, exact-string comparison for that reason.
+- URL_MISMATCH: compares the set of ``http(s)://`` URLs found in src/tgt
+  text. A URL dropped or altered in translation is almost always a defect
+  (broken/missing link), so this stays a straight set-equality check with
+  no fuzzy tolerance.
+
+Number normalization: the original NUMBER_MISMATCH
 check compared raw digit-with-optional-decimal-separator matches between
 src and tgt -- which false-fires on common legitimate formatting variation
 like ``$1,000`` vs ``1000 dollars`` (the thousands-separator comma makes
@@ -54,6 +81,25 @@ _THOUSANDS_RE = re.compile(
 # remaining separator is the decimal one.
 _DECIMAL_RE = re.compile(r'(\d),(\d)')
 
+# Placeholder tokens: Python-style ``{name}``/``{0}``, printf-style
+# ``%s``/``%d``/``%(name)s``. Curly-brace token body excludes braces/
+# whitespace and is capped at 50 chars so a stray unmatched "{" in prose
+# text can't run the match on for the rest of the string.
+_PLACEHOLDER_RE = re.compile(r'\{[^{}\s]{1,50}\}|%\(\w+\)[sdfgxX]|%[sdfgxX]')
+
+# URL matcher: greedy up to whitespace, then trailing punctuation commonly
+# adjacent to a URL in prose (closing parens/quotes, sentence-ending
+# punctuation incl. CJK) is stripped off in _extract_urls rather than
+# excluded from the character class here, since excluding them from the
+# class would also wrongly truncate URLs that legitimately contain them
+# (e.g. a query string with a literal ')').
+_URL_RE = re.compile(r'https?://\S+')
+_URL_TRAILING_PUNCT = '.,;:!?)\'"\u3001\u3002\uff0c\uff1b\uff1a\uff01\uff1f\uff09'
+
+# Inline-tag element-name extractor: pulls "bpt" out of a raw XML fragment
+# like ``<bpt i="1">&lt;b&gt;</bpt>`` (an InlineNode 'tag' node's content).
+_TAG_NAME_RE = re.compile(r'<\s*([a-zA-Z][\w:-]*)')
+
 
 def _normalize_numbers(text):
     """Return the set of normalized numeric values found in ``text``.
@@ -83,6 +129,34 @@ def _normalize_numbers(text):
             norm = m
         out.add(norm)
     return out
+
+
+def _extract_placeholders(text):
+    return set(_PLACEHOLDER_RE.findall(text))
+
+
+def _extract_urls(text):
+    urls = set()
+    for m in _URL_RE.findall(text):
+        urls.add(m.rstrip(_URL_TRAILING_PUNCT))
+    return urls
+
+
+def _tag_type_counts(markup):
+    """Returns {tag_name: count} for the 'tag' nodes in an InlineNode list.
+    ``markup`` of None or [] returns {} -- callers treat two empty dicts
+    as "no markup on either side, nothing to check" rather than a mismatch.
+    """
+    if not markup:
+        return {}
+    counts = {}
+    for node in markup:
+        if node.kind != 'tag':
+            continue
+        m = _TAG_NAME_RE.match(node.content)
+        name = m.group(1) if m else '?'
+        counts[name] = counts.get(name, 0) + 1
+    return counts
 
 
 def run(units, length_ratio):
@@ -128,6 +202,12 @@ def run(units, length_ratio):
                     issues.append('LENGTH_RATIO_OUTLIER')
             if _normalize_numbers(src) != _normalize_numbers(tgt):
                 issues.append('NUMBER_MISMATCH')
+            if _extract_placeholders(src) != _extract_placeholders(tgt):
+                issues.append('PLACEHOLDER_MISMATCH')
+            if _extract_urls(src) != _extract_urls(tgt):
+                issues.append('URL_MISMATCH')
+            if _tag_type_counts(u.src_markup) != _tag_type_counts(u.tgt_markup):
+                issues.append('TAG_MISMATCH')
         if len(src_to_targets.get(src, ())) > 1:
             issues.append('SOURCE_CONFLICT')
         if len(tgt_to_sources.get(tgt, ())) > 1:

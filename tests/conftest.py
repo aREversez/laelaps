@@ -5,6 +5,7 @@ DOCX_DIR = os.path.join(FIXTURES, 'docx')
 XLSX_DIR = os.path.join(FIXTURES, 'xlsx')
 CSV_DIR = os.path.join(FIXTURES, 'csv')
 EXPECTED_DIR = os.path.join(FIXTURES, 'expected')
+TMX_DIR = os.path.join(FIXTURES, 'tmx')
 
 
 def fixture_path(name):
@@ -21,3 +22,7 @@ def csv_path(name):
 
 def expected_path(name):
     return os.path.join(EXPECTED_DIR, name)
+
+
+def tmx_path(name):
+    return os.path.join(TMX_DIR, name)

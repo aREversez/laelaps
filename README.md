@@ -7,7 +7,8 @@
 - **双语文档 → 翻译记忆库**：docx（三种版式）、xlsx、csv/tsv → sdltm、tmx、csv
 - **语料库互转**：tmx ↔ sdltm，语言自动从内容识别
 - 内置 Gale-Church 式句级对齐算法，处理常见缩写（a.m./e.g./U.S. 等）不误切句
-- 轻量 QA 检查：空值、长度比异常、重复条目、数字不匹配，可选导出为审阅报告
+- QA 检查：空值、长度比异常、重复条目（源冲突/译文冲突）、数字不匹配、占位符不匹配（`{name}`/`%s` 等）、URL 丢失或改动、inline 标签不匹配（TMX 带格式标记时），可选导出为审阅报告
+- **TM 维护**（`tmtool` 命令行）：清理（去重/去空/normalize）、多文件合并（可选冲突策略）、语料统计 —— 目前仅命令行，未接入桌面 GUI
 - 桌面 GUI（PySide6），也可以纯命令行/脚本调用
 - 打包成本地 Windows exe，不需要联网、不上传文件
 
@@ -41,6 +42,23 @@ biconvert input.docx --src en-US --tgt zh-CN --min-confidence 0.6   # 低质量�
 ```
 
 `biconvert --help` 看完整参数。
+
+### TM 维护（`tmtool`，独立命令行）
+
+只处理 tmx/sdltm 语料库文件，不涉及双语源文件转换，所以是单独的命令，不是 `biconvert` 的子选项。**目前只有命令行，还没有接入桌面 GUI。**
+
+```bash
+tmtool clean a.tmx                                    # 原地清理：normalize + 去重 + 去空段
+tmtool clean a.tmx -o cleaned.tmx                      # 清理后另存，不改原文件
+tmtool clean a.tmx --remove-identical                  # 连 source==target 的条目也去掉（默认保留）
+tmtool merge a.tmx b.tmx c.tmx -o merged.tmx           # 合并，默认策略 keep-all（全保留，不解决冲突）
+tmtool merge a.tmx b.tmx -o merged.tmx --strategy prefer-newer  # 同源不同译时按 modified_at 取较新的
+tmtool stats a.tmx                                     # 打印条目数/去重率/空段/语言对分布
+```
+
+合并冲突策略（`--strategy`）：`keep-all`（默认，全部保留，交给后续 QA 检查去发现冲突）、`prefer-first`（同源冲突时保留先出现的译文）、`prefer-last`（保留后出现的）、`prefer-newer`（按 `modified_at` 时间戳取较新的，没有时间戳的条目视为最旧）。
+
+`tmtool <子命令> --help` 看完整参数。
 
 ### 作为 Python 库
 

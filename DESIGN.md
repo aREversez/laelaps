@@ -196,7 +196,13 @@ bi-corpus-tools/
 - 重复 TU（同一 src_text 对应不同 tgt_text，或反之）
 - 数字不匹配（源/译文里出现的阿拉伯数字集合不一致，常见的漏译/多译信号）
 
-标签/占位符/URL 匹配这类检查先不做——现阶段的输入都是纯文本段落，还没有 inline tag 场景，等真正需要处理带标记的语料（比如以后支持 xliff）时再加，现在加是没有实际输入可测的空中楼阁。
+标签/占位符/URL 匹配这类检查最初先不做——当时输入都是纯文本段落，还没有 inline tag 场景，加了也是没有实际输入可测的空中楼阁。**现已补上**（TM 维护模块之后的一轮）：`tmx_reader` 已经能解析 `<bpt>/<ept>/<ph>/<hi>` 等 inline 标签并填充 `TranslationUnit.src_markup`/`tgt_markup`，有了真实可测的输入，于是加了三项：
+
+- `TAG_MISMATCH`：比较 src/tgt 两侧 inline 标签的**类型计数**（比如各有一对 bpt/ept）。刻意不检查顺序和 id 配对——译文为适应目标语语序调整标签位置是正常现象，不该被判定为缺陷；真正丢标签/多标签（计数对不上）才会被抓到。两侧都没有 markup 时直接跳过（纯文本 TU 的常态）。
+- `PLACEHOLDER_MISMATCH`：比较可见文本里的占位符 token 集合（`{name}`、`{0}`、`%s`、`%(name)s`），大小写敏感、精确匹配——占位符是代码不是文字，必须原样保留。
+- `URL_MISMATCH`：比较 `http(s)://` URL 集合，译文丢链接或改错链接都会被抓到，不做模糊容忍。
+
+测试用例见 `tests/test_qa.py`（含 `tests/fixtures/tmx/inline_markup_qa.tmx` 这份手写的、带真实 inline markup 的 TMX fixture，端到端跑一遍 `tmx_reader.read()` + `qa.run()`）。
 
 QA 结果作为 `TranslationUnit.meta['qa_issues']` 附加在每条 TU 上，`csv_writer.py` 增加 `confidence`/`status`/`issues` 列输出。
 
