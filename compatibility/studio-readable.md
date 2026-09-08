@@ -62,6 +62,40 @@ entry with the failure details.
 
 ---
 
+## Known issue: "upgrade available" loop with no error and no progress
+
+Symptom reported 2026-09-08: Studio's Translation Results window shows the
+standard "An upgrade is available for your translation memory..." prompt for
+a `.sdltm` produced by this writer. Clicking **Upgrade** returns immediately,
+shows no error, but the TM is still flagged as needing upgrade afterward
+(non-upgraded warning-triangle icon persists).
+
+Leading hypothesis (not yet confirmed against a real Studio install — see
+caveat below): this prompt is Studio's **upLIFT fragment-alignment upgrade**
+(introduced Studio 2017), which builds a statistical translation model from
+the TM's segments. Published SDL/RWS guidance states the TM needs **at least
+1,000 segments (5,000 recommended)** for the model-build step to run; TMs
+below that threshold appear to let the upgrade silently no-op — no error
+dialog, but the non-upgraded flag never clears. All fixtures verified so far
+were small (`basic.sdltm` ~3-4 TUs, `numbering_mismatch.sdltm` ~dozens), which
+would explain the symptom without indicating an actual schema defect in
+`sdltm_writer.py` (Level 1 SQLite-schema tests still pass; nothing in the DDL
+or row data looks wrong for this).
+
+**Action for next verification round**: retest with `large.sdltm` (the
+1000+-TU fixture already called for in the test matrix above) instead of a
+small fixture, and record whether the upgrade completes. If it still loops
+at 1000+ TUs, the hypothesis is wrong and the real cause needs fresh
+empirical investigation (check Studio's log file under
+`%APPDATA%\SDL\SDL Trados Studio\...\logs`, check file isn't on a
+cloud-synced/read-only path, check TM isn't open in another process).
+
+This is exactly the kind of Level-2 claim that can't be settled from the
+sandbox — it needs a real Studio install and should get its own
+`### large.sdltm` verification entry below once tested, per the template.
+
+---
+
 ## Verification entries
 
 <!-- Template — copy and fill in:
