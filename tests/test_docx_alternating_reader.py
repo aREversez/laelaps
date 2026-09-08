@@ -95,3 +95,28 @@ def test_auto_detect_picks_table_when_table_and_numbered_both_score_high():
     # Sanity: table confidence > numbered confidence on this doc
     assert docx_table.confidence(fixture_path('table_layout.docx')) >= \
            docx_numbered.confidence(fixture_path('table_layout.docx'))
+
+
+def test_auto_detect_prefers_stronger_numbered_signal_over_a_stray_cover_table():
+    # The actual scenario this commit's confidence-scoring exists to fix
+    # (per its own commit message): a small, non-bilingual-content table
+    # elsewhere in the document (e.g. a 2-row author/status metadata table
+    # on a cover page) that nonetheless *looks* like a qualifying bilingual
+    # table to docx_table's own detection, sitting alongside a much
+    # stronger 4-pair numbered-layout body.
+    #
+    # Confirmed empirically before adding this fixture: docx_table.read()
+    # called alone on this fixture returns 1 (wrong) pair scraped from the
+    # cover table ('Status' -> '状态'); under the OLD first-success
+    # auto-detect order (table tried first, first non-error result wins),
+    # this would have silently won over the real numbered content. This
+    # test guards that the confidence-based auto-detect picks numbered
+    # instead, since numbered's signal (4-pair two-block numbering) is
+    # objectively stronger than table's (1 qualifying row).
+    path = fixture_path('stray_cover_table_plus_numbered.docx')
+    assert docx_numbered.confidence(path) > docx_table.confidence(path)
+
+    pairs = docx.read(path)
+    assert len(pairs) == 4
+    assert pairs[0].src_text == 'First sentence here.'
+    assert pairs[0].tgt_text == '第一句话。'
