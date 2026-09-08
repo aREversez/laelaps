@@ -19,6 +19,15 @@ tooltips, ``_section()`` for headers, ``objectName('primaryButton')`` for
 the action button, ``objectName('logConsole')`` for output -- shared here
 across all three tabs rather than one log per tab, so the user has a
 single place to look regardless of which action they just ran.
+
+The stats tab is the one exception to "results go in the log": stats
+produces several distinct numbers at once (total, dedup rate, empty
+counts, per-language-pair breakdown), which reads as a wall of text in a
+scrolling console and is hard to scan back to after the fact -- so it
+gets its own ``QTableWidget`` instead, populated fresh on every run
+(``_set_stats_table_rows``). Clean/merge stay log-based: each produces
+one outcome (how many were removed/merged), which a single log line
+already states clearly.
 """
 import html
 import os
@@ -26,8 +35,9 @@ import os
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QCheckBox, QFileDialog, QFormLayout,
-    QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton,
-    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from language_tools.tm import clean as clean_module
@@ -158,6 +168,7 @@ class TmMaintenancePage(QWidget):
         self.log = QTextEdit()
         self.log.setObjectName('logConsole')
         self.log.setReadOnly(True)
+        self.log.setMinimumHeight(110)
         self.log.setPlaceholderText('操作结果会显示在这里')
         outer.addWidget(self.log, 1)
 
@@ -303,8 +314,29 @@ class TmMaintenancePage(QWidget):
         btn_row.addWidget(self.stats_btn)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
-        layout.addStretch(1)
+
+        self.stats_table = QTableWidget(0, 2)
+        self.stats_table.setHorizontalHeaderLabels(['指标', '数值'])
+        self.stats_table.verticalHeader().setVisible(False)
+        self.stats_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.stats_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.stats_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.stats_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.stats_table.setShowGrid(False)
+        self.stats_table.setAlternatingRowColors(True)
+        layout.addWidget(_section('统计结果', self.stats_table), 1)
         return tab
+
+    def _set_stats_table_rows(self, rows):
+        """``rows`` is a list of (label, value) string pairs -- kept as a
+        plain list rather than the raw ``stats.compute()`` dict so this
+        method (and the table it builds) stays presentation-only, with all
+        the "what does this number mean" formatting decided by the caller.
+        """
+        self.stats_table.setRowCount(len(rows))
+        for row, (label, value) in enumerate(rows):
+            self.stats_table.setItem(row, 0, QTableWidgetItem(label))
+            self.stats_table.setItem(row, 1, QTableWidgetItem(value))
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
@@ -438,6 +470,7 @@ class TmMaintenancePage(QWidget):
         return None
 
     def _start_stats(self):
+        self._set_stats_table_rows([])
         error = self._validate_stats()
         if error:
             self._log(error, 'error')
@@ -453,14 +486,20 @@ class TmMaintenancePage(QWidget):
 
     def _on_stats_ok(self, s):
         self.stats_btn.setEnabled(True)
-        self._log(
-            '共 %d 条，去重后 %d 条（重复率 %.1f%%），空原文 %d 条，空译文 %d 条，长度比 %.3f'
-            % (s['total'], s['unique_pairs'], s['duplicate_rate'] * 100,
-               s['empty_source'], s['empty_target'], s['length_ratio']),
-            'success')
+        rows = [
+            ('总条数', str(s['total'])),
+            ('去重后条数', str(s['unique_pairs'])),
+            ('重复条目', '%d（%.1f%%）' % (s['duplicate_pairs'], s['duplicate_rate'] * 100)),
+            ('空原文', str(s['empty_source'])),
+            ('空译文', str(s['empty_target'])),
+            ('原文/译文长度比', '%.3f' % s['length_ratio']),
+        ]
         for pair, count in sorted(s['lang_pairs'].items()):
-            self._log('· %s：%d 条' % (pair, count))
+            rows.append(('语言对 %s' % pair, '%d 条' % count))
+        self._set_stats_table_rows(rows)
+        self._log('统计完成', 'success')
 
     def _on_stats_err(self, message):
         self.stats_btn.setEnabled(True)
+        self._set_stats_table_rows([])
         self._log('出错了：%s' % message, 'error')

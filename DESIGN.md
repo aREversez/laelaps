@@ -338,6 +338,10 @@ pyinstaller packaging/language-toolbox.spec
 
 已修复为 `"Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif"`（Windows 中文应用的标准选择），复选框指示器和下拉框箭头也从"CSS三角形技巧"/"原生渲染"换成了自绘 SVG 图标（`icons/checkbox_checked.svg`、`icons/checkbox_unchecked.svg`、`icons/chevron_down.svg`），避免依赖平台原生控件渲染的不确定性。**这些改动本身的正确性有把握（是 Windows 中文桌面应用的标准做法），但视觉效果本身没有、也没法在这个沙盒环境里用真实 Windows 机器肉眼确认**，需要在真机上跑一遍确认。以后任何"看起来是字体/原生控件渲染"的问题，都要假设沙盒环境验证不出来，直接问用户要真机截图确认，不要凭 Linux 离屏渲染的结果下结论。
 
+**同一类问题在 `tm_maintenance` 工具上又踩了一次（真机截图确认后修的）**：`QTextEdit#logConsole` 最初的字体栈是 `"Cascadia Code", "Consolas", "Microsoft YaHei UI", monospace`——Consolas/Cascadia Code 都不含中文字形，日志区里中文提示文字（"清理完成"之类）实际走的是 Windows 未声明的兜底字体，跟界面其它地方用的 Microsoft YaHei UI 不一致，表现为用户反馈的"一会儿衬线一会儿无衬线"。根因和上面 Segoe UI 那次一模一样：字体栈里塞了一个不含 CJK 字形的字体在前面。已改成跟全局一致的中文优先无衬线栈，不再单独给日志区用等宽/代码字体。**这提醒一件事：任何"看起来该用等宽字体"的场景（日志、路径、数字），只要这个区域可能显示中文文字，都不能简单套用纯 ASCII 的 monospace 字体栈，CJK 字形必须排在前面或者干脆放弃等宽（本项目选择了后者）。**
+
+`QTabWidget`/`QTableWidget` 是这一轮（`tm_maintenance` 的清理/合并/统计三个标签页 + 统计结果表格）第一次在这个项目里用到，`style.qss` 里新增的 `QTabBar::tab`/`QHeaderView::section` 等规则跟其它控件一样，只在 Linux 离屏渲染里验证过"没有崩溃、属性生效"，视觉效果（选中态的颜色对比度、圆角是否跟 pane 衔接自然）同样需要真机截图确认。
+
 ### 后续工具接入的最小步骤
 
 1. `toolbox/tools/<new_tool_id>/` 新建文件夹

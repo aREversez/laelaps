@@ -186,10 +186,36 @@ def test_stats_end_to_end(qtbot, tmp_path):
     page.stats_btn.click()
     qtbot.waitUntil(lambda: page.stats_btn.isEnabled(), timeout=5000)
 
-    log_text = page.log.toPlainText()
-    assert '共 3 条' in log_text
-    assert '去重后 2 条' in log_text
-    assert 'en-US-zh-CN' in log_text
+    assert '统计完成' in page.log.toPlainText()
+
+    def _table_rows():
+        return {page.stats_table.item(r, 0).text(): page.stats_table.item(r, 1).text()
+                for r in range(page.stats_table.rowCount())}
+
+    rows = _table_rows()
+    assert rows['总条数'] == '3'
+    assert rows['去重后条数'] == '2'
+    assert '语言对 en-US-zh-CN' in rows
+    assert rows['语言对 en-US-zh-CN'] == '3 条'
+
+
+def test_stats_table_is_cleared_before_a_new_run(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.stats_input_edit.setText(str(src))
+    page.stats_btn.click()
+    qtbot.waitUntil(lambda: page.stats_btn.isEnabled(), timeout=5000)
+    assert page.stats_table.rowCount() > 0
+
+    # Clicking again with no valid input (file removed) shouldn't leave
+    # stale results from the previous successful run sitting in the table.
+    src.unlink()
+    page.stats_btn.click()
+    qtbot.waitUntil(lambda: page.stats_btn.isEnabled(), timeout=5000)
+    assert page.stats_table.rowCount() == 0
 
 
 # ------------------------------------------------------------------ shared

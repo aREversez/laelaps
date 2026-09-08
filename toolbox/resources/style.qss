@@ -51,9 +51,9 @@ QLabel#sidebarHeaderTitle {
 
 /* ------------------------------------------------------------- sections */
 QLabel[role="sectionTitle"] {
-    font-size: 12px;
+    font-size: 14px;
     font-weight: 600;
-    color: #6B7280;
+    color: #4B5262;
 }
 QFrame[role="hairline"] {
     background: #E3E6EB;
@@ -99,6 +99,35 @@ QCheckBox::indicator:checked {
     image: url({ICONS_DIR}/checkbox_checked.svg);
 }
 
+/* ------------------------------------------------------------------ tabs */
+QTabWidget::pane {
+    border: 1px solid #E3E6EB;
+    border-radius: 8px;
+    background: #FFFFFF;
+    top: -1px;
+}
+QTabBar::tab {
+    background: transparent;
+    color: #6B7280;
+    border: 1px solid transparent;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    padding: 8px 20px;
+    margin-right: 2px;
+}
+QTabBar::tab:hover {
+    background: #F0F2F6;
+    color: #1A1D23;
+}
+QTabBar::tab:selected {
+    background: #FFFFFF;
+    color: #2E4374;
+    font-weight: 600;
+    border: 1px solid #E3E6EB;
+    border-bottom: 1px solid #FFFFFF;
+}
+
 /* --------------------------------------------------------------- buttons */
 QPushButton {
     background: #FFFFFF;
@@ -136,15 +165,46 @@ QPushButton#primaryButton:disabled {
     color: #FFFFFF;
 }
 
+/* ------------------------------------------------------------------ tables */
+QTableWidget {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 8px;
+    gridline-color: #E3E6EB;
+    font-size: 13px;
+    selection-background-color: #EAEEF6;
+    selection-color: #1A1D23;
+}
+QTableWidget::item {
+    padding: 6px 10px;
+}
+QHeaderView::section {
+    background: #F6F7F9;
+    color: #6B7280;
+    padding: 7px 10px;
+    border: none;
+    border-bottom: 1px solid #E3E6EB;
+    font-weight: 600;
+}
+
 /* -------------------------------------------------------------- log/console */
+/* Sans-serif UI stack, same as everywhere else -- NOT a monospace/code
+ * font. A monospace stack like Consolas/Cascadia Code has no CJK glyphs,
+ * so on Windows Chinese characters in this widget would silently fall
+ * back per-glyph to whatever serif CJK font the OS picks next, while the
+ * ASCII portions (numbers, file paths) stayed in the monospace font --
+ * i.e. exactly the "some sans, some serif" inconsistency this was
+ * flagged for. Numbers/paths reading in the same UI font as everything
+ * else is a fair trade for that consistency.
+ */
 QTextEdit#logConsole {
     background: #FFFFFF;
     border: 1px solid #E3E6EB;
     border-radius: 8px;
     padding: 10px;
     color: #1A1D23;
-    font-family: "Cascadia Code", "Consolas", "Microsoft YaHei UI", monospace;
-    font-size: 12px;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
+    font-size: 13px;
 }
 
 /* ------------------------------------------------------------- tooltips */
