@@ -11,6 +11,7 @@ gui = ["PySide6>=6.5"]
 
 [project.scripts]
 biconvert = "language_tools.cli:main"
+tmtool = "language_tools.tm_cli:main"
 language-toolbox = "toolbox.main:main"
 
 [build-system]
