@@ -134,7 +134,7 @@ class TmMaintenancePage(QWidget):
     def _build_clean_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
 
         file_row = QWidget()
@@ -192,7 +192,7 @@ class TmMaintenancePage(QWidget):
     def _build_merge_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
 
         list_widget = QWidget()
@@ -252,7 +252,7 @@ class TmMaintenancePage(QWidget):
     def _build_stats_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 12, 0, 0)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(14)
 
         file_row = QWidget()

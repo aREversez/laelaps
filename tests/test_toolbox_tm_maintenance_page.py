@@ -228,6 +228,20 @@ def test_stats_table_header_left_aligned_to_match_item_content(qtbot):
     assert alignment & Qt.AlignLeft
 
 
+def test_tab_content_has_padding_so_it_does_not_touch_pane_border(qtbot):
+    # Each tab's own layout used to have 0 left/right/bottom margin, so
+    # section hairline dividers and the browse/save buttons sat flush
+    # against the QTabWidget::pane border -- every divider then visually
+    # crossed the border, and rounded button corners nearly touched a
+    # straight border line right next to them. Every side needs some
+    # breathing room now.
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    for i in range(page.tabs.count()):
+        left, top, right, bottom = page.tabs.widget(i).layout().getContentsMargins()
+        assert left > 0 and right > 0 and bottom > 0, page.tabs.tabText(i)
+
+
 # ------------------------------------------------------------------ shared
 
 def test_clean_option_checkboxes_have_tooltips(qtbot):
