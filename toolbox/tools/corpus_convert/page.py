@@ -29,17 +29,22 @@ covers it. Enum-like choices (docx layout) get short human-readable
 labels in the visible list while the underlying value passed to the
 library stays the technical string (QComboBox.addItem(display_text,
 value) + .currentData()).
+
+``section()`` (imported from ``toolbox.widgets``) is the shared section-header
+helper used by every tool page -- see that module's docstring for why it's
+shared rather than a private copy per page.
 """
 import html
 import os
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QHBoxLayout,
+    QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from language_tools import api
+from toolbox.widgets import section as _section
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.sdltm)'
@@ -112,29 +117,6 @@ def _lang_combo_code(combo):
     if idx >= 0:
         return combo.itemData(idx)
     return combo.currentText().strip()
-
-
-def _section(title, content_widget):
-    """A section header (label + hairline rule) above a content widget --
-    used instead of QGroupBox, whose native chrome can't be made to look
-    clean via QSS alone. Shared shape for every section on this page; a
-    future tool page should follow the same pattern for visual consistency.
-    """
-    wrapper = QWidget()
-    layout = QVBoxLayout(wrapper)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(6)
-
-    label = QLabel(title)
-    label.setProperty('role', 'sectionTitle')
-    layout.addWidget(label)
-
-    rule = QFrame()
-    rule.setProperty('role', 'hairline')
-    layout.addWidget(rule)
-
-    layout.addWidget(content_widget)
-    return wrapper
 
 
 class ConvertWorker(QThread):

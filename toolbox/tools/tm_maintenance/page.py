@@ -2,23 +2,24 @@
 thin form wrapping ``language_tools.tm.*`` directly -- same "no HTTP
 layer, just import and call the library" shape as
 ``corpus_convert/page.py``, and the same ``QThread`` pattern
-(``TmWorker``) so a large TM doesn't freeze the UI while it's being
-processed.
+(``toolbox.workers.CallableWorker``) so a large TM doesn't freeze the UI
+while it's being processed.
 
 Unlike ``ConvertWorker`` (specific to ``api.convert()``'s kwargs shape),
-``TmWorker`` is a generic "run this zero-arg callable off the UI thread"
-wrapper -- shared across all three tabs, since none of clean/merge/stats
-needs a specialized ``run()`` body, just a function call that shouldn't
-block. Each tab wires its own callable (``_clean_job``/``_merge_job``/
-``_stats_job``, module-level so they're callable/testable without a
-QWidget) plus its own start/success/error handlers.
+``CallableWorker`` is a generic "run this zero-arg callable off the UI
+thread" wrapper -- shared across all three tabs, since none of
+clean/merge/stats needs a specialized ``run()`` body, just a function call
+that shouldn't block. Each tab wires its own callable (``_clean_job``/
+``_merge_job``/``_stats_job``, module-level so they're callable/testable
+without a QWidget) plus its own start/success/error handlers.
 
 Copy and layout conventions follow ``corpus_convert/page.py`` (see that
 file's docstring for the reasoning): short section titles, explanation in
-tooltips, ``_section()`` for headers, ``objectName('primaryButton')`` for
-the action button, ``objectName('logConsole')`` for output -- shared here
-across all three tabs rather than one log per tab, so the user has a
-single place to look regardless of which action they just ran.
+tooltips, ``section()`` (from ``toolbox.widgets``) for headers,
+``objectName('primaryButton')`` for the action button,
+``objectName('logConsole')`` for output -- shared here across all three
+tabs rather than one log per tab, so the user has a single place to look
+regardless of which action they just ran.
 
 The stats tab is the one exception to "results go in the log": stats
 produces several distinct numbers at once (total, dedup rate, empty
@@ -32,18 +33,20 @@ already states clearly.
 import html
 import os
 
-from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QCheckBox, QFileDialog, QFormLayout,
-    QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit,
     QVBoxLayout, QWidget,
 )
+from PySide6.QtCore import Qt
 
 from language_tools.tm import clean as clean_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import merge as merge_module
 from language_tools.tm import stats as stats_module
+from toolbox.widgets import section
+from toolbox.workers import CallableWorker
 
 _CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
@@ -66,30 +69,6 @@ _STRATEGY_CHOICES = [
     ('保留后出现的', 'prefer-last', '同一原文对应不同译文时，保留后出现的那条'),
     ('按修改时间取新', 'prefer-newer', '按时间戳保留较新的译文；没有时间戳的条目视为最旧'),
 ]
-
-
-def _section(title, content_widget):
-    """Identical to corpus_convert/page.py's _section() -- kept as its own
-    copy rather than imported cross-tool, since a future third tool would
-    otherwise have to decide which existing tool "owns" the shared helper.
-    If a fourth tool needs it too, that's the signal to promote this into
-    a small toolbox/widgets.py shared module instead of a third copy.
-    """
-    wrapper = QWidget()
-    layout = QVBoxLayout(wrapper)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(6)
-
-    label = QLabel(title)
-    label.setProperty('role', 'sectionTitle')
-    layout.addWidget(label)
-
-    rule = QFrame()
-    rule.setProperty('role', 'hairline')
-    layout.addWidget(rule)
-
-    layout.addWidget(content_widget)
-    return wrapper
 
 
 def _clean_job(input_path, output_path, normalize, dedupe, remove_empty, remove_identical):
@@ -116,26 +95,6 @@ def _merge_job(input_paths, output_path, strategy):
 def _stats_job(input_path):
     units = tm_io.read_corpus(input_path)
     return stats_module.compute(units)
-
-
-class TmWorker(QThread):
-    """Runs an arbitrary zero-arg callable off the UI thread. See module
-    docstring for why this is generic rather than one subclass per tab.
-    """
-    finished_ok = Signal(object)
-    finished_err = Signal(str)
-
-    def __init__(self, fn, parent=None):
-        super().__init__(parent)
-        self._fn = fn
-
-    def run(self):
-        try:
-            result = self._fn()
-        except Exception as e:  # noqa: BLE001 -- surfaced to the user, not swallowed
-            self.finished_err.emit(str(e))
-            return
-        self.finished_ok.emit(result)
 
 
 class TmMaintenancePage(QWidget):
@@ -187,7 +146,7 @@ class TmMaintenancePage(QWidget):
         browse_btn.clicked.connect(self._browse_clean_input)
         file_layout.addWidget(self.clean_input_edit, 1)
         file_layout.addWidget(browse_btn)
-        layout.addWidget(_section('选择文件', file_row))
+        layout.addWidget(section('选择文件', file_row))
 
         output_row = QWidget()
         output_layout = QHBoxLayout(output_row)
@@ -199,7 +158,7 @@ class TmMaintenancePage(QWidget):
         output_browse_btn.clicked.connect(self._browse_clean_output)
         output_layout.addWidget(self.clean_output_edit, 1)
         output_layout.addWidget(output_browse_btn)
-        layout.addWidget(_section('输出到（可选）', output_row))
+        layout.addWidget(section('输出到（可选）', output_row))
 
         opts_row = QWidget()
         opts_layout = QHBoxLayout(opts_row)
@@ -218,7 +177,7 @@ class TmMaintenancePage(QWidget):
             cb.setToolTip(_CLEAN_TOOLTIPS[key])
             opts_layout.addWidget(cb)
         opts_layout.addStretch(1)
-        layout.addWidget(_section('清理选项', opts_row))
+        layout.addWidget(section('清理选项', opts_row))
 
         self.clean_btn = QPushButton('开始清理')
         self.clean_btn.setObjectName('primaryButton')
@@ -256,7 +215,7 @@ class TmMaintenancePage(QWidget):
         list_btn_row.addWidget(self.merge_clear_btn)
         list_btn_row.addStretch(1)
         list_layout.addLayout(list_btn_row)
-        layout.addWidget(_section('第一步：选择要合并的文件（可多选）', list_widget))
+        layout.addWidget(section('第一步：选择要合并的文件（可多选）', list_widget))
 
         output_row = QWidget()
         output_layout = QHBoxLayout(output_row)
@@ -267,7 +226,7 @@ class TmMaintenancePage(QWidget):
         output_browse_btn.clicked.connect(self._browse_merge_output)
         output_layout.addWidget(self.merge_output_edit, 1)
         output_layout.addWidget(output_browse_btn)
-        layout.addWidget(_section('第二步：保存到', output_row))
+        layout.addWidget(section('第二步：保存到', output_row))
 
         strategy_widget = QWidget()
         strategy_form = QFormLayout(strategy_widget)
@@ -278,7 +237,7 @@ class TmMaintenancePage(QWidget):
             self.merge_strategy_combo.addItem(display_text, value)
             self.merge_strategy_combo.setItemData(i, item_tip, Qt.ToolTipRole)
         strategy_form.addRow('冲突处理策略', self.merge_strategy_combo)
-        layout.addWidget(_section('第三步：冲突处理', strategy_widget))
+        layout.addWidget(section('第三步：冲突处理', strategy_widget))
 
         self.merge_btn = QPushButton('开始合并')
         self.merge_btn.setObjectName('primaryButton')
@@ -305,7 +264,7 @@ class TmMaintenancePage(QWidget):
         browse_btn.clicked.connect(self._browse_stats_input)
         file_layout.addWidget(self.stats_input_edit, 1)
         file_layout.addWidget(browse_btn)
-        layout.addWidget(_section('选择文件', file_row))
+        layout.addWidget(section('选择文件', file_row))
 
         self.stats_btn = QPushButton('查看统计')
         self.stats_btn.setObjectName('primaryButton')
@@ -324,7 +283,7 @@ class TmMaintenancePage(QWidget):
         self.stats_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.stats_table.setShowGrid(False)
         self.stats_table.setAlternatingRowColors(True)
-        layout.addWidget(_section('统计结果', self.stats_table), 1)
+        layout.addWidget(section('统计结果', self.stats_table), 1)
         return tab
 
     def _set_stats_table_rows(self, rows):
@@ -404,7 +363,7 @@ class TmMaintenancePage(QWidget):
         )
         self.clean_btn.setEnabled(False)
         self._log('正在清理…')
-        self._clean_worker = TmWorker(lambda: _clean_job(**fn_kwargs), parent=self)
+        self._clean_worker = CallableWorker(lambda: _clean_job(**fn_kwargs), parent=self)
         self._clean_worker.finished_ok.connect(self._on_clean_ok)
         self._clean_worker.finished_err.connect(self._on_clean_err)
         self._clean_worker.start()
@@ -443,7 +402,7 @@ class TmMaintenancePage(QWidget):
 
         self.merge_btn.setEnabled(False)
         self._log('正在合并 %d 个文件…' % len(input_paths))
-        self._merge_worker = TmWorker(lambda: _merge_job(**fn_kwargs), parent=self)
+        self._merge_worker = CallableWorker(lambda: _merge_job(**fn_kwargs), parent=self)
         self._merge_worker.finished_ok.connect(self._on_merge_ok)
         self._merge_worker.finished_err.connect(self._on_merge_err)
         self._merge_worker.start()
@@ -479,7 +438,7 @@ class TmMaintenancePage(QWidget):
         input_path = self.stats_input_edit.text().strip()
         self.stats_btn.setEnabled(False)
         self._log('正在统计…')
-        self._stats_worker = TmWorker(lambda: _stats_job(input_path), parent=self)
+        self._stats_worker = CallableWorker(lambda: _stats_job(input_path), parent=self)
         self._stats_worker.finished_ok.connect(self._on_stats_ok)
         self._stats_worker.finished_err.connect(self._on_stats_err)
         self._stats_worker.start()

@@ -17,7 +17,9 @@ import sys
 from language_tools.tm import clean as clean_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import merge as merge_module
+from language_tools.tm import qa_report as qa_report_module
 from language_tools.tm import stats as stats_module
+from language_tools.writers import csv_writer
 
 
 def _cmd_clean(args):
@@ -62,6 +64,22 @@ def _cmd_stats(args):
     return 0
 
 
+def _cmd_qa(args):
+    units = qa_report_module.run(args.input)
+    s = qa_report_module.summarize(units)
+    print('Total=%d Flagged=%d (%.1f%%)' % (
+        s['total'], s['flagged'], (s['flagged'] / s['total'] * 100) if s['total'] else 0.0))
+    for issue_type in qa_report_module.ISSUE_TYPES:
+        count = s['by_type'].get(issue_type)
+        if count:
+            print('  %s: %d' % (issue_type, count))
+    if args.export:
+        src_lang, tgt_lang = tm_io.infer_langs(units)
+        csv_writer.write(args.export, units, src_lang or 'SRC', tgt_lang or 'TGT', include_qa=True)
+        print('Wrote %s' % args.export)
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog='tmtool', description='Translation-memory maintenance: clean, merge, and '
@@ -90,6 +108,13 @@ def build_parser():
     stats_p = sub.add_parser('stats', help='print corpus statistics')
     stats_p.add_argument('input', help='input .tmx or .sdltm file')
     stats_p.set_defaults(func=_cmd_stats)
+
+    qa_p = sub.add_parser('qa', help='run QA checks against a corpus file')
+    qa_p.add_argument('input', help='input .tmx or .sdltm file')
+    qa_p.add_argument('--export', metavar='PATH',
+                       help='write a full CSV report (all units, with confidence/status/issues '
+                            'columns) to PATH')
+    qa_p.set_defaults(func=_cmd_qa)
 
     return p
 

@@ -1,13 +1,13 @@
 # language-tools
 
-语言管理（翻译/本地化）工具箱。第一个工具是**双语语料转换**：把 docx/xlsx/csv/tsv 这类双语文档转换成 Trados 等 CAT 工具能用的翻译记忆库格式（sdltm/tmx），也支持 tmx↔sdltm 互转。提供 Python 库、命令行工具、桌面 GUI 三种使用方式，往后会陆续加入更多语言管理相关的工具（术语管理、QA 报告查看器等）。
+语言管理（翻译/本地化）工具箱。第一个工具是**双语语料转换**：把 docx/xlsx/csv/tsv 这类双语文档转换成 Trados 等 CAT 工具能用的翻译记忆库格式（sdltm/tmx），也支持 tmx↔sdltm 互转。提供 Python 库、命令行工具、桌面 GUI 三种使用方式，往后会陆续加入更多语言管理相关的工具（术语管理等）。
 
 ## 功能特性
 
 - **双语文档 → 翻译记忆库**：docx（三种版式）、xlsx、csv/tsv → sdltm、tmx、csv
 - **语料库互转**：tmx ↔ sdltm，语言自动从内容识别
 - 内置 Gale-Church 式句级对齐算法，处理常见缩写（a.m./e.g./U.S. 等）不误切句
-- QA 检查：空值、长度比异常、重复条目（源冲突/译文冲突）、数字不匹配、占位符不匹配（`{name}`/`%s` 等）、URL 丢失或改动、inline 标签不匹配（TMX 带格式标记时），可选导出为审阅报告
+- QA 检查：空值、长度比异常、重复条目（源冲突/译文冲突）、数字不匹配、占位符不匹配（`{name}`/`%s` 等）、URL 丢失或改动、inline 标签不匹配（TMX 带格式标记时）——转换时可选勾选，也可以单独对着一个已有的 tmx/sdltm 跑（`tmtool qa` / 桌面 GUI「QA 检查」页），支持导出 CSV 审阅报告
 - **TM 维护**（`tmtool` 命令行 + 桌面 GUI「语料维护」页）：清理（去重/去空/normalize）、多文件合并（可选冲突策略）、语料统计
 - 桌面 GUI（PySide6），也可以纯命令行/脚本调用
 - 打包成本地 Windows exe，不需要联网、不上传文件
@@ -32,6 +32,7 @@ python -m toolbox.main
 侧边栏两个工具：
 
 - **语料转换**：浏览选择文件 → 双语源文件需要填源/目标语言（语料库文件可留空自动识别）→ 需要的话调整 docx 版式 → 勾选输出格式 → 点转换。
+- **QA 检查**：对着一个已有的 tmx/sdltm 单独跑全部 QA 检查（不需要经过转换），结果按"只显示有问题的条目"默认筛选，可按问题类型进一步筛选，可导出完整 CSV 报告（含未标记问题的条目，不受当前筛选影响）。
 - **语料维护**：清理（去重/去空/normalize）、合并（多文件+冲突策略）、统计，三个标签页对应 `tmtool` 的三个子命令。
 
 ### 命令行
@@ -57,6 +58,8 @@ tmtool clean a.tmx --remove-identical                  # 连 source==target 的�
 tmtool merge a.tmx b.tmx c.tmx -o merged.tmx           # 合并，默认策略 keep-all（全保留，不解决冲突）
 tmtool merge a.tmx b.tmx -o merged.tmx --strategy prefer-newer  # 同源不同译时按 modified_at 取较新的
 tmtool stats a.tmx                                     # 打印条目数/去重率/空段/语言对分布
+tmtool qa a.tmx                                        # 跑全部 QA 检查，打印问题条数和分类统计
+tmtool qa a.tmx --export report.csv                     # 同上，并导出完整 CSV 报告（含未标记问题的条目）
 ```
 
 合并冲突策略（`--strategy`）：`keep-all`（默认，全部保留，交给后续 QA 检查去发现冲突）、`prefer-first`（同源冲突时保留先出现的译文）、`prefer-last`（保留后出现的）、`prefer-newer`（按 `modified_at` 时间戳取较新的，没有时间戳的条目视为最旧）。

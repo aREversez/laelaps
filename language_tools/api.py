@@ -11,7 +11,6 @@ import os
 from language_tools import qa as qa_module
 from language_tools.align.aligner import align_paragraph_pairs
 from language_tools.align.repair import NULL_REPAIRER, load_repairs
-from language_tools.align.splitters import nolen
 from language_tools.corpus_readers import sdltm_reader, tmx_reader
 from language_tools.readers import csv_bilingual, docx, xlsx_bilingual
 from language_tools.writers import csv_writer, sdltm_writer, tmx_writer
@@ -28,12 +27,6 @@ _CORPUS_READERS = {
     '.tmx': tmx_reader.read,
     '.sdltm': sdltm_reader.read,
 }
-
-
-def _length_ratio(units):
-    src_len = sum(nolen(u.src_text) for u in units)
-    tgt_len = sum(nolen(u.tgt_text) for u in units)
-    return src_len / max(tgt_len, 1)
 
 
 def convert(input_path, output_base, src_lang=None, tgt_lang=None,
@@ -85,7 +78,7 @@ def convert(input_path, output_base, src_lang=None, tgt_lang=None,
             src_lang = units[0].src_lang if units else ''
         if tgt_lang is None:
             tgt_lang = units[0].tgt_lang if units else ''
-        ratio = _length_ratio(units) if units else 1.0
+        ratio = qa_module.expected_length_ratio(units) if units else 1.0
     elif ext in _BILINGUAL_READERS:
         if not src_lang or not tgt_lang:
             raise ValueError('src_lang and tgt_lang are required for bilingual '

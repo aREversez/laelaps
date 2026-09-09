@@ -269,7 +269,10 @@ toolbox/                    # 与 language_tools/ 同仓库同级，GUI层
     │   └── page.py            # QWidget 表单 + QThread worker（避免转换时卡UI）
     ├── tm_maintenance/       # 第二个工具，包装 language_tools.tm.*（清理/合并/统计）
     │   ├── __init__.py       # 注册 ToolSpec
-    │   └── page.py            # 三个标签页（清理/合并/统计），共用一个通用 TmWorker
+    │   └── page.py            # 三个标签页（清理/合并/统计），共用一个通用 CallableWorker
+    ├── qa_check/             # 第三个工具，包装 language_tools.tm.qa_report（对已有语料库跑 QA）
+    │   ├── __init__.py       # 注册 ToolSpec
+    │   └── page.py            # 结果表格 + 筛选（问题类型/只看有问题的）+ 导出 CSV
     └── <future_tool>/        # 新工具照此结构新增文件夹即可，main_window.py 不用改
 ```
 
@@ -293,7 +296,7 @@ class ToolSpec:
 
 ### 转换耗时与线程
 
-GUI 直接函数调用 `api.convert()`，为避免大文件转换时界面卡死，放进 `QThread`（`ConvertWorker`）跑，通过 Qt 信号（`finished_ok`/`finished_err`）把结果送回主线程更新界面。这个模式后续每个新工具但凡涉及可能耗时的操作都应该沿用，不要在主线程里跑重活。`tm_maintenance` 工具的三个操作（清理/合并/统计）没有各自独立的 kwargs 形状，所以用了一个更通用的 `TmWorker`（接收任意零参数 callable），而不是像 `ConvertWorker` 那样为单一函数签名定制——如果新工具的耗时操作也是"调一个函数、等结果"这种形状，优先复用/参考 `TmWorker` 这种通用写法，只有当参数/回调形状明显不同时才需要专门的 Worker 子类。
+GUI 直接函数调用 `api.convert()`，为避免大文件转换时界面卡死，放进 `QThread`（`ConvertWorker`）跑，通过 Qt 信号（`finished_ok`/`finished_err`）把结果送回主线程更新界面。这个模式后续每个新工具但凡涉及可能耗时的操作都应该沿用，不要在主线程里跑重活。大多数工具的耗时操作没有各自独立的 kwargs 形状，所以用的是 `toolbox/workers.py` 里共享的 `CallableWorker`（接收任意零参数 callable）——`tm_maintenance`、`qa_check` 都用它，`ConvertWorker` 是唯一的例外，因为它专门对应 `api.convert()` 的 kwargs 签名。新工具的耗时操作如果也是"调一个函数、等结果"这种形状，直接复用 `CallableWorker`，不要再写一个专门的 Worker 子类。
 
 ### 测试
 
@@ -315,9 +318,9 @@ Design tokens（颜色，命名 hex，别在别处重新定义）：
 
 排版：统一用系统字体（Segoe UI），不引入自定义字体文件——层级完全靠字重/字号区分，这是刻意的选择：桌面工具软件跟着平台走比"用两种字体撑个性"更合适，跟营销页/网站的设计诉求不一样。
 
-布局原则：扁平面板 + 发丝级分隔线，不用 QGroupBox 原生的"盒子套标题"外观（做不出干净的现代感，`page.py` 里的 `_section()` helper 是替代方案：一个小标题 label + 一条分隔线 + 内容），不做千篇一律的"卡片+统一阴影"（SaaS 模板的典型味道）。
+布局原则：扁平面板 + 发丝级分隔线，不用 QGroupBox 原生的"盒子套标题"外观（做不出干净的现代感，`toolbox/widgets.py` 里的 `section()` helper 是替代方案：一个小标题 label + 一条分隔线 + 内容），不做千篇一律的"卡片+统一阴影"（SaaS 模板的典型味道）。
 
-新工具的界面要保持一致性：优先复用 `page.py` 里 `_section()` 这样的现成 helper，主按钮统一用 `objectName('primaryButton')`（QSS 已经定义好了这个选择器），日志类输出用 `objectName('logConsole')` 的 `QTextEdit` 走富文本着色（`_log(message, kind='info'|'error'|'success')` 这个模式），不要每个工具各写一套。
+新工具的界面要保持一致性：优先复用 `toolbox/widgets.py` 里 `section()` 这样的现成 helper（以及耗时操作用 `toolbox/workers.py` 的 `CallableWorker`），主按钮统一用 `objectName('primaryButton')`（QSS 已经定义好了这个选择器），日志类输出用 `objectName('logConsole')` 的 `QTextEdit` 走富文本着色（`_log(message, kind='info'|'error'|'success')` 这个模式），不要每个工具各写一套。
 
 ### 打包
 

@@ -94,3 +94,29 @@ def test_unsupported_format_errors_cleanly(tmp_path):
     result = _run(['stats', str(bad)])
     assert result.returncode != 0
     assert 'unsupported corpus format' in result.stderr
+
+
+def test_qa_prints_summary_and_flagged_breakdown(tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好'), _u('Found %d results.', '找到了结果。')])
+    result = _run(['qa', str(src)])
+    assert result.returncode == 0, result.stderr
+    assert 'Total=2' in result.stdout
+    assert 'Flagged=1' in result.stdout
+    assert 'PLACEHOLDER_MISMATCH: 1' in result.stdout
+
+
+def test_qa_export_writes_full_csv_report(tmp_path):
+    src = tmp_path / 'in.tmx'
+    out = tmp_path / 'report.csv'
+    _write_tmx(src, [_u('Hello', '你好'), _u('Found %d results.', '找到了结果。')])
+    result = _run(['qa', str(src), '--export', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    assert out.exists()
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'confidence' in content
+    assert 'PLACEHOLDER_MISMATCH' in content
+    # both rows present, not just the flagged one -- export is the full
+    # corpus with QA columns, not a filtered "problems only" subset.
+    assert content.count('\n') >= 3  # header + 2 data rows (+ trailing newline)

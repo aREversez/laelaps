@@ -57,6 +57,8 @@ Real translation mismatches in those cases are a different check.
 """
 import re
 
+from language_tools.align.splitters import nolen
+
 # Raw number matcher -- same as before, used internally by the normalizer.
 _RAW_DIGIT_RE = re.compile(r'\d+(?:[.,]\d+)?')
 
@@ -157,6 +159,30 @@ def _tag_type_counts(markup):
         name = m.group(1) if m else '?'
         counts[name] = counts.get(name, 0) + 1
     return counts
+
+
+def expected_length_ratio(units):
+    """Corpus-wide src/tgt character-length ratio, used as the expected
+    ratio ``run()`` compares each individual unit against for
+    LENGTH_RATIO_OUTLIER. Named distinctly from ``run()``'s own
+    ``length_ratio`` parameter (this function *computes* the value that
+    parameter expects to be handed) to avoid a confusing same-name
+    function/parameter pair in one module.
+
+    Moved here from ``api.py`` (was a private ``_length_ratio()`` used
+    only inline in the convert pipeline) so ``tm/qa_report.py`` -- which
+    runs QA against an *already-existing* corpus file, outside the convert
+    pipeline -- can compute the same ratio the same way, rather than
+    re-deriving or hardcoding one. A per-language-pair constant (e.g.
+    "English to Chinese is usually ~0.5x the character count") was
+    considered and rejected: the actual ratio varies enough by
+    domain/register that a corpus-derived empirical ratio is more
+    reliable than a fixed table, and it's free to compute from data we
+    already have in hand.
+    """
+    src_len = sum(nolen(u.src_text) for u in units)
+    tgt_len = sum(nolen(u.tgt_text) for u in units)
+    return src_len / max(tgt_len, 1)
 
 
 def run(units, length_ratio):
