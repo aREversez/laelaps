@@ -44,6 +44,8 @@ def test_csv_multiline_quoted_field_preserved(tmp_path):
     p.write_text('en,zh\n"line1\nline2","第一行\n第二行"\n', encoding='utf-8')
     pairs = csv_bilingual.read(str(p))
     assert len(pairs) == 1
-    assert pairs[0].key == '1'
+    # key is the physical row number (b1001f6): the header is row 1, so the
+    # single data row is row 2 regardless of blank-row filtering.
+    assert pairs[0].key == '2'
     assert pairs[0].src_text == 'line1\nline2'
     assert pairs[0].tgt_text == '第一行\n第二行'
