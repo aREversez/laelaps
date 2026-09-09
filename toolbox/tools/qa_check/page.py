@@ -158,7 +158,7 @@ class QaCheckPage(QWidget):
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.type_filter_combo)
         filter_layout.addStretch(1)
-        outer.addWidget(section('筛选结果', filter_row))
+        outer.addWidget(section('QA 结果', filter_row))
 
         self.results_table = QTableWidget(0, 5)
         self.results_table.setHorizontalHeaderLabels(['#', '原文', '译文', '问题类型', '置信度'])
@@ -169,6 +169,11 @@ class QaCheckPage(QWidget):
         header.setSectionResizeMode(2, QHeaderView.Stretch)
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        # Header text defaults to centered, item text to left-aligned;
+        # with 原文/译文 stretched to fill the window (and their content
+        # often long) that mismatch reads as messy, especially maximized.
+        # Left-align both so the header sits above its column's content.
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.results_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.results_table.setShowGrid(False)

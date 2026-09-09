@@ -279,6 +279,12 @@ class TmMaintenancePage(QWidget):
         self.stats_table.verticalHeader().setVisible(False)
         self.stats_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.stats_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        # Header text defaults to centered while QTableWidgetItem text
+        # defaults to left-aligned -- with the value column stretched to
+        # fill the window (long language-pair breakdown lines especially,
+        # on a maximized window) that mismatch reads as messy. Left-align
+        # both so the header sits directly above its column's content.
+        self.stats_table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.stats_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.stats_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.stats_table.setShowGrid(False)

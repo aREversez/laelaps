@@ -218,6 +218,16 @@ def test_stats_table_is_cleared_before_a_new_run(qtbot, tmp_path):
     assert page.stats_table.rowCount() == 0
 
 
+def test_stats_table_header_left_aligned_to_match_item_content(qtbot):
+    # Header text used to default to centered while item text defaults to
+    # left -- with the value column stretched wide, that mismatch looked
+    # inconsistent. Both should now agree.
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    alignment = page.stats_table.horizontalHeader().defaultAlignment()
+    assert alignment & Qt.AlignLeft
+
+
 # ------------------------------------------------------------------ shared
 
 def test_clean_option_checkboxes_have_tooltips(qtbot):
