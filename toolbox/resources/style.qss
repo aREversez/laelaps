@@ -100,32 +100,45 @@ QCheckBox::indicator:checked {
 }
 
 /* ------------------------------------------------------------------ tabs */
+/* The tab bar is styled as a standalone rounded "segmented control" that
+ * floats above the content card (its own full border box, its own
+ * background) rather than the traditional connected-notebook-tab look.
+ * The old style only gave the *selected* tab a box; the other two just
+ * sat on bare background with no border of their own, and pane's
+ * `top: -1px` tucked the pane in right under the tab bar so the pane's
+ * rounded top-left/top-right corners had to visually double as the tab
+ * row's corners too -- next to an unselected tab (no box) that reads as
+ * a border that just stops short exactly at the top-left. Two fully
+ * separate rounded boxes with a real gap between them sidesteps that:
+ * neither one depends on the other for its corners.
+ */
 QTabWidget::pane {
     border: 1px solid #E3E6EB;
     border-radius: 8px;
     background: #FFFFFF;
-    top: -1px;
+    top: 8px;
+}
+QTabBar {
+    background: #EEF0F4;
+    border: 1px solid #E3E6EB;
+    border-radius: 9px;
+    padding: 3px;
 }
 QTabBar::tab {
     background: transparent;
     color: #6B7280;
-    border: 1px solid transparent;
-    border-bottom: none;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-    padding: 8px 20px;
-    margin-right: 2px;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 18px;
+    margin: 0 1px;
 }
 QTabBar::tab:hover {
-    background: #F0F2F6;
     color: #1A1D23;
 }
 QTabBar::tab:selected {
     background: #FFFFFF;
     color: #2E4374;
     font-weight: 600;
-    border: 1px solid #E3E6EB;
-    border-bottom: 1px solid #FFFFFF;
 }
 
 /* --------------------------------------------------------------- buttons */

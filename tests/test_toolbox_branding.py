@@ -36,6 +36,19 @@ def test_stylesheet_loads_and_is_non_trivial():
     assert '#2E4374' in content  # the accent color, defined once, referenced by name in docs
 
 
+def test_tab_bar_is_styled_as_its_own_rounded_box():
+    # QTabBar itself needs a background + border + radius of its own
+    # (the segmented-control look) -- not just QTabBar::tab:selected --
+    # or an unselected tab has no box at all and the whole row reads as
+    # loosely connected to the pane below rather than one grouped control.
+    path = os.path.join(RESOURCES_DIR, 'style.qss')
+    with open(path, encoding='utf-8') as f:
+        content = f.read()
+    tab_bar_rule = content.split('QTabBar {', 1)[1].split('}', 1)[0]
+    assert 'background' in tab_bar_rule
+    assert 'border-radius' in tab_bar_rule
+
+
 def test_main_stylesheet_loader_substitutes_icons_dir_placeholder():
     # style.qss itself contains a literal {ICONS_DIR} placeholder (checked
     # above) -- toolbox.main._load_stylesheet() must resolve it to a real,
