@@ -7,6 +7,7 @@ zero extra cost, and Excel-exported CSVs from Chinese Windows are often
 not UTF-8 at all.
 """
 import csv
+import io
 
 from language_tools.readers._rowreader import looks_like_header, pick_src_tgt_columns, rows_to_pairs
 
@@ -32,7 +33,13 @@ def read(path, delimiter=None, src_col_index=None, tgt_col_index=None, header=No
         except csv.Error:
             delimiter = ','
 
-    rows = list(csv.reader(text.splitlines(), delimiter=delimiter))
+    # Feed the full text via StringIO, NOT text.splitlines(): splitlines()
+    # strips the line terminators, so csv.reader cannot reassemble a quoted
+    # field that spans multiple physical lines and silently glues the pieces
+    # together without the newline ("line1\nline2" -> "line1line2").
+    # StringIO preserves the embedded newlines and lets the csv module's own
+    # multi-line-record handling do its job.
+    rows = list(csv.reader(io.StringIO(text), delimiter=delimiter))
     # Number rows by their real position before dropping blanks, so a
     # "missing translation" warning points at the actual line the person
     # would see in a text editor / spreadsheet, not a position among

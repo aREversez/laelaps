@@ -28,3 +28,22 @@ def test_csv_language_direction_reversal():
     assert len(units) == 2
     assert units[0].tgt_text == 'He left at 3pm while it was raining.'
     assert units[1].tgt_text == 'The taxi was late.'
+
+
+def test_csv_multiline_quoted_field_preserved(tmp_path):
+    # A quoted field spanning multiple physical lines must keep its embedded
+    # newlines. Regression: csv.reader used to be fed text.splitlines(),
+    # which strips the line terminators, so multi-line records were silently
+    # re-joined WITHOUT the newline ("line1\nline2" -> "line1line2").
+    #
+    # Generated via tmp_path instead of a committed fixture under
+    # fixtures/csv/: the bytes under test ARE the line terminators, and git
+    # autocrlf would rewrite them on Windows checkouts, making a committed
+    # fixture's expected values platform-dependent.
+    p = tmp_path / 'multiline.csv'
+    p.write_text('en,zh\n"line1\nline2","第一行\n第二行"\n', encoding='utf-8')
+    pairs = csv_bilingual.read(str(p))
+    assert len(pairs) == 1
+    assert pairs[0].key == '1'
+    assert pairs[0].src_text == 'line1\nline2'
+    assert pairs[0].tgt_text == '第一行\n第二行'
