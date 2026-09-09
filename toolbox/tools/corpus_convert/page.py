@@ -54,13 +54,64 @@ _LAYOUT_CHOICES = [
     ('逐段对照', 'alternating', '原文译文逐段交替排列'),
 ]
 
-_LANG_TOOLTIP = '双语文档必填；tmx/sdltm 留空会自动识别'
+# (display label, language code) -- common pairs, prefilled into an
+# editable combobox so most users just pick from the list instead of
+# typing a BCP-47 code by hand. Editable so an uncommon pair can still be
+# typed in directly; the underlying value used by api.convert() is always
+# whatever's in the edit field (currentText()), not a fixed code list.
+_LANG_CHOICES = [
+    ('英语 (en-US)', 'en-US'),
+    ('英语-英国 (en-GB)', 'en-GB'),
+    ('简体中文 (zh-CN)', 'zh-CN'),
+    ('繁体中文 (zh-TW)', 'zh-TW'),
+    ('日语 (ja-JP)', 'ja-JP'),
+    ('韩语 (ko-KR)', 'ko-KR'),
+    ('法语 (fr-FR)', 'fr-FR'),
+    ('德语 (de-DE)', 'de-DE'),
+    ('西班牙语 (es-ES)', 'es-ES'),
+    ('葡萄牙语 (pt-PT)', 'pt-PT'),
+    ('意大利语 (it-IT)', 'it-IT'),
+    ('俄语 (ru-RU)', 'ru-RU'),
+    ('阿拉伯语 (ar-SA)', 'ar-SA'),
+]
+
+_LANG_TOOLTIP = '双语文档必填；tmx/sdltm 留空会自动识别。可直接选，也可以手动输入其它语言代码'
 _QA_TOOLTIP = '检查漏译、数字不一致等问题'
 _FORMAT_TOOLTIPS = {
     'sdltm': 'Trados 记忆库格式',
     'tmx': 'CAT 工具通用记忆库格式',
     'csv': '可人工核对的表格',
 }
+
+
+def _make_lang_combo(default_code):
+    """An editable QComboBox prefilled with common language pairs
+    (``_LANG_CHOICES``) but that still accepts a freely typed code --
+    picking from the list is the common case, typing stays available for
+    anything not in the preset list.
+    """
+    combo = QComboBox()
+    combo.setEditable(True)
+    for display_text, code in _LANG_CHOICES:
+        combo.addItem(display_text, code)
+    idx = combo.findData(default_code)
+    if idx >= 0:
+        combo.setCurrentIndex(idx)
+    else:
+        combo.setCurrentText(default_code)
+    return combo
+
+
+def _lang_combo_code(combo):
+    """The language code a lang combo currently represents: the preset's
+    code if the current text matches one of the dropdown's display labels
+    (selected from the list, not retyped), otherwise the typed text as-is
+    (freeform code entry).
+    """
+    idx = combo.findText(combo.currentText())
+    if idx >= 0:
+        return combo.itemData(idx)
+    return combo.currentText().strip()
 
 
 def _section(title, content_widget):
@@ -129,6 +180,7 @@ class CorpusConvertPage(QWidget):
         file_layout.setContentsMargins(0, 0, 0, 0)
         self.input_edit = QLineEdit()
         self.input_edit.setPlaceholderText('选择要转换的文件…')
+        self.input_edit.textChanged.connect(self._sync_format_checkboxes)
         browse_btn = QPushButton('浏览…')
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
@@ -139,8 +191,8 @@ class CorpusConvertPage(QWidget):
         lang_widget = QWidget()
         lang_form = QFormLayout(lang_widget)
         lang_form.setContentsMargins(0, 0, 0, 0)
-        self.src_edit = QLineEdit('en-US')
-        self.tgt_edit = QLineEdit('zh-CN')
+        self.src_edit = _make_lang_combo('en-US')
+        self.tgt_edit = _make_lang_combo('zh-CN')
         self.src_edit.setToolTip(_LANG_TOOLTIP)
         self.tgt_edit.setToolTip(_LANG_TOOLTIP)
         lang_form.addRow('原文语言', self.src_edit)
@@ -200,7 +252,30 @@ class CorpusConvertPage(QWidget):
     def _browse_input(self):
         path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _SUPPORTED_FILTER)
         if path:
-            self.input_edit.setText(path)
+            self.input_edit.setText(path)  # triggers _sync_format_checkboxes via textChanged
+
+    def _sync_format_checkboxes(self, input_path):
+        """Grey out (disable + uncheck) the step-3 checkbox matching the
+        step-1 input's own corpus format -- converting a .tmx to .tmx (or
+        a .sdltm to .sdltm) is a no-op output the user didn't actually ask
+        for, so don't offer it as a live choice. Bilingual sources
+        (.docx/.xlsx/.csv/.tsv) have no such conflict, so every checkbox
+        is re-enabled for them.
+        """
+        ext = os.path.splitext(input_path)[1].lower()
+        same_format_checkbox = {'.tmx': self.chk_tmx, '.sdltm': self.chk_sdltm}.get(ext)
+        for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv):
+            was_auto_disabled = not cb.isEnabled()
+            is_same_format = cb is same_format_checkbox
+            cb.setEnabled(not is_same_format)
+            if is_same_format:
+                cb.setChecked(False)
+            elif was_auto_disabled:
+                # re-enabled after a previous input auto-disabled it --
+                # restore the default checked state now that it's a valid
+                # choice again (don't touch it if the user, not this
+                # method, was the one who last unchecked it).
+                cb.setChecked(True)
 
     def _validate(self):
         """Returns an error string, or None if the form is valid."""
@@ -211,7 +286,7 @@ class CorpusConvertPage(QWidget):
             return '找不到这个文件，请重新选择'
 
         ext = os.path.splitext(input_path)[1].lower()
-        if ext in _BILINGUAL_EXTS and (not self.src_edit.text().strip() or not self.tgt_edit.text().strip()):
+        if ext in _BILINGUAL_EXTS and (not _lang_combo_code(self.src_edit) or not _lang_combo_code(self.tgt_edit)):
             return '这类文件需要先填写原文语言和译文语言，才能开始转换'
 
         if not any(cb.isChecked() for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv)):
@@ -235,8 +310,8 @@ class CorpusConvertPage(QWidget):
         kwargs = dict(
             input_path=input_path,
             output_base=os.path.splitext(input_path)[0],
-            src_lang=self.src_edit.text().strip() or None,
-            tgt_lang=self.tgt_edit.text().strip() or None,
+            src_lang=_lang_combo_code(self.src_edit) or None,
+            tgt_lang=_lang_combo_code(self.tgt_edit) or None,
             formats=formats,
             reader_opts=reader_opts,
             qa=self.chk_qa.isChecked(),

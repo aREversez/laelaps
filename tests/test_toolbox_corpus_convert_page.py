@@ -18,7 +18,7 @@ def test_missing_lang_for_bilingual_source_shows_error(qtbot):
     page = CorpusConvertPage()
     qtbot.addWidget(page)
     page.input_edit.setText(fixture_path('basic.docx'))
-    page.src_edit.setText('')
+    page.src_edit.setEditText('')
     page.convert_btn.click()
     assert '原文语言和译文语言' in page.log.toPlainText()
 
@@ -85,8 +85,8 @@ def test_real_conversion_end_to_end(qtbot, tmp_path):
     page = CorpusConvertPage()
     qtbot.addWidget(page)
     page.input_edit.setText(str(src))
-    page.src_edit.setText('en-US')
-    page.tgt_edit.setText('zh-CN')
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
 
     page.convert_btn.click()
     # ConvertWorker runs on a real QThread; poll until it re-enables the
@@ -101,14 +101,69 @@ def test_real_conversion_end_to_end(qtbot, tmp_path):
     assert (tmp_path / 'basic.csv').exists()
 
 
+def test_lang_combos_are_editable_dropdowns_with_presets(qtbot):
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    assert page.src_edit.isEditable()
+    assert page.tgt_edit.isEditable()
+    assert page.src_edit.count() > 1
+    assert page.tgt_edit.count() > 1
+    # default selection still resolves to the same codes as before
+    assert page.src_edit.currentData() == 'en-US'
+    assert page.tgt_edit.currentData() == 'zh-CN'
+
+
+def test_lang_combo_accepts_freeform_typed_code(qtbot):
+    from toolbox.tools.corpus_convert.page import _lang_combo_code
+
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.src_edit.setEditText('nl-NL')  # not in the preset list
+    assert _lang_combo_code(page.src_edit) == 'nl-NL'
+
+
+def test_tmx_input_greys_out_tmx_checkbox(qtbot):
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(fixture_path('basic.docx'))  # sanity: docx leaves all enabled
+    assert page.chk_tmx.isEnabled()
+
+    page.input_edit.setText('/some/path/memory.tmx')
+    assert not page.chk_tmx.isEnabled()
+    assert not page.chk_tmx.isChecked()
+    assert page.chk_sdltm.isEnabled()
+    assert page.chk_csv.isEnabled()
+
+
+def test_sdltm_input_greys_out_sdltm_checkbox(qtbot):
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText('/some/path/memory.sdltm')
+    assert not page.chk_sdltm.isEnabled()
+    assert not page.chk_sdltm.isChecked()
+    assert page.chk_tmx.isEnabled()
+    assert page.chk_csv.isEnabled()
+
+
+def test_switching_back_from_tmx_restores_tmx_checkbox(qtbot):
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText('/some/path/memory.tmx')
+    assert not page.chk_tmx.isEnabled()
+
+    page.input_edit.setText(fixture_path('basic.docx'))
+    assert page.chk_tmx.isEnabled()
+    assert page.chk_tmx.isChecked()
+
+
 def test_partial_export_message_mentions_filtered_count(qtbot, tmp_path):
     src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
 
     page = CorpusConvertPage()
     qtbot.addWidget(page)
     page.input_edit.setText(str(src))
-    page.src_edit.setText('en-US')
-    page.tgt_edit.setText('zh-CN')
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
     page.chk_qa.setChecked(True)
 
     # force everything to be filtered out, to exercise the partial-export
