@@ -36,6 +36,36 @@ def test_alignment_cost_exposed_in_meta():
     assert isinstance(units[0].meta['alignment_cost'], float)
 
 
+def test_align_move_and_gap_flag_for_normal_one_to_one():
+    pairs = [ParagraphPair(key='1', src_text='The cat sleeps.', tgt_text='猫在睡觉。')]
+    units, _ = align_paragraph_pairs(pairs, 'en-US', 'zh-CN')
+    assert units[0].meta['align_move'] == '1:1'
+    assert units[0].meta['align_gap'] is False
+
+
+def test_align_move_for_a_genuine_merge():
+    # Two short source sentences merge into one target sentence -- a real
+    # (2,1) DP move, not a gap. align_gap must stay False: a merge is a
+    # normal alignment outcome, not "no corresponding sentence existed".
+    pairs = [ParagraphPair(key='1', src_text='Hi. Bye.', tgt_text='你好，再见。')]
+    units, _ = align_paragraph_pairs(pairs, 'en-US', 'zh-CN')
+    assert len(units) == 1
+    assert units[0].meta['align_move'] == '2:1'
+    assert units[0].meta['align_gap'] is False
+
+
+def test_align_gap_flag_true_for_gap_moves():
+    pairs = [ParagraphPair(key='1', src_text='Just one sentence here.', tgt_text='')]
+    units, _ = align_paragraph_pairs(pairs, 'en-US', 'zh-CN')
+    assert units[0].meta['align_move'] == '1:0'
+    assert units[0].meta['align_gap'] is True
+
+    pairs = [ParagraphPair(key='1', src_text='', tgt_text='这里只有一句话。')]
+    units, _ = align_paragraph_pairs(pairs, 'en-US', 'zh-CN')
+    assert units[0].meta['align_move'] == '0:1'
+    assert units[0].meta['align_gap'] is True
+
+
 def test_duplicate_paragraph_pair_keys_do_not_corrupt_content():
     # ParagraphPair.key is diagnostic metadata, not required to be unique.
     # An earlier implementation used {p.key: ...} as an intermediate dict,

@@ -15,7 +15,13 @@ from language_tools.corpus_readers import sdltm_reader, tmx_reader
 from language_tools.readers import csv_bilingual, docx, xlsx_bilingual
 from language_tools.writers import csv_writer, sdltm_writer, tmx_writer
 
-_BILINGUAL_READERS = {
+# Public (not _-prefixed) since align_report.py's independent "align
+# without writing files" entry point needs the exact same "which reader
+# handles which extension" dispatch -- one dict, not two hand-kept-in-sync
+# copies. _CORPUS_READERS below stays private: nothing outside convert()
+# needs it yet (corpus files skip alignment entirely, so align_report.py
+# has no reason to touch it).
+BILINGUAL_READERS = {
     '.docx': docx.read,
     '.xlsx': xlsx_bilingual.read,
     '.xlsm': xlsx_bilingual.read,
@@ -79,12 +85,12 @@ def convert(input_path, output_base, src_lang=None, tgt_lang=None,
         if tgt_lang is None:
             tgt_lang = units[0].tgt_lang if units else ''
         ratio = qa_module.expected_length_ratio(units) if units else 1.0
-    elif ext in _BILINGUAL_READERS:
+    elif ext in BILINGUAL_READERS:
         if not src_lang or not tgt_lang:
             raise ValueError('src_lang and tgt_lang are required for bilingual '
                               'source files (%r has no language info of its own)' % ext)
         repairer = load_repairs(repair_path) if repair_path else NULL_REPAIRER
-        pairs = _BILINGUAL_READERS[ext](input_path, **(reader_opts or {}))
+        pairs = BILINGUAL_READERS[ext](input_path, **(reader_opts or {}))
         units, ratio = align_paragraph_pairs(
             pairs, src_lang, tgt_lang, repairer=repairer, source_file=input_path)
     else:

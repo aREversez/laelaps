@@ -78,7 +78,8 @@ def _align_sentences(e, z, join_src, join_tgt, R, S2, MP, MP0, GAP):
     res, i, j = [], n, m
     while (i, j) != (0, 0):
         pi, pj = bt[i][j]
-        res.append((join_src.join(e[pi:i]), join_tgt.join(z[pj:j]), cost(e[pi:i], z[pj:j])))
+        move = (i - pi, j - pj)
+        res.append((join_src.join(e[pi:i]), join_tgt.join(z[pj:j]), cost(e[pi:i], z[pj:j]), move))
         i, j = pi, pj
     res.reverse()
     return res
@@ -115,11 +116,25 @@ def align_paragraph_pairs(pairs, src_lang, tgt_lang, repairer=NULL_REPAIRER,
 
     units = []
     for pair, e, z in split_pairs:
-        for src_text, tgt_text, align_cost in _align_sentences(e, z, join_src, join_tgt, R, S2, MP, MP0, GAP):
+        for src_text, tgt_text, align_cost, move in _align_sentences(e, z, join_src, join_tgt, R, S2, MP, MP0, GAP):
+            move_src, move_tgt = move
             units.append(TranslationUnit(
                 src_lang=src_lang, tgt_lang=tgt_lang,
                 src_text=src_text, tgt_text=tgt_text,
                 source_file=source_file, source_key=pair.key,
-                meta={'alignment_cost': round(align_cost, 4)},
+                meta={
+                    'alignment_cost': round(align_cost, 4),
+                    # e.g. '2:1' (two src sentences merged into one tgt
+                    # sentence), '1:1' (the common case), '1:0'/'0:1' (a
+                    # GAP move -- one side had no corresponding sentence
+                    # at all, not just a short/empty one). Kept as a
+                    # display-ready string here rather than the raw
+                    # (int, int) tuple since every consumer so far
+                    # (align_report's summary, the alignment_check GUI
+                    # table) wants it as text, not as numbers to compute
+                    # on further.
+                    'align_move': '%d:%d' % move,
+                    'align_gap': move_src == 0 or move_tgt == 0,
+                },
             ))
     return units, R
