@@ -190,6 +190,27 @@ def test_tmx_reader_matches_tuv_by_requested_language(tmp_path):
     assert units[0].tgt_text == '你好。'
 
 
+def test_tmx_reader_matches_region_less_lang_tag(tmp_path):
+    # Some CAT tools export TMX with a bare xml:lang="en" (no region).
+    # Requesting the default 'en-US'/'zh-CN' pair should still find it via
+    # base-subtag fallback instead of skipping the <tu> entirely.
+    path = tmp_path / 'no_region.tmx'
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<tmx version="1.4">\n'
+        '<header creationtool="Test" creationtoolversion="1.0" adminlang="en-US" '
+        'srclang="en" datatype="unknown" segtype="sentence"/>\n'
+        '<body><tu>'
+        '<tuv xml:lang="en"><seg>Hello.</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>你好。</seg></tuv>'
+        '</tu></body>\n'
+        '</tmx>', encoding='utf-8')
+    units = tmx_reader.read(str(path), src_lang='en-US', tgt_lang='zh-CN')
+    assert len(units) == 1
+    assert units[0].src_text == 'Hello.'
+    assert units[0].tgt_text == '你好。'
+
+
 def test_tmx_reader_captures_inline_markup_in_seg(tmp_path):
     # When a <seg> contains <bpt>/<ept>/<ph>/<hi> (or any other inline
     # element), the reader populates TranslationUnit.src_markup/
