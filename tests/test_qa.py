@@ -261,4 +261,37 @@ def test_csv_writer_qa_columns_opt_in(tmp_path):
         header = f.readline().strip()
         row = f.readline().strip()
     assert header == 'No,EN,ZH,confidence,status,issues'
+    # the raw code stays present (grep/filter-friendly in Excel) but is no
+    # longer the only thing shown -- a bare "EMPTY_SOURCE" means nothing
+    # to a translator reading the sheet, so the Chinese label leads.
     assert 'EMPTY_SOURCE' in row
+    assert '原文为空(EMPTY_SOURCE)' in row
+
+
+def test_csv_writer_formats_multiple_issues_on_one_row(tmp_path):
+    from language_tools.writers import csv_writer
+
+    units = [_tu('Found %d results.', '找到了结果。')]  # empty tgt-ish + placeholder
+    units[0].tgt_text = ''  # also trigger EMPTY_TARGET alongside PLACEHOLDER_MISMATCH
+    qa.run(units, length_ratio=1.0)
+    path = str(tmp_path / 'out.csv')
+    csv_writer.write(path, units, include_qa=True)
+    with open(path, encoding='utf-8-sig') as f:
+        f.readline()
+        row = f.readline().strip()
+    assert '原文为空' not in row  # sanity: wrong label didn't leak in
+    assert '译文为空(EMPTY_TARGET)' in row
+
+
+def test_csv_writer_falls_back_to_raw_code_for_unmapped_issue(tmp_path, monkeypatch):
+    from language_tools.writers import csv_writer
+
+    units = [_tu('Hello', '你好')]
+    units[0].meta['qa_issues'] = ['SOME_FUTURE_CHECK_NOT_YET_LABELED']
+    units[0].meta['qa_confidence'] = 0.5
+    path = str(tmp_path / 'out.csv')
+    csv_writer.write(path, units, include_qa=True)
+    with open(path, encoding='utf-8-sig') as f:
+        f.readline()
+        row = f.readline().strip()
+    assert 'SOME_FUTURE_CHECK_NOT_YET_LABELED' in row

@@ -185,6 +185,30 @@ def expected_length_ratio(units):
     return src_len / max(tgt_len, 1)
 
 
+# Human-readable (Chinese) label per issue code, for any presentation
+# layer that shouldn't show the raw code to a non-technical reviewer --
+# the CSV export (csv_writer.py) and the QA-check GUI page both import
+# this rather than keeping their own copy, so the label for e.g.
+# TAG_MISMATCH can't drift between "what the table shows" and "what the
+# filter dropdown says" the way two independently-maintained dicts could.
+# The *codes themselves* (qa_issues list contents, dict keys here) stay
+# English/machine-readable on purpose -- they're compared against by name
+# throughout the codebase (tests, the GUI's filter dropdown values,
+# ISSUE_TYPES in tm/qa_report.py) and are meant to be greppable/stable
+# identifiers, not prose.
+ISSUE_LABELS = {
+    'EMPTY_SOURCE': '原文为空',
+    'EMPTY_TARGET': '译文为空',
+    'LENGTH_RATIO_OUTLIER': '长度比异常',
+    'NUMBER_MISMATCH': '数字不匹配',
+    'PLACEHOLDER_MISMATCH': '占位符不匹配',
+    'URL_MISMATCH': 'URL 不匹配',
+    'TAG_MISMATCH': '标签不匹配',
+    'SOURCE_CONFLICT': '原文冲突',
+    'TARGET_CONFLICT': '译文冲突',
+}
+
+
 def run(units, length_ratio):
     """Mutates each unit's meta in place: 'qa_issues' (list[str]) and
     'qa_confidence' (float, 1.0 = no issues found). Returns units for

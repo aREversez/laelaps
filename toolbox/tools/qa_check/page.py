@@ -33,6 +33,15 @@ does means there's no second "filtered CSV" code path to keep in sync,
 and (2) a reviewer opening the CSV in Excel can filter/sort there with
 full context (they can still see what passed, not just what failed) --
 narrowing to "problems only" at export time would silently discard that.
+
+Issue codes (TAG_MISMATCH, etc.) are translated to Chinese labels for
+display -- both here (results table + filter dropdown, via
+``_issue_label()``) and in the exported CSV (``csv_writer.py``'s own use
+of the same ``qa.ISSUE_LABELS`` table) -- since a bare code means nothing
+to a translator/reviewer who isn't the one who wrote the QA checks. The
+codes themselves stay untouched as ``self._last_units[i].meta['qa_issues']``
+and as the filter dropdown's underlying ``currentData()`` values; only the
+*rendered* text changes.
 """
 import html
 import os
@@ -44,6 +53,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from language_tools import qa as qa_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
@@ -55,21 +65,29 @@ _CSV_FILTER = 'CSV (*.csv)'
 
 _LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
-# Chinese display label + short tooltip per issue type, for the filter
-# dropdown only -- the results table and the exported CSV both keep the
-# raw codes (TAG_MISMATCH, etc.) since those need to match each other and
-# match what qa.py actually produces, not read nicely in isolation.
-_ISSUE_LABELS = {
-    'EMPTY_SOURCE': ('原文为空', '这一条的原文是空的'),
-    'EMPTY_TARGET': ('译文为空', '这一条还没有翻译'),
-    'LENGTH_RATIO_OUTLIER': ('长度比异常', '译文长度和原文长度的比例明显偏离整个语料库的平均水平'),
-    'NUMBER_MISMATCH': ('数字不匹配', '原文和译文里出现的数字对不上，可能是漏译或多译'),
-    'PLACEHOLDER_MISMATCH': ('占位符不匹配', '{name}/%s 这类代码占位符在译文里被改动或丢失'),
-    'URL_MISMATCH': ('URL 不匹配', '原文里的链接在译文里丢失或被改动'),
-    'TAG_MISMATCH': ('标签不匹配', '原文和译文的格式标签（如加粗）数量对不上'),
-    'SOURCE_CONFLICT': ('原文冲突', '同一句原文在语料库里对应了不止一种译文'),
-    'TARGET_CONFLICT': ('译文冲突', '同一句译文在语料库里对应了不止一种原文'),
+# Short tooltip per issue type, for the filter dropdown. The *label* text
+# (used both in the dropdown and now in the results table's "问题类型"
+# column -- that's the bug this comment is here to prevent recurring)
+# comes from ``qa.ISSUE_LABELS``, not a second copy here: two independent
+# label dicts is exactly how "标签不匹配" in the dropdown and a raw
+# "TAG_MISMATCH" in the table ended up saying different things for the
+# same code. Tooltips stay local since they're GUI-only extra detail with
+# no equivalent need to match the CSV export.
+_ISSUE_TOOLTIPS = {
+    'EMPTY_SOURCE': '这一条的原文是空的',
+    'EMPTY_TARGET': '这一条还没有翻译',
+    'LENGTH_RATIO_OUTLIER': '译文长度和原文长度的比例明显偏离整个语料库的平均水平',
+    'NUMBER_MISMATCH': '原文和译文里出现的数字对不上，可能是漏译或多译',
+    'PLACEHOLDER_MISMATCH': '{name}/%s 这类代码占位符在译文里被改动或丢失',
+    'URL_MISMATCH': '原文里的链接在译文里丢失或被改动',
+    'TAG_MISMATCH': '原文和译文的格式标签（如加粗）数量对不上',
+    'SOURCE_CONFLICT': '同一句原文在语料库里对应了不止一种译文',
+    'TARGET_CONFLICT': '同一句译文在语料库里对应了不止一种原文',
 }
+
+
+def _issue_label(issue_code):
+    return qa_module.ISSUE_LABELS.get(issue_code, issue_code)
 
 
 class QaCheckPage(QWidget):
@@ -130,7 +148,8 @@ class QaCheckPage(QWidget):
         self.type_filter_combo = QComboBox()
         self.type_filter_combo.addItem('全部问题类型', None)
         for issue_type in qa_report_module.ISSUE_TYPES:
-            label, tip = _ISSUE_LABELS.get(issue_type, (issue_type, ''))
+            label = _issue_label(issue_type)
+            tip = _ISSUE_TOOLTIPS.get(issue_type, '')
             self.type_filter_combo.addItem(label, issue_type)
             if tip:
                 self.type_filter_combo.setItemData(
@@ -239,10 +258,11 @@ class QaCheckPage(QWidget):
         self.results_table.setRowCount(len(rows))
         for row, (i, u, issues) in enumerate(rows):
             conf = u.meta.get('qa_confidence', 1.0)
+            issue_text = '、'.join(_issue_label(code) for code in issues) if issues else '-'
             self.results_table.setItem(row, 0, QTableWidgetItem(str(i)))
             self.results_table.setItem(row, 1, QTableWidgetItem(u.src_text))
             self.results_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
-            self.results_table.setItem(row, 3, QTableWidgetItem(';'.join(issues) if issues else '-'))
+            self.results_table.setItem(row, 3, QTableWidgetItem(issue_text))
             self.results_table.setItem(row, 4, QTableWidgetItem('%.2f' % conf))
 
     # ------------------------------------------------------------ export

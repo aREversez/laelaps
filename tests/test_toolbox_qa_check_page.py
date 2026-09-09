@@ -97,7 +97,7 @@ def test_type_filter_narrows_to_matching_rows_only(qtbot):
     assert page.results_table.rowCount() == 2
 
     for row in range(page.results_table.rowCount()):
-        assert 'TAG_MISMATCH' in page.results_table.item(row, 3).text()
+        assert '标签不匹配' in page.results_table.item(row, 3).text()
 
 
 def test_type_filter_reset_to_all_restores_full_flagged_view(qtbot):
@@ -112,7 +112,7 @@ def test_type_filter_reset_to_all_restores_full_flagged_view(qtbot):
     assert page.results_table.rowCount() == 6
 
 
-def test_table_columns_show_src_tgt_and_issue_codes(qtbot, tmp_path):
+def test_table_columns_show_src_tgt_and_translated_issue_labels(qtbot, tmp_path):
     src = tmp_path / 'in.tmx'
     _write_tmx(src, [_u('Found %d results.', '找到了结果。')])
     page = QaCheckPage()
@@ -124,7 +124,23 @@ def test_table_columns_show_src_tgt_and_issue_codes(qtbot, tmp_path):
     assert page.results_table.rowCount() == 1
     assert page.results_table.item(0, 1).text() == 'Found %d results.'
     assert page.results_table.item(0, 2).text() == '找到了结果。'
-    assert page.results_table.item(0, 3).text() == 'PLACEHOLDER_MISMATCH'
+    # Chinese label, not the raw code -- a bare "PLACEHOLDER_MISMATCH"
+    # means nothing to a non-technical reviewer.
+    assert page.results_table.item(0, 3).text() == '占位符不匹配'
+
+
+def test_table_shows_multiple_issue_labels_joined_for_one_row(qtbot):
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(tmx_path('inline_markup_qa.tmx'))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.hide_clean_chk.setChecked(False)
+    # tu 6 (row index 5) has both PLACEHOLDER_MISMATCH and SOURCE_CONFLICT
+    cell_text = page.results_table.item(5, 3).text()
+    assert '占位符不匹配' in cell_text
+    assert '原文冲突' in cell_text
 
 
 def test_check_again_clears_stale_results_first(qtbot, tmp_path):
@@ -169,7 +185,8 @@ def test_export_writes_full_csv_including_clean_rows(qtbot, tmp_path, monkeypatc
     assert out.exists()
     content = out.read_text(encoding='utf-8-sig')
     assert content.count('\n') >= 9  # header + 8 data rows (+ trailing newline)
-    assert 'TAG_MISMATCH' in content
+    assert 'TAG_MISMATCH' in content  # raw code still present (Excel-filterable)
+    assert '标签不匹配' in content  # and the Chinese label leads, per the same fix
 
 
 def test_export_cancelled_dialog_does_not_error(qtbot, monkeypatch):

@@ -238,14 +238,20 @@ class CorpusConvertPage(QWidget):
 
     def _sync_format_checkboxes(self, input_path):
         """Grey out (disable + uncheck) the step-3 checkbox matching the
-        step-1 input's own corpus format -- converting a .tmx to .tmx (or
-        a .sdltm to .sdltm) is a no-op output the user didn't actually ask
-        for, so don't offer it as a live choice. Bilingual sources
-        (.docx/.xlsx/.csv/.tsv) have no such conflict, so every checkbox
-        is re-enabled for them.
+        step-1 input's own format -- converting a .tmx to .tmx (or a
+        .sdltm to .sdltm, or a .csv to .csv) is a no-op output the user
+        didn't actually ask for, so don't offer it as a live choice.
+        .csv is genuinely ambiguous (it's both a bilingual *source* format
+        and one of the three output formats) but the same-extension
+        confusion is the same either way, so it gets the same treatment
+        as the two corpus formats rather than being treated as a special
+        case. .docx/.xlsx/.tsv have no such conflict (none of them is
+        also an output choice), so every checkbox stays enabled for them.
         """
         ext = os.path.splitext(input_path)[1].lower()
-        same_format_checkbox = {'.tmx': self.chk_tmx, '.sdltm': self.chk_sdltm}.get(ext)
+        same_format_checkbox = {
+            '.tmx': self.chk_tmx, '.sdltm': self.chk_sdltm, '.csv': self.chk_csv,
+        }.get(ext)
         for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv):
             was_auto_disabled = not cb.isEnabled()
             is_same_format = cb is same_format_checkbox

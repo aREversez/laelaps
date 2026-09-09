@@ -156,6 +156,37 @@ def test_switching_back_from_tmx_restores_tmx_checkbox(qtbot):
     assert page.chk_tmx.isChecked()
 
 
+def test_csv_input_greys_out_csv_checkbox(qtbot):
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText('/some/path/bilingual.csv')
+    assert not page.chk_csv.isEnabled()
+    assert not page.chk_csv.isChecked()
+    assert page.chk_tmx.isEnabled()
+    assert page.chk_sdltm.isEnabled()
+
+
+def test_tsv_input_does_not_grey_out_csv_checkbox(qtbot):
+    # .tsv is a bilingual *source* format, not one of the three output
+    # choices -- unlike .csv, there's no genuine same-extension conflict,
+    # so csv output should stay a normal, enabled choice.
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText('/some/path/bilingual.tsv')
+    assert page.chk_csv.isEnabled()
+
+
+def test_switching_back_from_csv_restores_csv_checkbox(qtbot):
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText('/some/path/bilingual.csv')
+    assert not page.chk_csv.isEnabled()
+
+    page.input_edit.setText(fixture_path('basic.docx'))
+    assert page.chk_csv.isEnabled()
+    assert page.chk_csv.isChecked()
+
+
 def test_partial_export_message_mentions_filtered_count(qtbot, tmp_path):
     src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
 
