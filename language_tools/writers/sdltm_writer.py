@@ -118,7 +118,7 @@ def write(path, units, src_lang, tgt_lang, name):
                 'fuzzy_indexes,last_recompute_date,last_recompute_size,flags,tucount) '
                 'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (uuid.uuid4().bytes, name, src_lang, tgt_lang, None, None, 127,
-                 'WorkBuddy', now, '9999-12-31 23:59:59', 9, None, None, 0, 0))
+                 'laelaps', now, '9999-12-31 23:59:59', 9, None, None, 0, 0))
     for k, v in (('VERSION', '8.06'), ('FREQUENCYTOP', '1000'), ('LAST_ANALYZE', '0')):
         con.execute('INSERT INTO parameters VALUES(?,?,?)', (1, k, v))
     con.execute('INSERT INTO attributes(guid,name,type,tm_id) VALUES(?,?,?,?)',
@@ -133,8 +133,8 @@ def write(path, units, src_lang, tgt_lang, name):
                     'change_date,change_user,last_used_date,last_used_user,usage_counter,flags) '
                     'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                     (uuid.uuid4().bytes, 1, fnv1a64(src_text), seg_xml(src_text, src_lang),
-                     fnv1a64(tgt_text), seg_xml(tgt_text, tgt_lang), now, 'WorkBuddy', now, 'WorkBuddy',
-                     now, 'WorkBuddy', 0, 131073))
+                     fnv1a64(tgt_text), seg_xml(tgt_text, tgt_lang), now, 'laelaps', now, 'laelaps',
+                     now, 'laelaps', 0, 131073))
         n += 1
     con.execute('UPDATE translation_memories SET tucount=? WHERE id=1', (n,))
     con.commit()

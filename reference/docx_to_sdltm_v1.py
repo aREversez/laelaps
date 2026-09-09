@@ -348,7 +348,7 @@ def write_sdltm(path, pairs, src_lang, tgt_lang, name):
                 'fuzzy_indexes,last_recompute_date,last_recompute_size,flags,tucount) '
                 'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 (uuid.uuid4().bytes, name, src_lang, tgt_lang, None, None, 127,
-                 'WorkBuddy', now, '9999-12-31 23:59:59', 9, None, None, 0, 0))
+                 'laelaps', now, '9999-12-31 23:59:59', 9, None, None, 0, 0))
     for k, v in (('VERSION', '8.06'), ('FREQUENCYTOP', '1000'), ('LAST_ANALYZE', '0')):
         con.execute('INSERT INTO parameters VALUES(?,?,?)', (1, k, v))
     con.execute('INSERT INTO attributes(guid,name,type,tm_id) VALUES(?,?,?,?)',
@@ -363,8 +363,8 @@ def write_sdltm(path, pairs, src_lang, tgt_lang, name):
                     'change_date,change_user,last_used_date,last_used_user,usage_counter,flags) '
                     'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                     (uuid.uuid4().bytes, 1, fnv1a64(en), seg_xml(en, src_lang),
-                     fnv1a64(zh), seg_xml(zh, tgt_lang), now, 'WorkBuddy', now, 'WorkBuddy',
-                     now, 'WorkBuddy', 0, 131073))
+                     fnv1a64(zh), seg_xml(zh, tgt_lang), now, 'laelaps', now, 'laelaps',
+                     now, 'laelaps', 0, 131073))
         n += 1
     con.execute('UPDATE translation_memories SET tucount=? WHERE id=1', (n,))
     con.commit()
@@ -377,14 +377,14 @@ def write_tmx(path, pairs, src_lang, tgt_lang):
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     with open(path, 'w', encoding='utf-8') as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tmx version="1.4">\n')
-        f.write('  <header creationtool="WorkBuddy" creationtoolversion="1.0" o-tmf="SDLTM" '
+        f.write('  <header creationtool="laelaps" creationtoolversion="1.0" o-tmf="SDLTM" '
                 'adminlang="en-US" srclang="%s" datatype="unknown" segtype="sentence" '
-                'creationdate="%s" creationid="WorkBuddy"/>\n  <body>\n' % (src_lang, stamp))
+                'creationdate="%s" creationid="laelaps"/>\n  <body>\n' % (src_lang, stamp))
         for en, zh in pairs:
             en, zh = en.strip(), zh.strip()
             if not en or not zh:
                 continue
-            f.write('    <tu creationdate="%s" creationid="WorkBuddy">\n' % stamp)
+            f.write('    <tu creationdate="%s" creationid="laelaps">\n' % stamp)
             f.write('      <tuv xml:lang="%s"><seg>%s</seg></tuv>\n' % (src_lang, esc(en)))
             f.write('      <tuv xml:lang="%s"><seg>%s</seg></tuv>\n' % (tgt_lang, esc(zh)))
             f.write('    </tu>\n')
