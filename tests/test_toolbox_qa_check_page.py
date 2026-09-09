@@ -206,7 +206,22 @@ def test_export_cancelled_dialog_does_not_error(qtbot, monkeypatch):
     assert '导出失败' not in page.log.toPlainText()
 
 
-def test_results_table_header_left_aligned_to_match_item_content(qtbot):
+# ------------------------------------------------------------------- layout
+
+def test_results_table_has_its_own_section_title(qtbot):
+    # Regression guard: the table used to sit under a "筛选结果" title that
+    # actually belonged to the filter controls above it, not the table --
+    # a reviewer scanning section titles for "where are my results" would
+    # find nothing labeled as such.
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    titles = [label.text() for label in page.findChildren(QLabel)
+              if label.property('role') == 'sectionTitle']
+    assert 'QA 结果' in titles
+    assert '筛选结果' not in titles
+
+
+def test_results_table_header_is_left_aligned(qtbot):
     # Header text used to default to centered while item text defaults to
     # left -- with 原文/译文 stretched wide and often long, that mismatch
     # looked inconsistent. Both should now agree.
@@ -214,17 +229,3 @@ def test_results_table_header_left_aligned_to_match_item_content(qtbot):
     qtbot.addWidget(page)
     alignment = page.results_table.horizontalHeader().defaultAlignment()
     assert alignment & Qt.AlignLeft
-
-
-def test_results_section_title_is_not_misleading_filter_label(qtbot):
-    # 'QA 结果' describes the table that follows; the previous '筛选结果'
-    # read as if it labeled filter output specifically rather than the
-    # check results as a whole.
-    page = QaCheckPage()
-    qtbot.addWidget(page)
-    section_titles = [
-        child.text() for child in page.findChildren(QLabel)
-        if child.property('role') == 'sectionTitle'
-    ]
-    assert 'QA 结果' in section_titles
-    assert '筛选结果' not in section_titles

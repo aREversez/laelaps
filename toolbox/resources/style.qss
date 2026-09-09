@@ -179,6 +179,12 @@ QPushButton#primaryButton:disabled {
 }
 
 /* ------------------------------------------------------------------ tables */
+/* text-align on QHeaderView::section handles most styles, but isn't
+ * reliably honored on every platform/Qt-style combination via QSS alone
+ * -- setDefaultAlignment() is also called in Python on every table's
+ * horizontal header (results_table, stats_table) as the authoritative
+ * fix; this QSS rule is a belt-and-suspenders backup, not the only fix.
+ */
 QTableWidget {
     background: #FFFFFF;
     border: 1px solid #E3E6EB;
@@ -198,6 +204,7 @@ QHeaderView::section {
     border: none;
     border-bottom: 1px solid #E3E6EB;
     font-weight: 600;
+    text-align: left;
 }
 
 /* -------------------------------------------------------------- log/console */

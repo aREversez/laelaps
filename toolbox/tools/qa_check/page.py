@@ -158,7 +158,7 @@ class QaCheckPage(QWidget):
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.type_filter_combo)
         filter_layout.addStretch(1)
-        outer.addWidget(section('QA 结果', filter_row))
+        outer.addWidget(section('筛选', filter_row))
 
         self.results_table = QTableWidget(0, 5)
         self.results_table.setHorizontalHeaderLabels(['#', '原文', '译文', '问题类型', '置信度'])
@@ -178,7 +178,7 @@ class QaCheckPage(QWidget):
         self.results_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
-        outer.addWidget(self.results_table, 1)
+        outer.addWidget(section('QA 结果', self.results_table), 1)
 
         self.log = QTextEdit()
         self.log.setObjectName('logConsole')
