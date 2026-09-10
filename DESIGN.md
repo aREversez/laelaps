@@ -338,6 +338,10 @@ pyinstaller packaging/language-toolbox.spec
 
 **PyInstaller 不能跨平台编译**，最终的 Windows exe 必须在 Windows 上跑这条命令产出；本项目在 Linux 沙盒里跑通过同一份 spec（产出 Linux 二进制，成功启动，资源文件路径解析也验证过没问题），验证的是打包链路本身没有缺失依赖/隐藏 import/资源路径这类问题，不是最终 Windows 产物本身。
 
+**又踩了一个坑，这次是隐藏 import，且是真·被漏掉的那种（不是上面说的"验证过没问题"）**：`toolbox/registry.py` 的 `discover()` 用 `pkgutil.iter_modules()` 扫出 `toolbox/tools/` 下的子包名，再用 `importlib.import_module('toolbox.tools.%s' % name)` 拼一个**运行时才确定**的字符串去 import——这正是 registry.py 文档字符串里强调的"新增工具只需要新建文件夹，`main_window.py` 不用改"那份优雅，但 PyInstaller 的静态分析（`Analysis`/modulegraph）只能识别字面量形式的 import/`importlib.import_module('固定字符串')`，一个运行时拼出来的模块名它看不见。后果：`alignment_check`/`corpus_convert`/`qa_check`/`tm_maintenance` 四个子包从来没有被真正打进 PYZ 归档（用 `PyInstaller.archive.readers` 直接读打包产物的 TOC 验证过：`hiddenimports=[]` 时归档里只有 `toolbox.tools` 这个空壳包，四个真正的工具子包完全不存在），冻结后应用启动时 `discover()` 在自己那份空壳里扫不出任何东西，`MainWindow` 落到"没有已注册的工具"的空状态分支——侧边栏和内容区都是空的，正是用户反馈的现象。这个 bug 本身跟操作系统无关（modulegraph 的静态分析在 Linux/Windows 上行为一致），只是之前"在 Linux 沙盒里验证过"大概率验证的不是真正启动冻结产物的效果，才没有及时发现。
+
+修复方式是在 `packaging/language-toolbox.spec` 里显式提供 `hiddenimports`：`packaging/pyinstaller_hooks.py` 里的 `collect_tool_hiddenimports()` 在打包时（普通、未冻结的 Python 进程里，`pkgutil` 正常工作）调用 `PyInstaller.utils.hooks.collect_submodules('toolbox.tools')`，把 `toolbox/tools/` 下所有子包的完整点分路径显式列出来传给 `Analysis(hiddenimports=...)`，且以后新增工具文件夹不需要再手动改这个列表（`collect_submodules` 在每次打包时重新扫一遍）——保持了 registry.py 文档字符串许下的"新增工具不用碰其它代码"的承诺，只是把满足这个承诺的机制从"假设 PyInstaller 能自己看懂"挪到了打包脚本这一层。该函数如果发现某个 `toolbox/tools/<id>/` 包没有出现在 `collect_submodules()` 的结果里，会直接抛 `RuntimeError` 让打包失败，而不是安静地产出一个"能跑起来但工具是空的"exe——`tests/test_packaging_spec.py` 对这个函数（包括这个失败分支）有单测覆盖，不需要真的跑一遍 PyInstaller 就能在日常测试里发现类似问题。
+
 ### 已知的验证盲区：字体和原生控件渲染
 
 **Linux 沙盒开发环境验证不了 Windows 上的字体/控件渲染效果**，这是本项目开发过程中吃过一次真实的亏：字体栈最初写的是 `"Segoe UI", "PingFang SC", sans-serif`——Segoe UI 不含中文字形，PingFang SC 是 macOS 专属字体在 Windows 上根本不存在，结果 Windows 上中文实际走的是某个未声明的兜底字体，且不同控件解析到的兜底字体不一致，出现"某个字突然变粗"这类字重错乱的观感问题（用户在真机截图里发现的，沙盒里的离屏渲染完全看不出这个问题，因为 Linux 环境装的是别的中文字体，不会触发 Windows 特有的字体替换链）。
