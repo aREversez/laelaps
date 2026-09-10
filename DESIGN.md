@@ -275,7 +275,7 @@ toolbox/                    # 与 language_tools/ 同仓库同级，GUI层
     │   └── page.py            # 结果表格 + 筛选（问题类型/只看有问题的）+ 导出 CSV
     ├── alignment_check/      # 第四个工具，包装 language_tools.align_report（对齐诊断预览，不写文件）
     │   ├── __init__.py       # 注册 ToolSpec
-    │   └── page.py            # 文件/语言/版式（复用 corpus_convert 的 widgets，装进可滚动的输入面板）+ QSplitter 下半区（筛选+结果表格+日志，拿伸缩优先级）+ 导出 CSV——三个输入区叠起来比其它工具页都高，非全屏窗口下曾经把结果表格挤到只剩一两行可见，改成上下分栏见该文件 docstring
+    │   └── page.py            # 文件 + 语言/排版三个控件合并成一行（AdjustToContents 让下拉框宽度贴内容，不再被 QFormLayout 撑满一整行）+ 结果表格（拿伸缩空间）+ 筛选 + 导出 CSV——原来三个输入区各占一整行，非全屏窗口下曾把结果表格挤到只剩一两行可见，见该文件 docstring
     └── <future_tool>/        # 新工具照此结构新增文件夹即可，main_window.py 不用改
 ```
 

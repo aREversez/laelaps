@@ -36,32 +36,35 @@ from qa_check worth calling out:
   every GAP does -- e.g. a short leftover fragment might not read as
   "empty" to QA but is still a GAP the aligner had to punt on).
 
-Layout is a top/bottom ``QSplitter`` (``_build_input_panel()`` /
-``_build_results_panel()``), not one long ``QVBoxLayout`` top to bottom
-like the other three tool pages use. This page earned the exception: it's
-the only tool with three full input sections (file/language/docx layout)
-stacked above its results table (qa_check and tm_maintenance's tabs have
-at most one), so on a non-maximized window the fixed-height input stack
-alone could eat nearly the whole page, leaving 对齐结果 squeezed down to
-one or two visible rows no matter how many the check actually found --
-exactly the bug report this fixed. The input panel additionally sits in a
-``QScrollArea`` so dragging the splitter down doesn't clip a combo box
-off-screen, it scrolls instead; the results panel gets the splitter's
-stretch (``setStretchFactor(1, 1)`` vs. the input panel's ``0``) so any
-extra window height goes to the table by default, and the divider itself
-is still user-draggable (down to fully collapsing the input panel) for
-whoever wants to trade "see all my inputs" for "see as many rows as
-possible" on a given run -- a fixed split ratio can't satisfy both.
+Layout: one ``QVBoxLayout`` top to bottom, same shape as the other three
+tool pages, but 第二步 and 文档排版方式 (language + docx layout) are one
+combined section with all three controls inline in a single row, not two
+stacked sections of their own. That merge is the actual fix for what was
+originally a QSplitter+QScrollArea redesign of this page: three full
+input sections (file/language/docx layout) stacked above 对齐结果 could
+squeeze the results table down to one or two visible rows on a
+non-maximized window -- but hiding the input controls behind a
+QScrollArea just relocated the problem (开始检查 ended up scrolled out of
+view instead, which is worse). The actual excess height was never the
+*number* of steps, it was ``QFormLayout``'s default field-growth policy
+stretching each combo box to the full row width regardless of its own
+content -- 原文语言/译文语言/文档排版方式 all show short text
+("英语 (en-US)", "自动识别 (推荐)") in a box hundreds of pixels wide,
+each on its own row. Giving each combo ``AdjustToContents`` sizing (so
+its width tracks what's actually in it, not the row) and laying the
+three out side by side in a single ``QHBoxLayout`` collapses what used to
+be a 2-row-tall section plus a whole separate section into one compact
+row -- freeing up real vertical space for 对齐结果 without making
+anything else scroll or hide.
 """
 import html
 import os
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout,
-    QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton,
-    QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit,
-    QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout,
+    QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget,
+    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from language_tools import align_report
@@ -85,6 +88,38 @@ _MOVE_TOOLTIPS = {
 }
 
 
+def _compact_combo(combo):
+    """Makes a combo box's width track its actual content instead of
+    whatever the surrounding layout hands it. Without this, a combo like
+    make_layout_combo() -- whose longest item is "自动识别 (推荐)" -- ends
+    up stretched to hundreds of pixels wide the moment it's the field in a
+    QFormLayout row (that layout's default field-growth policy stretches
+    the field column to the row's full width regardless of the widget's
+    own size hint), which is why these controls looked so oversized for
+    how little text is in them. AdjustToContents recomputes the width
+    whenever the current item/text changes, so it stays correctly sized
+    as the user picks a different option, not just on first show.
+    """
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+    combo.setMinimumContentsLength(10)
+
+
+def _labeled(label_text, field_widget):
+    """A label stacked above a field widget, as a tight (label, field)
+    pair meant to sit inline with other such pairs in one QHBoxLayout --
+    see the "language + docx layout, all inline in one row" comment in
+    _build_ui for why this replaced three stacked QFormLayout rows.
+    """
+    box = QVBoxLayout()
+    box.setContentsMargins(0, 0, 0, 0)
+    box.setSpacing(4)
+    label = QLabel(label_text)
+    label.setStyleSheet('color: #6B7280; font-size: 12px;')
+    box.addWidget(label)
+    box.addWidget(field_widget)
+    return box
+
+
 class AlignmentCheckPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -106,31 +141,6 @@ class AlignmentCheckPage(QWidget):
         subtitle.setStyleSheet('color: #6B7280;')
         outer.addWidget(subtitle)
 
-        splitter = QSplitter(Qt.Vertical)
-        # Both panes stay usable at any split position: the input pane is
-        # wrapped in a QScrollArea (see _build_input_panel) so dragging it
-        # short scrolls instead of clipping a control off-screen, and the
-        # results pane is what should get any extra height by default --
-        # that's the whole point of this layout, see the class docstring.
-        splitter.addWidget(self._build_input_panel())
-        splitter.addWidget(self._build_results_panel())
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([260, 480])
-        outer.addWidget(splitter, 1)
-
-    def _build_input_panel(self):
-        """第一步～第三步 (file/language/docx layout) + the check/export
-        buttons and the summary line -- everything that's only needed
-        *before* a check has run, or to kick off the next one. Wrapped in
-        a QScrollArea by the caller so it degrades to scrolling, not
-        clipping, when the splitter gives it little room.
-        """
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 0, 8, 0)
-        layout.setSpacing(18)
-
         # --- file ---
         file_row = QWidget()
         file_layout = QHBoxLayout(file_row)
@@ -141,28 +151,36 @@ class AlignmentCheckPage(QWidget):
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
         file_layout.addWidget(browse_btn)
-        layout.addWidget(section('第一步：选择文件', file_row))
+        outer.addWidget(section('第一步：选择文件', file_row))
 
-        # --- language ---
-        lang_widget = QWidget()
-        lang_form = QFormLayout(lang_widget)
-        lang_form.setContentsMargins(0, 0, 0, 0)
+        # --- language + docx layout, all inline in one row ---
+        # These three combos show short text ("英语 (en-US)", "自动识别
+        # (推荐)") but used to each get a whole row at full page width --
+        # that's QFormLayout's default field-growth policy stretching the
+        # field column regardless of the widget's own content, not
+        # anything actually needing that space. AdjustToContents sizing
+        # (_compact_combo below) plus laying all three out in one
+        # QHBoxLayout fixes that at the source, rather than working around
+        # it with a splitter/scroll area that hides 开始检查 instead.
+        opts_widget = QWidget()
+        opts_layout = QHBoxLayout(opts_widget)
+        opts_layout.setContentsMargins(0, 0, 0, 0)
+        opts_layout.setSpacing(28)
+
         self.src_edit = make_lang_combo('en-US')
         self.tgt_edit = make_lang_combo('zh-CN')
         self.src_edit.setToolTip(LANG_TOOLTIP)
         self.tgt_edit.setToolTip(LANG_TOOLTIP)
-        lang_form.addRow('原文语言', self.src_edit)
-        lang_form.addRow('译文语言', self.tgt_edit)
-        layout.addWidget(section('第二步：确认语言', lang_widget))
-
-        # --- docx layout ---
-        layout_widget = QWidget()
-        layout_form = QFormLayout(layout_widget)
-        layout_form.setContentsMargins(0, 0, 0, 0)
         self.layout_combo = make_layout_combo()
         self.layout_combo.setToolTip('仅 .docx 需要关心')
-        layout_form.addRow('文档排版方式', self.layout_combo)
-        layout.addWidget(section('文档排版方式', layout_widget))
+        for combo in (self.src_edit, self.tgt_edit, self.layout_combo):
+            _compact_combo(combo)
+
+        opts_layout.addLayout(_labeled('原文语言', self.src_edit))
+        opts_layout.addLayout(_labeled('译文语言', self.tgt_edit))
+        opts_layout.addLayout(_labeled('文档排版方式', self.layout_combo))
+        opts_layout.addStretch(1)
+        outer.addWidget(section('第二步：确认语言与排版方式', opts_widget))
 
         action_row = QHBoxLayout()
         self.check_btn = QPushButton('开始检查')
@@ -175,29 +193,11 @@ class AlignmentCheckPage(QWidget):
         action_row.addWidget(self.check_btn)
         action_row.addWidget(self.export_btn)
         action_row.addStretch(1)
-        layout.addLayout(action_row)
+        outer.addLayout(action_row)
 
         self.summary_label = QLabel('')
         self.summary_label.setStyleSheet('color: #4B5262;')
-        layout.addWidget(self.summary_label)
-        layout.addStretch(1)
-
-        scroll = QScrollArea()
-        scroll.setWidget(content)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        return scroll
-
-    def _build_results_panel(self):
-        """筛选 + 对齐结果 (the table) + the status log -- everything that
-        matters *after* a check has run. Gets the splitter's stretch
-        factor so it's the pane that grows when the window does.
-        """
-        panel = QWidget()
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(18)
+        outer.addWidget(self.summary_label)
 
         filter_row = QWidget()
         filter_layout = QHBoxLayout(filter_row)
@@ -209,10 +209,11 @@ class AlignmentCheckPage(QWidget):
         self.move_filter_combo = QComboBox()
         self.move_filter_combo.addItem('全部对齐方式', None)
         self.move_filter_combo.currentIndexChanged.connect(self._refresh_table)
+        _compact_combo(self.move_filter_combo)
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.move_filter_combo)
         filter_layout.addStretch(1)
-        layout.addWidget(section('筛选', filter_row))
+        outer.addWidget(section('筛选', filter_row))
 
         self.results_table = QTableWidget(0, 6)
         self.results_table.setHorizontalHeaderLabels(['段落', '原文', '译文', '对齐方式', '成本', 'QA'])
@@ -234,7 +235,7 @@ class AlignmentCheckPage(QWidget):
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setMinimumHeight(120)
-        layout.addWidget(section('对齐结果', self.results_table), 1)
+        outer.addWidget(section('对齐结果', self.results_table), 1)
 
         self.log = QTextEdit()
         self.log.setObjectName('logConsole')
@@ -242,9 +243,7 @@ class AlignmentCheckPage(QWidget):
         self.log.setMinimumHeight(80)
         self.log.setMaximumHeight(120)
         self.log.setPlaceholderText('状态信息会显示在这里')
-        layout.addWidget(self.log)
-
-        return panel
+        outer.addWidget(self.log)
 
     # ------------------------------------------------------------- dialogs
     def _browse_input(self):

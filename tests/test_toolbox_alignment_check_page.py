@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QScrollArea, QSplitter
+from PySide6.QtWidgets import QComboBox, QLabel
 
 from language_tools.model import TranslationUnit
 from toolbox.tools.alignment_check.page import AlignmentCheckPage
@@ -258,71 +258,73 @@ def test_results_table_header_is_left_aligned(qtbot):
     assert alignment & Qt.AlignLeft
 
 
-# ---------------------------------------------------------- splitter layout
+# ------------------------------------------------------- compact input row
 # Regression coverage for the actual bug report: on a non-maximized window
 # the three stacked input sections (file/language/docx layout) left almost
 # no room for 对齐结果, which could show only one or two rows no matter how
-# many the check actually found. Fixed by splitting the page into an
-# input pane (scrollable) and a results pane (stretch-favored) inside a
-# QSplitter -- see the page module's docstring for the full reasoning.
+# many the check actually found. A first attempt fixed this by moving the
+# inputs into a QSplitter + QScrollArea -- rejected on review because it
+# hid 开始检查 behind a scroll instead of fixing the actual wasted space.
+# The real fix: 原文语言/译文语言/文档排版方式 were each a whole row wide
+# despite showing short text (QFormLayout's default field-growth policy
+# stretches the field regardless of the widget's own size hint) -- giving
+# each combo AdjustToContents sizing and laying all three out in one row
+# collapses two sections into one without hiding or scrolling anything.
 
-def test_page_uses_a_vertical_splitter_with_two_panes(qtbot):
+def test_no_scroll_area_or_splitter_hides_any_controls(qtbot):
+    # The whole point of rejecting the splitter/scroll-area design: every
+    # control, including 开始检查, must be reachable without scrolling or
+    # dragging a divider.
+    from PySide6.QtWidgets import QScrollArea, QSplitter
     page = AlignmentCheckPage()
     qtbot.addWidget(page)
-    splitters = page.findChildren(QSplitter)
-    assert len(splitters) == 1
-    splitter = splitters[0]
-    assert splitter.orientation() == Qt.Vertical
-    assert splitter.count() == 2
+    assert page.findChildren(QScrollArea) == []
+    assert page.findChildren(QSplitter) == []
 
 
-def test_results_panel_gets_extra_height_not_the_input_panel(qtbot):
-    # The whole point: extra window height should go to the results
-    # table, not to the input fields above it. QSplitter has no public
-    # getter for setStretchFactor()'s value, so this checks the actual
-    # behavior it produces: growing the splitter should grow the results
-    # pane (index 1) a lot more than the input pane (index 0).
+def test_language_and_layout_combos_size_to_their_own_content(qtbot):
+    # AdjustToContents is what stops these combos from stretching to the
+    # full row width for text as short as "英语 (en-US)".
     page = AlignmentCheckPage()
     qtbot.addWidget(page)
-    page.resize(700, 400)
-    page.show()
-    qtbot.waitExposed(page)
-    splitter = page.findChildren(QSplitter)[0]
-    before = splitter.sizes()
-    page.resize(700, 900)
-    qtbot.wait(50)
-    after = splitter.sizes()
-    input_growth = after[0] - before[0]
-    results_growth = after[1] - before[1]
-    assert results_growth > input_growth
+    for combo in (page.src_edit, page.tgt_edit, page.layout_combo):
+        assert combo.sizeAdjustPolicy() == QComboBox.AdjustToContents
 
 
-def test_input_pane_is_a_scroll_area_so_it_degrades_to_scrolling_not_clipping(qtbot):
+def test_language_and_layout_controls_share_a_single_row(qtbot):
+    # These three used to be two separate stacked sections (one 2-row
+    # QFormLayout for the languages, one more section for the docx
+    # layout); they should now be siblings inline in one row, i.e. share
+    # the same immediate parent widget.
     page = AlignmentCheckPage()
     qtbot.addWidget(page)
-    splitter = page.findChildren(QSplitter)[0]
-    input_pane = splitter.widget(0)
-    assert isinstance(input_pane, QScrollArea)
-    assert input_pane.widgetResizable()
-    # The actual input controls still exist as page attributes regardless
-    # of which container they live in -- every other test in this file
-    # depends on that continuing to hold.
-    assert input_pane.widget().findChildren(type(page.input_edit))
+    assert page.src_edit.parentWidget() is page.tgt_edit.parentWidget()
+    assert page.src_edit.parentWidget() is page.layout_combo.parentWidget()
 
 
-def test_results_table_is_reachable_inside_the_splitters_second_pane(qtbot):
+def test_page_has_exactly_two_numbered_step_sections(qtbot):
+    # 第一步 (file) and a single combined 第二步 (language + layout) --
+    # not three, which is what left too little room for the table.
     page = AlignmentCheckPage()
     qtbot.addWidget(page)
-    splitter = page.findChildren(QSplitter)[0]
-    results_pane = splitter.widget(1)
-    assert page.results_table in results_pane.findChildren(type(page.results_table))
-    assert page.log in results_pane.findChildren(type(page.log))
+    titles = [label.text() for label in page.findChildren(QLabel)
+              if label.property('role') == 'sectionTitle']
+    step_titles = [t for t in titles if t.startswith('第') and '步' in t]
+    assert step_titles == ['第一步：选择文件', '第二步：确认语言与排版方式']
 
 
-def test_splitter_divider_is_draggable_to_collapse_the_input_pane(qtbot):
-    # The user can trade "see my inputs" for "see more rows" on demand --
-    # collapsing the input pane entirely must not be blocked.
+def test_check_button_is_a_direct_descendant_not_behind_any_container(qtbot):
     page = AlignmentCheckPage()
     qtbot.addWidget(page)
-    splitter = page.findChildren(QSplitter)[0]
-    assert splitter.isCollapsible(0)
+    assert page.check_btn in page.findChildren(type(page.check_btn))
+    # Reachable via the page's own layout, not nested inside a widget
+    # whose visibility/size depends on a splitter position or a scroll
+    # viewport -- walking up from check_btn should hit the page itself
+    # within a couple of plain QWidget/QVBoxLayout hops.
+    from PySide6.QtWidgets import QScrollArea, QSplitter
+    ancestor = page.check_btn.parentWidget()
+    depth = 0
+    while ancestor is not None and ancestor is not page and depth < 6:
+        assert not isinstance(ancestor, (QScrollArea, QSplitter))
+        ancestor = ancestor.parentWidget()
+        depth += 1
