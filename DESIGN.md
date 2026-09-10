@@ -359,3 +359,57 @@ pyinstaller packaging/language-toolbox.spec
 3. 涉及耗时操作照抄 `ConvertWorker` 的 `QThread` + 信号模式
 4. `__init__.py` 里 `register(ToolSpec(id=..., name=..., description=..., icon=..., page_factory=YourPage))`
 5. 不需要碰 `main_window.py`、`registry.py`、其他工具的任何代码
+
+---
+
+## 14. 定位再澄清：语言服务管理工具箱，不止语料/术语
+
+第 13 节开头那句"语料转换只是第一个工具，以后会陆续加术语管理、QA报告查看器等"当时举的例子有限，容易让人以为工具箱的边界就是"语料库 + 术语库"。**实际边界更宽**：只要是语言服务（翻译/本地化）工作流程里，译者/项目经理会反复手动做、值得写成一个独立工具页的事，都在范围内——不局限于语料和术语这两类，本文档后续新增的工具条目不需要现在就归类到某个固定分类下。
+
+第 15 节的 backlog 已经不只是"语料类"条目（批量处理、TM 条目编辑器、杠杆分析属于语料；术语管理是新的一类；HTML/PDF 报告导出、常用设置记忆则是横切各工具的体验优化，不专属任何一类）。以后再冒出新方向（比如项目/报价/供应商相关的小工具）不需要先讨论"这算不算语言管理工具箱该做的事"，只要符合"壳 + 可插拔工具"架构（第 13 节）、有真实使用场景，直接按第 13 节末尾"后续工具接入的最小步骤"接进来即可。
+
+---
+
+## 15. Backlog（未排期，按讨论时间顺序记录，不代表优先级）
+
+供后续排期参考，**不是承诺的交付顺序**——具体做哪个、什么时候做，看实际需求出现的频率决定。除术语管理外均未细化方案，真正要做时需要单独展开设计（数据模型、格式选型、Phase 划分），参考本文档其它 Phase 的详细程度。
+
+- **批量处理**：【语料转换】【对齐检查】GUI 目前都只能选单个文件；`tmtool align --fail-on-issues` 也只支持单文件，批量靠 shell 循环（见 README"批量检查"一节）。GUI 层面加"选一个文件夹，批量转换/批量对齐检查"，复用【语料维护】合并标签页已经验证过的多文件列表控件（`QListWidget` + 添加/移除/清空）。
+- **TM 条目级浏览/编辑**：清理/合并/统计都是批量操作，没有条目粒度的"打开一个 TM，浏览/手动改或删单条"界面，现在只能导出 CSV 改完再重新导入，一来一回没有直接编辑方便。
+- **杠杆分析（leverage report）**：给一份新文档 + 一个已有 TM，估算这份新内容在 TM 里能匹配上多少（100%/模糊匹配比例）——CAT 工具报价/排期常用功能。
+- **多 TM 对比**：统计标签页只能看单个文件，没法对比两个版本 TM 的差异（如某次清理/合并前后具体变了什么）。
+- **QA/术语报告的 HTML/PDF 导出**：目前 QA 检查、对齐检查的导出都只有 CSV，给非技术干系人看不够友好。
+- **常用设置记忆**：常用语言对、上次选择的输出格式/目录等目前每次都要重新选，没有跨次启动的记忆。
+
+### 15.1 术语管理（下一个要做的工具，已细化方案）
+
+**目标**：维护一份双语术语表，并能拿它去对照一个已有 TM（tmx/sdltm）做术语一致性检查——这是术语库在翻译工作流里最直接的价值：不是"存一堆词"，是"存的词能真的用来抓问题"。
+
+**数据模型**（`language_tools/terms/model.py`，与 `TranslationUnit` 同样的"已知字段类型化，不塞进 meta"原则）：
+
+```python
+@dataclass
+class TermEntry:
+    src_lang: str
+    tgt_lang: str
+    src_term: str
+    tgt_term: str
+    status: str = 'approved'   # 'approved' | 'forbidden' -- 见下方"为什么要分两档"
+    domain: str | None = None  # 领域/项目标签，可选
+    note: str | None = None
+    guid: str | None = None
+    source_file: str | None = None
+    created_at: str | None = None
+    modified_at: str | None = None
+```
+
+**为什么要分 `approved`/`forbidden` 两档，而不是只有一份"标准译法"表**：术语检查真正有实用价值、且几乎不会误报的场景是"这个词绝对不能这样翻"（`forbidden`——比如某客户明确禁用的旧译名、容易和相似术语混淆的错误译法）；"这个词应该用标准译法"（`approved`）看似更直觉，但检查逻辑上风险大得多——译文用同义词、代词回指、语序调整都是合法翻译，拿"译文里有没有出现这个词"去判断"标准译法有没有用"极易大量误报。所以**v1 范围克制**（延续 `qa.py` 当初"先做四项，别一次上齐"的做法）：只做 `forbidden` 方向的检查，`approved` 方向的检查（术语库里的词该出现但没出现）放到后续阶段，等真的攒够误报/漏报的实际案例再决定怎么做，不要一开始就假设一个复杂的模糊匹配方案。
+
+**存储格式**：v1 用 csv/xlsx（复用 `readers/csv_bilingual.py`/`readers/xlsx_bilingual.py` 已经踩过的编码兜底、表头探测这些坑，不重新发明），两列扩到六列（`src_term,tgt_term,status,domain,note,...`）。TBX（MultiTerm 等 CAT 工具的术语交换标准格式）作为后续阶段的兼容性目标，同 sdltm 的 Level 2/3 分级思路——先声明清楚"能被 MultiTerm 读进去"和"跟 MultiTerm 原生术语库位级等价"是两个不同目标，不要含糊。
+
+**Phase 划分**：
+
+- **Phase G0 — 术语库读写**：`language_tools/terms/glossary.py`，`read_glossary(path)` / `write_glossary(path, entries)`，csv/xlsx 两种格式，最小合成 fixture + 编码兜底测试（参照 Phase 2 xlsx/csv reader 的测试要求）。
+- **Phase G1 — 一致性检查**：`language_tools/terms/check.py`，`run(units, glossary)`，只做 `TERM_FORBIDDEN`（精确子串匹配；中日韩语言按字符子串匹配，拉丁字母语言按大小写不敏感的词边界匹配，复用 `align/splitters.py` 里已经验证过的 `is_cjk_lang` 判断，不重新写一遍中英文分界逻辑），结果写进 `TranslationUnit.meta['term_issues']`，独立于 `qa_issues`（不同的检查关注点，混进同一个 key 会让"这条问题是 QA 报的还是术语库报的"变得含糊）。测试需要一份手写的、含真实 forbidden 术语命中的 fixture TM。
+- **Phase G2 — GUI 工具**（`toolbox/tools/term_management/`）：术语表增删改的 `QTableWidget`（参照现有 `_set_stats_table_rows` 一类"数据变了就整表重建"的简单模式，不做原地单元格编辑，避免第一版就处理 `itemChanged` 信号的各种边界情况）+ 导入/导出 csv/xlsx + "对照 TM 做术语检查"操作（选一个 TM + 一份术语库 → 跑 Phase G1 → 结果表格，UX 照抄【QA 检查】页——同样是"筛选 + 导出完整 CSV"的形状，没有理由另起一套）。
+- **Phase G3（后置，视 G1 实际效果再决定要不要做）**：`approved` 方向的检查、TBX 导入导出。

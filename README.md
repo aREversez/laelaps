@@ -1,6 +1,6 @@
 # language-tools
 
-语言管理（翻译/本地化）工具箱。第一个工具是**双语语料转换**：把 docx/xlsx/csv/tsv 这类双语文档转换成 Trados 等 CAT 工具能用的翻译记忆库格式（sdltm/tmx），也支持 tmx↔sdltm 互转。提供 Python 库、命令行工具、桌面 GUI 三种使用方式，往后会陆续加入更多语言管理相关的工具（术语管理等）。
+语言服务管理（翻译/本地化）工具箱。第一个工具是**双语语料转换**：把 docx/xlsx/csv/tsv 这类双语文档转换成 Trados 等 CAT 工具能用的翻译记忆库格式（sdltm/tmx），也支持 tmx↔sdltm 互转。提供 Python 库、命令行工具、桌面 GUI 三种使用方式，往后会陆续加入更多语言服务管理相关的工具（术语管理、批量处理等，见 [DESIGN.md](./DESIGN.md) 第 14/15 节的定位说明和 backlog）。
 
 ## 功能特性
 
