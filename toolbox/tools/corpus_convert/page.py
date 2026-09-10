@@ -37,13 +37,14 @@ shared rather than a private copy per page.
 import html
 import os
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout,
+    QCheckBox, QFileDialog, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from language_tools import api
+from toolbox.widgets import LANG_TOOLTIP, lang_combo_code, make_lang_combo, make_layout_combo
 from toolbox.widgets import section as _section
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
@@ -51,72 +52,12 @@ _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.s
 
 _LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
-# (short label shown in the dropdown, technical value passed to the library, tooltip detail)
-_LAYOUT_CHOICES = [
-    ('自动识别（推荐）', 'auto', '自动判断版式，错了再手动选'),
-    ('编号分段', 'numbered', '先列全部原文段落，再列全部译文段落'),
-    ('表格对照', 'table', '两列表格，左边原文右边译文'),
-    ('逐段对照', 'alternating', '原文译文逐段交替排列'),
-]
-
-# (display label, language code) -- common pairs, prefilled into an
-# editable combobox so most users just pick from the list instead of
-# typing a BCP-47 code by hand. Editable so an uncommon pair can still be
-# typed in directly; the underlying value used by api.convert() is always
-# whatever's in the edit field (currentText()), not a fixed code list.
-_LANG_CHOICES = [
-    ('英语 (en-US)', 'en-US'),
-    ('英语-英国 (en-GB)', 'en-GB'),
-    ('简体中文 (zh-CN)', 'zh-CN'),
-    ('繁体中文 (zh-TW)', 'zh-TW'),
-    ('日语 (ja-JP)', 'ja-JP'),
-    ('韩语 (ko-KR)', 'ko-KR'),
-    ('法语 (fr-FR)', 'fr-FR'),
-    ('德语 (de-DE)', 'de-DE'),
-    ('西班牙语 (es-ES)', 'es-ES'),
-    ('葡萄牙语 (pt-PT)', 'pt-PT'),
-    ('意大利语 (it-IT)', 'it-IT'),
-    ('俄语 (ru-RU)', 'ru-RU'),
-    ('阿拉伯语 (ar-SA)', 'ar-SA'),
-]
-
-_LANG_TOOLTIP = '双语文档必填；tmx/sdltm 留空会自动识别。可直接选，也可以手动输入其它语言代码'
 _QA_TOOLTIP = '检查漏译、数字不一致等问题'
 _FORMAT_TOOLTIPS = {
     'sdltm': 'Trados 记忆库格式',
     'tmx': 'CAT 工具通用记忆库格式',
     'csv': '可人工核对的表格',
 }
-
-
-def _make_lang_combo(default_code):
-    """An editable QComboBox prefilled with common language pairs
-    (``_LANG_CHOICES``) but that still accepts a freely typed code --
-    picking from the list is the common case, typing stays available for
-    anything not in the preset list.
-    """
-    combo = QComboBox()
-    combo.setEditable(True)
-    for display_text, code in _LANG_CHOICES:
-        combo.addItem(display_text, code)
-    idx = combo.findData(default_code)
-    if idx >= 0:
-        combo.setCurrentIndex(idx)
-    else:
-        combo.setCurrentText(default_code)
-    return combo
-
-
-def _lang_combo_code(combo):
-    """The language code a lang combo currently represents: the preset's
-    code if the current text matches one of the dropdown's display labels
-    (selected from the list, not retyped), otherwise the typed text as-is
-    (freeform code entry).
-    """
-    idx = combo.findText(combo.currentText())
-    if idx >= 0:
-        return combo.itemData(idx)
-    return combo.currentText().strip()
 
 
 class ConvertWorker(QThread):
@@ -173,10 +114,10 @@ class CorpusConvertPage(QWidget):
         lang_widget = QWidget()
         lang_form = QFormLayout(lang_widget)
         lang_form.setContentsMargins(0, 0, 0, 0)
-        self.src_edit = _make_lang_combo('en-US')
-        self.tgt_edit = _make_lang_combo('zh-CN')
-        self.src_edit.setToolTip(_LANG_TOOLTIP)
-        self.tgt_edit.setToolTip(_LANG_TOOLTIP)
+        self.src_edit = make_lang_combo('en-US')
+        self.tgt_edit = make_lang_combo('zh-CN')
+        self.src_edit.setToolTip(LANG_TOOLTIP)
+        self.tgt_edit.setToolTip(LANG_TOOLTIP)
         lang_form.addRow('原文语言', self.src_edit)
         lang_form.addRow('译文语言', self.tgt_edit)
         outer.addWidget(_section('第二步：确认语言', lang_widget))
@@ -185,11 +126,8 @@ class CorpusConvertPage(QWidget):
         layout_widget = QWidget()
         layout_form = QFormLayout(layout_widget)
         layout_form.setContentsMargins(0, 0, 0, 0)
-        self.layout_combo = QComboBox()
+        self.layout_combo = make_layout_combo()
         self.layout_combo.setToolTip('仅 .docx 需要关心')
-        for i, (display_text, value, item_tip) in enumerate(_LAYOUT_CHOICES):
-            self.layout_combo.addItem(display_text, value)
-            self.layout_combo.setItemData(i, item_tip, Qt.ToolTipRole)
         layout_form.addRow('文档排版方式', self.layout_combo)
         outer.addWidget(_section('文档排版方式', layout_widget))
 
@@ -274,7 +212,7 @@ class CorpusConvertPage(QWidget):
             return '找不到这个文件，请重新选择'
 
         ext = os.path.splitext(input_path)[1].lower()
-        if ext in _BILINGUAL_EXTS and (not _lang_combo_code(self.src_edit) or not _lang_combo_code(self.tgt_edit)):
+        if ext in _BILINGUAL_EXTS and (not lang_combo_code(self.src_edit) or not lang_combo_code(self.tgt_edit)):
             return '这类文件需要先填写原文语言和译文语言，才能开始转换'
 
         if not any(cb.isChecked() for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv)):
@@ -298,8 +236,8 @@ class CorpusConvertPage(QWidget):
         kwargs = dict(
             input_path=input_path,
             output_base=os.path.splitext(input_path)[0],
-            src_lang=_lang_combo_code(self.src_edit) or None,
-            tgt_lang=_lang_combo_code(self.tgt_edit) or None,
+            src_lang=lang_combo_code(self.src_edit) or None,
+            tgt_lang=lang_combo_code(self.tgt_edit) or None,
             formats=formats,
             reader_opts=reader_opts,
             qa=self.chk_qa.isChecked(),

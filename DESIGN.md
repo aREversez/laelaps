@@ -273,6 +273,9 @@ toolbox/                    # 与 language_tools/ 同仓库同级，GUI层
     ├── qa_check/             # 第三个工具，包装 language_tools.tm.qa_report（对已有语料库跑 QA）
     │   ├── __init__.py       # 注册 ToolSpec
     │   └── page.py            # 结果表格 + 筛选（问题类型/只看有问题的）+ 导出 CSV
+    ├── alignment_check/      # 第四个工具，包装 language_tools.align_report（对齐诊断预览，不写文件）
+    │   ├── __init__.py       # 注册 ToolSpec
+    │   └── page.py            # 文件/语言/版式（复用 corpus_convert 的 widgets）+ 结果表格 + 筛选 + 导出 CSV
     └── <future_tool>/        # 新工具照此结构新增文件夹即可，main_window.py 不用改
 ```
 

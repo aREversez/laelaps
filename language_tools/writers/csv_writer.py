@@ -31,10 +31,22 @@ keeps it unambiguous which check actually fired, since two different
 checks could plausibly get similar-sounding Chinese labels. Labels come
 from ``qa.ISSUE_LABELS`` -- the single source of truth also used by the
 QA-check GUI page, so the wording can't drift between the two.
+
+``include_align=True`` appends paragraph/align_move columns from
+``align_report.run()``. Same "<Chinese label>(<CODE>)" treatment as
+``issues``, this time from ``aligner.MOVE_LABELS`` (not
+``align_report.py``'s re-export of it -- importing from ``align_report``
+here would create a cycle, since that module imports ``api.py``, which
+imports this one). ``paragraph`` is ``source_key`` -- present so a
+reviewer scanning the sheet can see which rows came from the same source
+paragraph (several rows sharing a paragraph number means that paragraph
+split into multiple sentences; useful context alongside align_move on
+each individual row).
 """
 import csv
 
 from language_tools import qa
+from language_tools.align.aligner import MOVE_LABELS
 
 
 def _format_issue(issue_code):
@@ -42,15 +54,24 @@ def _format_issue(issue_code):
     return '%s(%s)' % (label, issue_code) if label else issue_code
 
 
-def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False):
+def _format_move(move_code):
+    label = MOVE_LABELS.get(move_code)
+    return '%s(%s)' % (label, move_code) if label else move_code
+
+
+def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include_align=False):
     with open(path, 'w', encoding='utf-8-sig', newline='') as f:
         w = csv.writer(f)
         header = ['No', src_label, tgt_label]
+        if include_align:
+            header += ['paragraph', 'align_move']
         if include_qa:
             header += ['confidence', 'status', 'issues']
         w.writerow(header)
         for i, u in enumerate(units, 1):
             row = [i, u.src_text.strip(), u.tgt_text.strip()]
+            if include_align:
+                row += [u.source_key or '', _format_move(u.meta.get('align_move', ''))]
             if include_qa:
                 issues = u.meta.get('qa_issues', [])
                 conf = u.meta.get('qa_confidence', 1.0)

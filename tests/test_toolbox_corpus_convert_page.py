@@ -114,12 +114,12 @@ def test_lang_combos_are_editable_dropdowns_with_presets(qtbot):
 
 
 def test_lang_combo_accepts_freeform_typed_code(qtbot):
-    from toolbox.tools.corpus_convert.page import _lang_combo_code
+    from toolbox.widgets import lang_combo_code
 
     page = CorpusConvertPage()
     qtbot.addWidget(page)
     page.src_edit.setEditText('nl-NL')  # not in the preset list
-    assert _lang_combo_code(page.src_edit) == 'nl-NL'
+    assert lang_combo_code(page.src_edit) == 'nl-NL'
 
 
 def test_tmx_input_greys_out_tmx_checkbox(qtbot):

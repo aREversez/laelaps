@@ -19,6 +19,35 @@ from language_tools.model import ParagraphPair, TranslationUnit
 MATCHES = [(1, 1), (2, 1), (1, 2), (2, 2), (3, 2), (2, 3), (1, 3), (3, 1), (3, 3), (1, 0), (0, 1)]
 INF = float('inf')
 
+# Human-readable (Chinese) label per align_move value (see
+# align_paragraph_pairs() below, which sets meta['align_move'] to one of
+# these codes) -- colocated with MATCHES rather than in align_report.py
+# or csv_writer.py so there's exactly one place that needs updating if a
+# new move shape is ever added, and so csv_writer.py (which needs this
+# for exporting alignment diagnostics) doesn't have to import
+# align_report.py, which would create a cycle (align_report.py imports
+# api.py, which imports csv_writer.py). Kept exhaustive against MATCHES,
+# not a best-effort guess -- see test_align_report.py's
+# test_move_labels_cover_every_move_aligner_can_actually_produce for the
+# guard that keeps it that way.
+MOVE_LABELS = {
+    '1:1': '一一对应',
+    '2:1': '合并（2→1）',
+    '1:2': '拆分（1→2）',
+    '2:2': '合并+拆分（2→2）',
+    '3:2': '合并+拆分（3→2）',
+    '2:3': '合并+拆分（2→3）',
+    '1:3': '拆分（1→3）',
+    '3:1': '合并（3→1）',
+    '3:3': '合并+拆分（3→3）',
+    '1:0': '跳过（原文无对应）',
+    '0:1': '跳过（译文无对应）',
+}
+
+
+def move_label(move_code):
+    return MOVE_LABELS.get(move_code, move_code)
+
 # GAP is deliberately large relative to typical MP-scale costs (~2-6), so
 # in practice (1,0)/(0,1) only fire when NO other move can possibly connect
 # the DP endpoints -- i.e. when one side of the pair has zero sentences

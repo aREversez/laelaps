@@ -295,3 +295,34 @@ def test_csv_writer_falls_back_to_raw_code_for_unmapped_issue(tmp_path, monkeypa
         f.readline()
         row = f.readline().strip()
     assert 'SOME_FUTURE_CHECK_NOT_YET_LABELED' in row
+
+
+def test_csv_writer_include_align_adds_paragraph_and_move_columns(tmp_path):
+    from language_tools.writers import csv_writer
+
+    units = [_tu('Hi. Bye.', '你好，再见。')]
+    units[0].source_key = '3'
+    units[0].meta['align_move'] = '2:1'
+    path = str(tmp_path / 'out.csv')
+    csv_writer.write(path, units, include_align=True)
+    with open(path, encoding='utf-8-sig') as f:
+        header = f.readline().strip()
+        row = f.readline().strip()
+    assert header == 'No,EN,ZH,paragraph,align_move'
+    assert row.startswith('1,Hi. Bye.,你好，再见。,3,')
+    assert '合并（2→1）(2:1)' in row
+
+
+def test_csv_writer_include_align_and_include_qa_together(tmp_path):
+    from language_tools.writers import csv_writer
+
+    units = [_tu('Hi. Bye.', '你好，再见。')]
+    units[0].source_key = '1'
+    units[0].meta['align_move'] = '1:1'
+    units[0].meta['qa_issues'] = ['NUMBER_MISMATCH']
+    units[0].meta['qa_confidence'] = 0.3
+    path = str(tmp_path / 'out.csv')
+    csv_writer.write(path, units, include_align=True, include_qa=True)
+    with open(path, encoding='utf-8-sig') as f:
+        header = f.readline().strip()
+    assert header == 'No,EN,ZH,paragraph,align_move,confidence,status,issues'

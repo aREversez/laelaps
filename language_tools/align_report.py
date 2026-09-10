@@ -14,35 +14,9 @@ quality flags) in one pass, not two separate tools run back to back.
 import os
 
 from language_tools import qa as qa_module
-from language_tools.align.aligner import align_paragraph_pairs
+from language_tools.align.aligner import MOVE_LABELS, align_paragraph_pairs, move_label  # noqa: F401 -- re-exported for callers that used to import these from here
 from language_tools.align.repair import NULL_REPAIRER, load_repairs
 from language_tools.api import BILINGUAL_READERS
-
-# Human-readable (Chinese) label per align_move value, for any
-# presentation layer -- mirrors ``qa.ISSUE_LABELS``'s role for QA issue
-# codes. Exact merge/split shapes beyond 3:1/1:3 don't occur (aligner.py's
-# MATCHES doesn't include moves larger than that), so this table is
-# exhaustive against what the aligner can actually produce, not a
-# best-effort guess -- if aligner.MATCHES ever grows a larger move, an
-# unmapped code still displays as-is (see ``move_label()``) rather than
-# crashing, but the label would be missing until this table is updated.
-MOVE_LABELS = {
-    '1:1': '一一对应',
-    '2:1': '合并（2→1）',
-    '1:2': '拆分（1→2）',
-    '2:2': '合并+拆分（2→2）',
-    '3:2': '合并+拆分（3→2）',
-    '2:3': '合并+拆分（2→3）',
-    '1:3': '拆分（1→3）',
-    '3:1': '合并（3→1）',
-    '3:3': '合并+拆分（3→3）',
-    '1:0': '跳过（原文无对应）',
-    '0:1': '跳过（译文无对应）',
-}
-
-
-def move_label(move_code):
-    return MOVE_LABELS.get(move_code, move_code)
 
 
 def run(input_path, src_lang, tgt_lang, repair_path=None, reader_opts=None):
