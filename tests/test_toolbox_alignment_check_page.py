@@ -242,13 +242,30 @@ def test_export_cancelled_dialog_does_not_error(qtbot, monkeypatch):
 
 # ------------------------------------------------------------------- layout
 
-def test_results_table_has_its_own_section_title(qtbot):
+def test_results_section_title_is_对齐结果_exactly_once(qtbot):
     page = AlignmentCheckPage()
     qtbot.addWidget(page)
-    results_wrapper = page.results_table.parentWidget()
-    titles = [label.text() for label in results_wrapper.findChildren(QLabel)
+    titles = [label.text() for label in page.findChildren(QLabel)
               if label.property('role') == 'sectionTitle']
-    assert titles == ['对齐结果']
+    assert titles.count('对齐结果') == 1
+    # 筛选 was folded into 对齐结果 (see the module docstring) rather than
+    # staying a section of its own -- it should no longer appear at all.
+    assert '筛选' not in titles
+
+
+def test_filter_controls_and_table_live_under_the_same_对齐结果_section(qtbot):
+    # 只显示有问题的条目 and the move-type dropdown only ever filter this
+    # table, so they should be reachable from the same section() wrapper
+    # as results_table -- not split into a separate 筛选 section above it.
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    title_label = next(
+        label for label in page.findChildren(QLabel)
+        if label.property('role') == 'sectionTitle' and label.text() == '对齐结果')
+    section_wrapper = title_label.parentWidget()
+    assert page.results_table in section_wrapper.findChildren(type(page.results_table))
+    assert page.hide_clean_chk in section_wrapper.findChildren(type(page.hide_clean_chk))
+    assert page.move_filter_combo in section_wrapper.findChildren(type(page.move_filter_combo))
 
 
 def test_results_table_header_is_left_aligned(qtbot):
@@ -270,6 +287,9 @@ def test_results_table_header_is_left_aligned(qtbot):
 # stretches the field regardless of the widget's own size hint) -- giving
 # each combo AdjustToContents sizing and laying all three out in one row
 # collapses two sections into one without hiding or scrolling anything.
+# Section titles also dropped their "第一步"/"第二步" numbering -- a fixed
+# sequence of inputs reads as steps on its own, the numbers were just more
+# label text without adding clarity.
 
 def test_no_scroll_area_or_splitter_hides_any_controls(qtbot):
     # The whole point of rejecting the splitter/scroll-area design: every
@@ -302,15 +322,17 @@ def test_language_and_layout_controls_share_a_single_row(qtbot):
     assert page.src_edit.parentWidget() is page.layout_combo.parentWidget()
 
 
-def test_page_has_exactly_two_numbered_step_sections(qtbot):
-    # 第一步 (file) and a single combined 第二步 (language + layout) --
-    # not three, which is what left too little room for the table.
+def test_no_section_title_uses_step_numbering_language(qtbot):
+    # "第一步"/"第二步" style prefixes were dropped from every section
+    # title on this page -- see the module docstring for why.
     page = AlignmentCheckPage()
     qtbot.addWidget(page)
     titles = [label.text() for label in page.findChildren(QLabel)
               if label.property('role') == 'sectionTitle']
-    step_titles = [t for t in titles if t.startswith('第') and '步' in t]
-    assert step_titles == ['第一步：选择文件', '第二步：确认语言与排版方式']
+    assert titles, 'expected at least one section title to check'
+    for title in titles:
+        assert not title.startswith('第') or '步' not in title
+
 
 
 def test_check_button_is_a_direct_descendant_not_behind_any_container(qtbot):

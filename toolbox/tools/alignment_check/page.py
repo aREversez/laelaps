@@ -37,25 +37,31 @@ from qa_check worth calling out:
   "empty" to QA but is still a GAP the aligner had to punt on).
 
 Layout: one ``QVBoxLayout`` top to bottom, same shape as the other three
-tool pages, but 第二步 and 文档排版方式 (language + docx layout) are one
-combined section with all three controls inline in a single row, not two
-stacked sections of their own. That merge is the actual fix for what was
-originally a QSplitter+QScrollArea redesign of this page: three full
-input sections (file/language/docx layout) stacked above 对齐结果 could
-squeeze the results table down to one or two visible rows on a
-non-maximized window -- but hiding the input controls behind a
-QScrollArea just relocated the problem (开始检查 ended up scrolled out of
-view instead, which is worse). The actual excess height was never the
-*number* of steps, it was ``QFormLayout``'s default field-growth policy
-stretching each combo box to the full row width regardless of its own
-content -- 原文语言/译文语言/文档排版方式 all show short text
-("英语 (en-US)", "自动识别 (推荐)") in a box hundreds of pixels wide,
-each on its own row. Giving each combo ``AdjustToContents`` sizing (so
-its width tracks what's actually in it, not the row) and laying the
-three out side by side in a single ``QHBoxLayout`` collapses what used to
-be a 2-row-tall section plus a whole separate section into one compact
-row -- freeing up real vertical space for 对齐结果 without making
-anything else scroll or hide.
+tool pages. Three things worth calling out about it, all from the same
+underlying complaint -- too much fixed vertical overhead above 对齐结果,
+squeezing it down to one or two visible rows on a non-maximized window
+(an earlier QSplitter+QScrollArea attempt at fixing that got rejected on
+review: it hid 开始检查 behind a scroll instead of freeing up real space):
+
+- Section titles don't use "第一步"/"第二步" step-numbering language --
+  three inputs in a fixed order read as steps on their own without being
+  told so, and the numbering was adding label text, not clarity.
+- 语言与排版方式 (language + docx layout) is one combined section with
+  all three controls inline in a single ``QHBoxLayout``, not two stacked
+  sections/rows. The excess height there was never really about how many
+  sections existed -- it was ``QFormLayout``'s default field-growth
+  policy stretching each combo box to the full row width regardless of
+  its own content: 原文语言/译文语言/文档排版方式 all show short text
+  ("英语 (en-US)", "自动识别 (推荐)") in a box hundreds of pixels wide,
+  each on its own row. ``AdjustToContents`` sizing (so a combo's width
+  tracks what's actually in it) plus laying all three out side by side
+  collapses what used to be a 2-row section plus a whole separate section
+  into one compact row.
+- 筛选 isn't a standalone section either -- 只显示有问题的条目 and the
+  move-type dropdown only ever act on 对齐结果's table, so they're the
+  first thing inside that section (filter row, then the table), not a
+  section of their own above it. One fewer section title/hairline pair
+  for two controls that are conceptually part of the results view anyway.
 """
 import html
 import os
@@ -151,7 +157,7 @@ class AlignmentCheckPage(QWidget):
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
         file_layout.addWidget(browse_btn)
-        outer.addWidget(section('第一步：选择文件', file_row))
+        outer.addWidget(section('选择文件', file_row))
 
         # --- language + docx layout, all inline in one row ---
         # These three combos show short text ("英语 (en-US)", "自动识别
@@ -180,7 +186,7 @@ class AlignmentCheckPage(QWidget):
         opts_layout.addLayout(_labeled('译文语言', self.tgt_edit))
         opts_layout.addLayout(_labeled('文档排版方式', self.layout_combo))
         opts_layout.addStretch(1)
-        outer.addWidget(section('第二步：确认语言与排版方式', opts_widget))
+        outer.addWidget(section('语言与排版方式', opts_widget))
 
         action_row = QHBoxLayout()
         self.check_btn = QPushButton('开始检查')
@@ -199,6 +205,17 @@ class AlignmentCheckPage(QWidget):
         self.summary_label.setStyleSheet('color: #4B5262;')
         outer.addWidget(self.summary_label)
 
+        # --- 对齐结果: filter row + table together under one section ---
+        # 筛选 used to be its own section above this one; folded in here
+        # instead (filter row first, then the table it filters) since a
+        # standalone "筛选" section for two controls that only ever act on
+        # this table was its own kind of unnecessary vertical overhead,
+        # the same complaint that motivated dropping 第一步/第二步 above.
+        results_content = QWidget()
+        results_layout = QVBoxLayout(results_content)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(10)
+
         filter_row = QWidget()
         filter_layout = QHBoxLayout(filter_row)
         filter_layout.setContentsMargins(0, 0, 0, 0)
@@ -213,7 +230,7 @@ class AlignmentCheckPage(QWidget):
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.move_filter_combo)
         filter_layout.addStretch(1)
-        outer.addWidget(section('筛选', filter_row))
+        results_layout.addWidget(filter_row)
 
         self.results_table = QTableWidget(0, 6)
         self.results_table.setHorizontalHeaderLabels(['段落', '原文', '译文', '对齐方式', '成本', 'QA'])
@@ -235,7 +252,9 @@ class AlignmentCheckPage(QWidget):
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setMinimumHeight(120)
-        outer.addWidget(section('对齐结果', self.results_table), 1)
+        results_layout.addWidget(self.results_table, 1)
+
+        outer.addWidget(section('对齐结果', results_content), 1)
 
         self.log = QTextEdit()
         self.log.setObjectName('logConsole')
