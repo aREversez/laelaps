@@ -83,7 +83,11 @@ def test_check_end_to_end_with_real_docx_fixture(qtbot):
     assert page.export_btn.isEnabled()
 
 
-def test_default_view_hides_clean_rows(qtbot, monkeypatch):
+def test_default_view_shows_all_rows_including_clean_ones(qtbot, monkeypatch):
+    # Unlike qa_check (hide-clean checked by default -- "find the needles
+    # in a big corpus"), this tool's default job is "let me see how my
+    # one document got aligned", so a clean result should be visibly
+    # confirmed, not hidden behind an empty table.
     units = [
         _u('A', 'a'),  # clean
         _u('B', '', align_move='1:0', align_gap=True),  # gap
@@ -96,11 +100,11 @@ def test_default_view_hides_clean_rows(qtbot, monkeypatch):
     page.check_btn.click()
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
-    assert page.hide_clean_chk.isChecked()
-    assert page.results_table.rowCount() == 2  # gap + qa-flagged, not the clean one
+    assert not page.hide_clean_chk.isChecked()
+    assert page.results_table.rowCount() == 3
 
 
-def test_unchecking_hide_clean_shows_all_rows(qtbot, monkeypatch):
+def test_checking_hide_clean_hides_clean_rows(qtbot, monkeypatch):
     units = [_u('A', 'a'), _u('B', '', align_move='1:0', align_gap=True)]
     monkeypatch.setattr('toolbox.tools.alignment_check.page.align_report.run', _fake_run(units))
     page = AlignmentCheckPage()
@@ -109,8 +113,24 @@ def test_unchecking_hide_clean_shows_all_rows(qtbot, monkeypatch):
     page.check_btn.click()
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
-    page.hide_clean_chk.setChecked(False)
-    assert page.results_table.rowCount() == 2
+    page.hide_clean_chk.setChecked(True)
+    assert page.results_table.rowCount() == 1
+
+
+def test_clean_result_logs_an_explicit_confirmation(qtbot, monkeypatch):
+    # Regression guard for the actual bug report: a well-aligned document
+    # produced a blank-looking table with no visible explanation. Even
+    # with the default now showing all rows, a loud confirmation in the
+    # log matters too -- e.g. if the person also checks 只显示有问题的条目.
+    units = [_u('A', 'a'), _u('B', 'b')]
+    monkeypatch.setattr('toolbox.tools.alignment_check.page.align_report.run', _fake_run(units))
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(_DOCX)
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    assert '全部对齐正常，没有发现问题' in page.log.toPlainText()
 
 
 def test_move_filter_narrows_to_matching_rows(qtbot, monkeypatch):

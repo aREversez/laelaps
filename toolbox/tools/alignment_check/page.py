@@ -9,10 +9,19 @@ expect?"
 Same three-part shape as ``qa_check`` (its closest sibling -- see that
 page's docstring for the full reasoning this one doesn't repeat):
 ``section()``/``CallableWorker`` from the shared toolbox modules, a
-``QTableWidget`` results view with a "只显示有问题的条目" filter checked
-by default, an export that always writes the full unfiltered set. Two
-differences from qa_check worth calling out:
+``QTableWidget`` results view with a "只显示有问题的条目" filter, an
+export that always writes the full unfiltered set. Three differences
+from qa_check worth calling out:
 
+- The filter defaults to UNCHECKED here (qa_check's defaults to checked).
+  qa_check's job is finding the needles in a large existing corpus, so
+  hiding clean rows by default is the useful view. This tool's job is
+  "let me see how my one document got aligned" -- a well-aligned document
+  with zero problems is a *good* outcome the user should see confirmed
+  (e.g. "12 条，全部一一对应"), not an empty table with no visible
+  explanation for why nothing's there. Filtering down to problems is
+  still available (and worth turning on for a long document with a lot
+  of GAPs to sift through), just not the first thing shown.
 - The file/language/layout inputs are the exact same three controls
   ``corpus_convert`` uses (``toolbox.widgets.make_lang_combo()``/
   ``make_layout_combo()``) -- aligning a document needs the same
@@ -133,7 +142,7 @@ class AlignmentCheckPage(QWidget):
         filter_layout = QHBoxLayout(filter_row)
         filter_layout.setContentsMargins(0, 0, 0, 0)
         self.hide_clean_chk = QCheckBox('只显示有问题的条目')
-        self.hide_clean_chk.setChecked(True)
+        self.hide_clean_chk.setChecked(False)
         self.hide_clean_chk.setToolTip('有问题 = 存在 GAP（跳过）或被 QA 标记')
         self.hide_clean_chk.stateChanged.connect(self._refresh_table)
         self.move_filter_combo = QComboBox()
@@ -232,7 +241,15 @@ class AlignmentCheckPage(QWidget):
         self.export_btn.setEnabled(bool(units))
         self._populate_move_filter(s['move_counts'])
         self._refresh_table()
-        self._log('检查完成', 'success')
+        if s['total'] and not s['gap_count'] and not s['qa_flagged']:
+            # Otherwise "检查完成" alone, sitting above a table that (if
+            # 只显示有问题的条目 got checked) would then be legitimately
+            # empty, reads exactly like the silent-nothing-happened
+            # confusion this default was changed to avoid -- say the good
+            # outcome out loud instead of just implying it via row count.
+            self._log('检查完成，%d 条全部对齐正常，没有发现问题' % s['total'], 'success')
+        else:
+            self._log('检查完成', 'success')
 
     def _on_check_err(self, message):
         self.check_btn.setEnabled(True)
