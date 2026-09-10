@@ -35,6 +35,23 @@ from qa_check worth calling out:
   is often empty, which already trips EMPTY_SOURCE/EMPTY_TARGET, but not
   every GAP does -- e.g. a short leftover fragment might not read as
   "empty" to QA but is still a GAP the aligner had to punt on).
+
+Layout is a top/bottom ``QSplitter`` (``_build_input_panel()`` /
+``_build_results_panel()``), not one long ``QVBoxLayout`` top to bottom
+like the other three tool pages use. This page earned the exception: it's
+the only tool with three full input sections (file/language/docx layout)
+stacked above its results table (qa_check and tm_maintenance's tabs have
+at most one), so on a non-maximized window the fixed-height input stack
+alone could eat nearly the whole page, leaving 对齐结果 squeezed down to
+one or two visible rows no matter how many the check actually found --
+exactly the bug report this fixed. The input panel additionally sits in a
+``QScrollArea`` so dragging the splitter down doesn't clip a combo box
+off-screen, it scrolls instead; the results panel gets the splitter's
+stretch (``setStretchFactor(1, 1)`` vs. the input panel's ``0``) so any
+extra window height goes to the table by default, and the divider itself
+is still user-draggable (down to fully collapsing the input panel) for
+whoever wants to trade "see all my inputs" for "see as many rows as
+possible" on a given run -- a fixed split ratio can't satisfy both.
 """
 import html
 import os
@@ -42,8 +59,9 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget,
-    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton,
+    QScrollArea, QSplitter, QTableWidget, QTableWidgetItem, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from language_tools import align_report
@@ -79,7 +97,7 @@ class AlignmentCheckPage(QWidget):
     def _build_ui(self):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(18)
+        outer.setSpacing(12)
 
         title = QLabel('对齐检查')
         title.setStyleSheet('font-size: 20px; font-weight: 600;')
@@ -87,6 +105,31 @@ class AlignmentCheckPage(QWidget):
         subtitle = QLabel('预览双语文档的句子对齐结果，不生成任何文件')
         subtitle.setStyleSheet('color: #6B7280;')
         outer.addWidget(subtitle)
+
+        splitter = QSplitter(Qt.Vertical)
+        # Both panes stay usable at any split position: the input pane is
+        # wrapped in a QScrollArea (see _build_input_panel) so dragging it
+        # short scrolls instead of clipping a control off-screen, and the
+        # results pane is what should get any extra height by default --
+        # that's the whole point of this layout, see the class docstring.
+        splitter.addWidget(self._build_input_panel())
+        splitter.addWidget(self._build_results_panel())
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([260, 480])
+        outer.addWidget(splitter, 1)
+
+    def _build_input_panel(self):
+        """第一步～第三步 (file/language/docx layout) + the check/export
+        buttons and the summary line -- everything that's only needed
+        *before* a check has run, or to kick off the next one. Wrapped in
+        a QScrollArea by the caller so it degrades to scrolling, not
+        clipping, when the splitter gives it little room.
+        """
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 8, 0)
+        layout.setSpacing(18)
 
         # --- file ---
         file_row = QWidget()
@@ -98,7 +141,7 @@ class AlignmentCheckPage(QWidget):
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
         file_layout.addWidget(browse_btn)
-        outer.addWidget(section('第一步：选择文件', file_row))
+        layout.addWidget(section('第一步：选择文件', file_row))
 
         # --- language ---
         lang_widget = QWidget()
@@ -110,7 +153,7 @@ class AlignmentCheckPage(QWidget):
         self.tgt_edit.setToolTip(LANG_TOOLTIP)
         lang_form.addRow('原文语言', self.src_edit)
         lang_form.addRow('译文语言', self.tgt_edit)
-        outer.addWidget(section('第二步：确认语言', lang_widget))
+        layout.addWidget(section('第二步：确认语言', lang_widget))
 
         # --- docx layout ---
         layout_widget = QWidget()
@@ -119,7 +162,7 @@ class AlignmentCheckPage(QWidget):
         self.layout_combo = make_layout_combo()
         self.layout_combo.setToolTip('仅 .docx 需要关心')
         layout_form.addRow('文档排版方式', self.layout_combo)
-        outer.addWidget(section('文档排版方式', layout_widget))
+        layout.addWidget(section('文档排版方式', layout_widget))
 
         action_row = QHBoxLayout()
         self.check_btn = QPushButton('开始检查')
@@ -132,11 +175,29 @@ class AlignmentCheckPage(QWidget):
         action_row.addWidget(self.check_btn)
         action_row.addWidget(self.export_btn)
         action_row.addStretch(1)
-        outer.addLayout(action_row)
+        layout.addLayout(action_row)
 
         self.summary_label = QLabel('')
         self.summary_label.setStyleSheet('color: #4B5262;')
-        outer.addWidget(self.summary_label)
+        layout.addWidget(self.summary_label)
+        layout.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidget(content)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        return scroll
+
+    def _build_results_panel(self):
+        """筛选 + 对齐结果 (the table) + the status log -- everything that
+        matters *after* a check has run. Gets the splitter's stretch
+        factor so it's the pane that grows when the window does.
+        """
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(18)
 
         filter_row = QWidget()
         filter_layout = QHBoxLayout(filter_row)
@@ -151,7 +212,7 @@ class AlignmentCheckPage(QWidget):
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.move_filter_combo)
         filter_layout.addStretch(1)
-        outer.addWidget(section('筛选', filter_row))
+        layout.addWidget(section('筛选', filter_row))
 
         self.results_table = QTableWidget(0, 6)
         self.results_table.setHorizontalHeaderLabels(['段落', '原文', '译文', '对齐方式', '成本', 'QA'])
@@ -172,7 +233,8 @@ class AlignmentCheckPage(QWidget):
         self.results_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
-        outer.addWidget(section('对齐结果', self.results_table), 1)
+        self.results_table.setMinimumHeight(120)
+        layout.addWidget(section('对齐结果', self.results_table), 1)
 
         self.log = QTextEdit()
         self.log.setObjectName('logConsole')
@@ -180,7 +242,9 @@ class AlignmentCheckPage(QWidget):
         self.log.setMinimumHeight(80)
         self.log.setMaximumHeight(120)
         self.log.setPlaceholderText('状态信息会显示在这里')
-        outer.addWidget(self.log)
+        layout.addWidget(self.log)
+
+        return panel
 
     # ------------------------------------------------------------- dialogs
     def _browse_input(self):

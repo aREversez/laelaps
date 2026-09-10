@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QScrollArea, QSplitter
 
 from language_tools.model import TranslationUnit
 from toolbox.tools.alignment_check.page import AlignmentCheckPage
@@ -256,3 +256,73 @@ def test_results_table_header_is_left_aligned(qtbot):
     qtbot.addWidget(page)
     alignment = page.results_table.horizontalHeader().defaultAlignment()
     assert alignment & Qt.AlignLeft
+
+
+# ---------------------------------------------------------- splitter layout
+# Regression coverage for the actual bug report: on a non-maximized window
+# the three stacked input sections (file/language/docx layout) left almost
+# no room for 对齐结果, which could show only one or two rows no matter how
+# many the check actually found. Fixed by splitting the page into an
+# input pane (scrollable) and a results pane (stretch-favored) inside a
+# QSplitter -- see the page module's docstring for the full reasoning.
+
+def test_page_uses_a_vertical_splitter_with_two_panes(qtbot):
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    splitters = page.findChildren(QSplitter)
+    assert len(splitters) == 1
+    splitter = splitters[0]
+    assert splitter.orientation() == Qt.Vertical
+    assert splitter.count() == 2
+
+
+def test_results_panel_gets_extra_height_not_the_input_panel(qtbot):
+    # The whole point: extra window height should go to the results
+    # table, not to the input fields above it. QSplitter has no public
+    # getter for setStretchFactor()'s value, so this checks the actual
+    # behavior it produces: growing the splitter should grow the results
+    # pane (index 1) a lot more than the input pane (index 0).
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    page.resize(700, 400)
+    page.show()
+    qtbot.waitExposed(page)
+    splitter = page.findChildren(QSplitter)[0]
+    before = splitter.sizes()
+    page.resize(700, 900)
+    qtbot.wait(50)
+    after = splitter.sizes()
+    input_growth = after[0] - before[0]
+    results_growth = after[1] - before[1]
+    assert results_growth > input_growth
+
+
+def test_input_pane_is_a_scroll_area_so_it_degrades_to_scrolling_not_clipping(qtbot):
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    splitter = page.findChildren(QSplitter)[0]
+    input_pane = splitter.widget(0)
+    assert isinstance(input_pane, QScrollArea)
+    assert input_pane.widgetResizable()
+    # The actual input controls still exist as page attributes regardless
+    # of which container they live in -- every other test in this file
+    # depends on that continuing to hold.
+    assert input_pane.widget().findChildren(type(page.input_edit))
+
+
+def test_results_table_is_reachable_inside_the_splitters_second_pane(qtbot):
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    splitter = page.findChildren(QSplitter)[0]
+    results_pane = splitter.widget(1)
+    assert page.results_table in results_pane.findChildren(type(page.results_table))
+    assert page.log in results_pane.findChildren(type(page.log))
+
+
+def test_splitter_divider_is_draggable_to_collapse_the_input_pane(qtbot):
+    # The user can trade "see my inputs" for "see more rows" on demand --
+    # collapsing the input pane entirely must not be blocked.
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    splitter = page.findChildren(QSplitter)[0]
+    assert splitter.isCollapsible(0)
