@@ -1,6 +1,6 @@
 # language-tools
 
-语言服务管理（翻译/本地化）工具箱。第一个工具是**双语语料转换**：把 docx/xlsx/csv/tsv 这类双语文档转换成 Trados 等 CAT 工具能用的翻译记忆库格式（sdltm/tmx），也支持 tmx↔sdltm 互转。提供 Python 库、命令行工具、桌面 GUI 三种使用方式，往后会陆续加入更多语言服务管理相关的工具（术语管理、批量处理等，见 [DESIGN.md](./DESIGN.md) 第 14/15 节的定位说明和 backlog）。
+语言服务管理（翻译/本地化）工具箱。第一个工具是**双语语料转换**：把 docx/xlsx/csv/tsv 这类双语文档转换成 Trados 等 CAT 工具能用的翻译记忆库格式（sdltm/tmx），也支持 tmx↔sdltm 互转；第二个工具是**术语管理**：维护双语术语表，对照已有翻译记忆库检查禁用译法。提供 Python 库、命令行工具、桌面 GUI 三种使用方式，往后会陆续加入更多语言服务管理相关的工具（批量处理等，见 [DESIGN.md](./DESIGN.md) 第 14/15 节的定位说明和 backlog）。
 
 ## 功能特性
 
@@ -10,6 +10,7 @@
 - **对齐检查**：不写文件，单独预览一个双语文档会被怎样对齐——哪些段落被合并/拆分、哪句完全没找到对应（GAP），转换前先心里有数（`tmtool align` / 桌面 GUI「对齐检查」页），命令行版本额外支持 `--fail-on-issues` 退出码，方便脚本批量检查一堆文档
 - QA 检查：空值、长度比异常、重复条目（源冲突/译文冲突）、数字不匹配、占位符不匹配（`{name}`/`%s` 等）、URL 丢失或改动、inline 标签不匹配（TMX 带格式标记时）——转换时可选勾选，也可以单独对着一个已有的 tmx/sdltm 跑（`tmtool qa` / 桌面 GUI「QA 检查」页），支持导出 CSV 审阅报告
 - **TM 维护**（`tmtool` 命令行 + 桌面 GUI「语料维护」页）：清理（去重/去空/normalize）、多文件合并（可选冲突策略）、语料统计、对齐检查
+- **术语管理**（`tmtool term-check` + 桌面 GUI「术语管理」页）：维护双语术语表（csv/xlsx），对照一个已有 tmx/sdltm 检查禁用译法——v1 只做"原文出现术语、译文出现明确禁用的错译"这一个方向，见 [DESIGN.md](./DESIGN.md) 第 15.1 节为什么范围先这么定
 - 桌面 GUI（PySide6），也可以纯命令行/脚本调用
 - 打包成本地 Windows exe，不需要联网、不上传文件
 
@@ -30,12 +31,13 @@ pip install -e ".[gui]"       # 再加上桌面GUI
 python -m toolbox.main
 ```
 
-侧边栏四个工具：
+侧边栏五个工具：
 
 - **语料转换**：浏览选择文件 → 双语源文件需要填源/目标语言（语料库文件可留空自动识别）→ 需要的话调整 docx 版式 → 勾选输出格式 → 点转换。
 - **对齐检查**：对着一个双语文档（docx/xlsx/csv/tsv）预览句子对齐结果，不生成任何文件——转换前先看看"这段落是不是被拆/合并对了"。结果表格默认只显示 GAP（某一侧完全没对应句子）或被 QA 标记的行，可按对齐方式（1:1/合并/拆分/GAP）筛选，可导出完整 CSV。
 - **QA 检查**：对着一个已有的 tmx/sdltm 单独跑全部 QA 检查（不需要经过转换），结果按"只显示有问题的条目"默认筛选，可按问题类型进一步筛选，可导出完整 CSV 报告（含未标记问题的条目，不受当前筛选影响）。
 - **语料维护**：清理（去重/去空/normalize）、合并（多文件+冲突策略）、统计，三个标签页对应 `tmtool` 的三个子命令。
+- **术语管理**：「术语库」标签页维护一份双语术语表（新增/编辑走弹窗表单，不支持表格内直接改，改动通过表单校验后才落到表里）、导入导出 csv/xlsx；「一致性检查」标签页选一个 tmx/sdltm + 一份术语库，跑检查，结果按"只显示有问题的条目"默认筛选，可导出完整 CSV。
 
 ### 命令行
 
@@ -77,6 +79,24 @@ done
 ```
 
 `tmtool <子命令> --help` 看完整参数。
+
+### 术语管理（`tmtool term-check` 命令行 / GUI「术语管理」页）
+
+术语库是一份 csv/xlsx，表头必须包含 `src_term`/`tgt_term`（大小写不敏感），`status`/`domain`/`note` 可选：
+
+```csv
+src_term,tgt_term,status,domain,note
+big data,大资料,forbidden,tech,旧译名，统一用"大数据"
+cloud,云,approved,tech,
+```
+
+语言对是整份术语库文件级别的属性（不是每行都写一遍），命令行/GUI 里跟其它文件一样传 `--src`/`--tgt` 或用语言下拉框指定。`status` 只有 `approved`/`forbidden` 两档，v1 的一致性检查只看 `forbidden`：原文出现 `src_term`、译文出现对应的 `tgt_term`（即那个被禁止的错误译法）才会被标记；`approved` 方向（推荐译法有没有被用到）v1 暂不检查，见 [DESIGN.md](./DESIGN.md) 第 15.1 节为什么先只做这一半。
+
+```bash
+tmtool term-check a.tmx --glossary glossary.csv                              # 打印命中数
+tmtool term-check a.tmx --glossary glossary.csv --export report.csv          # 同上，导出完整 CSV
+tmtool term-check a.tmx --glossary glossary.csv --fail-on-issues             # 有命中则退出码 2，同 `align` 的批量脚本用法
+```
 
 ### 作为 Python 库
 

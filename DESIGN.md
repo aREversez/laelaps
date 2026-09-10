@@ -372,7 +372,7 @@ pyinstaller packaging/language-toolbox.spec
 
 ## 15. Backlog（未排期，按讨论时间顺序记录，不代表优先级）
 
-供后续排期参考，**不是承诺的交付顺序**——具体做哪个、什么时候做，看实际需求出现的频率决定。除术语管理外均未细化方案，真正要做时需要单独展开设计（数据模型、格式选型、Phase 划分），参考本文档其它 Phase 的详细程度。
+供后续排期参考，**不是承诺的交付顺序**——具体做哪个、什么时候做，看实际需求出现的频率决定。均未细化方案（术语管理已经从这份 backlog "毕业"，见 15.1），真正要做时需要单独展开设计（数据模型、格式选型、Phase 划分），参考本文档其它 Phase 的详细程度。
 
 - **批量处理**：【语料转换】【对齐检查】GUI 目前都只能选单个文件；`tmtool align --fail-on-issues` 也只支持单文件，批量靠 shell 循环（见 README"批量检查"一节）。GUI 层面加"选一个文件夹，批量转换/批量对齐检查"，复用【语料维护】合并标签页已经验证过的多文件列表控件（`QListWidget` + 添加/移除/清空）。
 - **TM 条目级浏览/编辑**：清理/合并/统计都是批量操作，没有条目粒度的"打开一个 TM，浏览/手动改或删单条"界面，现在只能导出 CSV 改完再重新导入，一来一回没有直接编辑方便。
@@ -381,7 +381,7 @@ pyinstaller packaging/language-toolbox.spec
 - **QA/术语报告的 HTML/PDF 导出**：目前 QA 检查、对齐检查的导出都只有 CSV，给非技术干系人看不够友好。
 - **常用设置记忆**：常用语言对、上次选择的输出格式/目录等目前每次都要重新选，没有跨次启动的记忆。
 
-### 15.1 术语管理（下一个要做的工具，已细化方案）
+### 15.1 术语管理（Phase G0-G2 已完成，2026-09）
 
 **目标**：维护一份双语术语表，并能拿它去对照一个已有 TM（tmx/sdltm）做术语一致性检查——这是术语库在翻译工作流里最直接的价值：不是"存一堆词"，是"存的词能真的用来抓问题"。
 
@@ -405,11 +405,11 @@ class TermEntry:
 
 **为什么要分 `approved`/`forbidden` 两档，而不是只有一份"标准译法"表**：术语检查真正有实用价值、且几乎不会误报的场景是"这个词绝对不能这样翻"（`forbidden`——比如某客户明确禁用的旧译名、容易和相似术语混淆的错误译法）；"这个词应该用标准译法"（`approved`）看似更直觉，但检查逻辑上风险大得多——译文用同义词、代词回指、语序调整都是合法翻译，拿"译文里有没有出现这个词"去判断"标准译法有没有用"极易大量误报。所以**v1 范围克制**（延续 `qa.py` 当初"先做四项，别一次上齐"的做法）：只做 `forbidden` 方向的检查，`approved` 方向的检查（术语库里的词该出现但没出现）放到后续阶段，等真的攒够误报/漏报的实际案例再决定怎么做，不要一开始就假设一个复杂的模糊匹配方案。
 
-**存储格式**：v1 用 csv/xlsx（复用 `readers/csv_bilingual.py`/`readers/xlsx_bilingual.py` 已经踩过的编码兜底、表头探测这些坑，不重新发明），两列扩到六列（`src_term,tgt_term,status,domain,note,...`）。TBX（MultiTerm 等 CAT 工具的术语交换标准格式）作为后续阶段的兼容性目标，同 sdltm 的 Level 2/3 分级思路——先声明清楚"能被 MultiTerm 读进去"和"跟 MultiTerm 原生术语库位级等价"是两个不同目标，不要含糊。
+**存储格式**：v1 用 csv/xlsx，编码兜底沿用 `readers/csv_bilingual.py` 的 `utf-8-sig → utf-8 → gb18030` 顺序。落地实现比最初设想的六列更精简：文件本身只存 `src_term,tgt_term,status,domain,note` 五列，`src_lang`/`tgt_lang` 不落盘（一份术语库文件按惯例只对应一个语言对，跟 TM 一样，逐行重复没意义——见 `language_tools/terms/glossary.py` 模块文档），`guid`/`source_file`/`created_at`/`modified_at` 留在 `TermEntry` 上但读写都不涉及，是给后续阶段（比如合并多份术语库）预留的字段，不是当前格式的一部分。表头**要求**具名列（`src_term`/`tgt_term` 必须出现，大小写不敏感），不猜位置——术语表跟双语语料不一样，猜位置的启发式（`readers/_rowreader.py` 的 `looks_like_header()`）在这里根本分不出哪行是表头哪行是数据。TBX（MultiTerm 等 CAT 工具的术语交换标准格式）互通仍是后续阶段的目标，未实现。
 
-**Phase 划分**：
+**Phase 划分（实际完成情况）**：
 
-- **Phase G0 — 术语库读写**：`language_tools/terms/glossary.py`，`read_glossary(path)` / `write_glossary(path, entries)`，csv/xlsx 两种格式，最小合成 fixture + 编码兜底测试（参照 Phase 2 xlsx/csv reader 的测试要求）。
-- **Phase G1 — 一致性检查**：`language_tools/terms/check.py`，`run(units, glossary)`，只做 `TERM_FORBIDDEN`（精确子串匹配；中日韩语言按字符子串匹配，拉丁字母语言按大小写不敏感的词边界匹配，复用 `align/splitters.py` 里已经验证过的 `is_cjk_lang` 判断，不重新写一遍中英文分界逻辑），结果写进 `TranslationUnit.meta['term_issues']`，独立于 `qa_issues`（不同的检查关注点，混进同一个 key 会让"这条问题是 QA 报的还是术语库报的"变得含糊）。测试需要一份手写的、含真实 forbidden 术语命中的 fixture TM。
-- **Phase G2 — GUI 工具**（`toolbox/tools/term_management/`）：术语表增删改的 `QTableWidget`（参照现有 `_set_stats_table_rows` 一类"数据变了就整表重建"的简单模式，不做原地单元格编辑，避免第一版就处理 `itemChanged` 信号的各种边界情况）+ 导入/导出 csv/xlsx + "对照 TM 做术语检查"操作（选一个 TM + 一份术语库 → 跑 Phase G1 → 结果表格，UX 照抄【QA 检查】页——同样是"筛选 + 导出完整 CSV"的形状，没有理由另起一套）。
-- **Phase G3（后置，视 G1 实际效果再决定要不要做）**：`approved` 方向的检查、TBX 导入导出。
+- **Phase G0 — 术语库读写** ✅：`language_tools/terms/glossary.py`，`read(path, src_lang, tgt_lang)` / `write(path, entries)`（跟最初方案里的函数名 `read_glossary`/`write_glossary` 不同，去掉了重复的 `glossary` 前缀，模块名本身已经说明白了），csv/xlsx 两种格式。测试见 `tests/test_terms_glossary.py`（round-trip、表头校验、状态兜底、gb18030 编码、不支持的扩展名）。
+- **Phase G1 — 一致性检查** ✅：`language_tools/terms/check.py`，`run(units, glossary)`，只做 `TERM_FORBIDDEN`（精确子串匹配；中日韩语言按字符子串匹配，拉丁字母语言按大小写不敏感的词边界匹配，复用 `align/splitters.py` 的 `is_cjk_lang`），结果写进 `TranslationUnit.meta['term_issues']`，独立于 `qa_issues`。额外加了 `summarize()`（同 `qa_report.summarize()` 的形状，去掉 `by_type`——术语命中没有固定的可枚举代码）。顺带接进了 `tmtool term-check`（`--glossary`/`--export`/`--fail-on-issues`，跟 `tmtool qa`/`tmtool align --fail-on-issues` 是同一套约定），`csv_writer.write()` 加了 `include_terms=True`。测试见 `tests/test_terms_check.py`、`tests/test_tm_cli.py`。
+- **Phase G2 — GUI 工具** ✅：`toolbox/tools/term_management/`，两个标签页。「术语库」：术语表增删改走 `_TermEntryDialog`（模态表单，不是原地单元格编辑——见该模块文档，表单还多一层"提交前校验"，原地编辑没有等价的检查点）+ 导入/导出 csv/xlsx；语言对是页面级的两个下拉框（`compact_combo()`/`labeled_field()`，`toolbox.widgets`），不是每行都填。「一致性检查」：选一个 TM + 一份术语库 → 跑 Phase G1 → 结果表格，UX 基本照抄【QA 检查】页（筛选 + 导出完整 CSV），比 QA 检查少一个"按问题类型筛选"下拉——术语命中没有固定类型可选。测试见 `tests/test_toolbox_term_management_page.py`。
+- **Phase G3（后置，视 G1 实际效果再决定要不要做）**：`approved` 方向的检查、TBX 导入导出。仍未开始。

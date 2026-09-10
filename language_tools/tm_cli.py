@@ -1,5 +1,5 @@
-"""``tmtool`` -- CLI for corpus-level TM maintenance (clean/merge/stats/qa)
-and bilingual-source alignment checking (align).
+"""``tmtool`` -- CLI for corpus-level TM maintenance (clean/merge/stats/qa/
+term-check) and bilingual-source alignment checking (align).
 
 Kept as a separate entry point from ``biconvert`` (see DESIGN.md section
 12 for why ``biconvert`` itself stays a thin wrapper with no pipeline
@@ -37,6 +37,8 @@ import sys
 
 from language_tools import align_report
 from language_tools.cli import _build_reader_opts
+from language_tools.terms import check as term_check_module
+from language_tools.terms import glossary as glossary_module
 from language_tools.tm import clean as clean_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import merge as merge_module
@@ -105,6 +107,22 @@ def _cmd_qa(args):
     return 0
 
 
+def _cmd_term_check(args):
+    units = tm_io.read_corpus(args.input)
+    src_lang, tgt_lang = tm_io.infer_langs(units)
+    entries = glossary_module.read(args.glossary, src_lang, tgt_lang)
+    term_check_module.run(units, entries)
+    s = term_check_module.summarize(units)
+    print('Total=%d Flagged=%d (%.1f%%)' % (
+        s['total'], s['flagged'], (s['flagged'] / s['total'] * 100) if s['total'] else 0.0))
+    if args.export:
+        csv_writer.write(args.export, units, src_lang or 'SRC', tgt_lang or 'TGT', include_terms=True)
+        print('Wrote %s' % args.export)
+    if args.fail_on_issues and s['flagged']:
+        return 2
+    return 0
+
+
 def _cmd_align(args):
     ext = os.path.splitext(args.input)[1].lower()
     if ext not in _BILINGUAL_EXTS:
@@ -168,6 +186,20 @@ def build_parser():
                        help='write a full CSV report (all units, with confidence/status/issues '
                             'columns) to PATH')
     qa_p.set_defaults(func=_cmd_qa)
+
+    term_check_p = sub.add_parser(
+        'term-check', help='check a corpus file against a glossary for forbidden translations')
+    term_check_p.add_argument('input', help='input .tmx or .sdltm file')
+    term_check_p.add_argument('--glossary', required=True,
+                               help='glossary file (.csv or .xlsx) with src_term/tgt_term/status columns')
+    term_check_p.add_argument('--export', metavar='PATH',
+                               help='write a full CSV report (all units, with a term_issues '
+                                    'column) to PATH')
+    term_check_p.add_argument('--fail-on-issues', action='store_true',
+                               help='exit with status 2 if any forbidden-term hit was found -- '
+                                    'same convention as `align --fail-on-issues`, for scripting '
+                                    'a batch check over many corpus files')
+    term_check_p.set_defaults(func=_cmd_term_check)
 
     align_p = sub.add_parser(
         'align', help='check sentence-alignment quality for a bilingual source file '

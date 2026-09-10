@@ -122,6 +122,67 @@ def test_qa_export_writes_full_csv_report(tmp_path):
     assert content.count('\n') >= 3  # header + 2 data rows (+ trailing newline)
 
 
+# --------------------------------------------------------------- term-check
+
+def _write_glossary_csv(path, rows):
+    lines = ['src_term,tgt_term,status'] + ['%s,%s,%s' % row for row in rows]
+    path.write_text('\n'.join(lines), encoding='utf-8')
+
+
+def test_term_check_prints_summary(tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('big data.', '大资料。'), _u('clean sentence.', '干净的句子。')])
+    _write_glossary_csv(gloss, [('big data', '大资料', 'forbidden')])
+    result = _run(['term-check', str(src), '--glossary', str(gloss)])
+    assert result.returncode == 0, result.stderr
+    assert 'Total=2' in result.stdout
+    assert 'Flagged=1' in result.stdout
+
+
+def test_term_check_export_writes_full_csv_report(tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    out = tmp_path / 'report.csv'
+    _write_tmx(src, [_u('big data.', '大资料。'), _u('clean sentence.', '干净的句子。')])
+    _write_glossary_csv(gloss, [('big data', '大资料', 'forbidden')])
+    result = _run(['term-check', str(src), '--glossary', str(gloss), '--export', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert out.exists()
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'term_issues' in content
+    assert 'big data->大资料' in content
+    # both rows present, same "full corpus, not filtered" convention as `qa --export`
+    assert content.count('\n') >= 3
+
+
+def test_term_check_fail_on_issues_is_off_by_default(tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('big data.', '大资料。')])
+    _write_glossary_csv(gloss, [('big data', '大资料', 'forbidden')])
+    result = _run(['term-check', str(src), '--glossary', str(gloss)])
+    assert result.returncode == 0, result.stderr
+
+
+def test_term_check_fail_on_issues_exits_2_when_flagged(tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('big data.', '大资料。')])
+    _write_glossary_csv(gloss, [('big data', '大资料', 'forbidden')])
+    result = _run(['term-check', str(src), '--glossary', str(gloss), '--fail-on-issues'])
+    assert result.returncode == 2
+
+
+def test_term_check_fail_on_issues_exits_0_when_clean(tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('clean sentence.', '干净的句子。')])
+    _write_glossary_csv(gloss, [('big data', '大资料', 'forbidden')])
+    result = _run(['term-check', str(src), '--glossary', str(gloss), '--fail-on-issues'])
+    assert result.returncode == 0, result.stderr
+
+
 # --------------------------------------------------------------------- align
 # `align` is the CLI counterpart to the GUI's 对齐检查 page -- both wrap
 # language_tools.align_report.run()/summarize(). No mocking here (unlike

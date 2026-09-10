@@ -42,6 +42,14 @@ reviewer scanning the sheet can see which rows came from the same source
 paragraph (several rows sharing a paragraph number means that paragraph
 split into multiple sentences; useful context alongside align_move on
 each individual row).
+
+``include_terms=True`` appends a 术语问题 column from
+``terms.check.run()``'s ``meta['term_issues']``. Unlike ``issues``
+(``qa.ISSUE_LABELS``-backed fixed codes), a term hit has no enumerable
+code to look up a label for -- each hit names its own glossary entry --
+so the cell is rendered directly as "<src_term> -> <tgt_term>" pairs
+(semicolon-joined for multiple hits on one row), with the entry's note
+appended in parentheses when present.
 """
 import csv
 
@@ -59,7 +67,13 @@ def _format_move(move_code):
     return '%s(%s)' % (label, move_code) if label else move_code
 
 
-def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include_align=False):
+def _format_term_hit(hit):
+    text = '%s->%s' % (hit['src_term'], hit['tgt_term'])
+    return '%s(%s)' % (text, hit['note']) if hit.get('note') else text
+
+
+def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include_align=False,
+          include_terms=False):
     with open(path, 'w', encoding='utf-8-sig', newline='') as f:
         w = csv.writer(f)
         header = ['No', src_label, tgt_label]
@@ -67,6 +81,8 @@ def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include
             header += ['paragraph', 'align_move']
         if include_qa:
             header += ['confidence', 'status', 'issues']
+        if include_terms:
+            header += ['term_issues']
         w.writerow(header)
         for i, u in enumerate(units, 1):
             row = [i, u.src_text.strip(), u.tgt_text.strip()]
@@ -77,4 +93,7 @@ def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include
                 conf = u.meta.get('qa_confidence', 1.0)
                 status = 'HIGH' if not issues else ('LOW' if conf < 0.5 else 'MEDIUM')
                 row += ['%.2f' % conf, status, ';'.join(_format_issue(i) for i in issues)]
+            if include_terms:
+                hits = u.meta.get('term_issues', [])
+                row += [';'.join(_format_term_hit(h) for h in hits)]
             w.writerow(row)
