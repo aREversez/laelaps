@@ -34,7 +34,7 @@ import html
 import os
 
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QCheckBox, QFileDialog, QFormLayout,
+    QAbstractItemView, QComboBox, QCheckBox, QFileDialog,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
     QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit,
     QVBoxLayout, QWidget,
@@ -95,6 +95,38 @@ def _merge_job(input_paths, output_path, strategy):
 def _stats_job(input_path):
     units = tm_io.read_corpus(input_path)
     return stats_module.compute(units)
+
+
+def _compact_combo(combo):
+    """Makes a combo box's width track its actual content instead of
+    whatever the surrounding layout hands it -- same fix, same reasoning,
+    as ``alignment_check/page.py``'s helper of the same name (duplicated
+    here rather than shared: two call sites isn't yet the "third tool
+    wants it" signal the other shared helpers in ``toolbox.widgets`` were
+    promoted on). Without this, ``merge_strategy_combo`` -- whose longest
+    item is a handful of Chinese characters -- used to get stretched to
+    the row's full width by whatever layout it sat in, which is why it
+    looked oversized for how little text is in it.
+    """
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+    combo.setMinimumContentsLength(10)
+
+
+def _labeled(label_text, field_widget):
+    """A label stacked above a field widget, meant to sit inline with
+    other such pairs in one QHBoxLayout -- same shape as
+    ``alignment_check/page.py``'s helper of the same name, used here so
+    合并结果保存到 and 冲突处理策略 (previously two stacked step-numbered
+    sections) read as one compact row instead.
+    """
+    box = QVBoxLayout()
+    box.setContentsMargins(0, 0, 0, 0)
+    box.setSpacing(4)
+    label = QLabel(label_text)
+    label.setStyleSheet('color: #6B7280; font-size: 12px;')
+    box.addWidget(label)
+    box.addWidget(field_widget)
+    return box
 
 
 class TmMaintenancePage(QWidget):
@@ -215,10 +247,23 @@ class TmMaintenancePage(QWidget):
         list_btn_row.addWidget(self.merge_clear_btn)
         list_btn_row.addStretch(1)
         list_layout.addLayout(list_btn_row)
-        layout.addWidget(section('第一步：选择要合并的文件（可多选）', list_widget))
+        layout.addWidget(section('选择要合并的文件（可多选）', list_widget))
 
-        output_row = QWidget()
-        output_layout = QHBoxLayout(output_row)
+        # --- output + conflict strategy, combined in one row ---
+        # These used to be two stacked "第二步"/"第三步" sections. Neither
+        # needs a whole section to itself -- 保存到 is one line edit plus
+        # a button, 冲突处理策略 is one combo box -- so, same fix as
+        # alignment_check's 语言与排版方式 row: lay both out side by side
+        # in a single QHBoxLayout under one section title, with the combo
+        # sized to its own content (_compact_combo) instead of stretched
+        # to a QFormLayout field column's full width.
+        opts_widget = QWidget()
+        opts_layout = QHBoxLayout(opts_widget)
+        opts_layout.setContentsMargins(0, 0, 0, 0)
+        opts_layout.setSpacing(28)
+
+        output_field = QWidget()
+        output_layout = QHBoxLayout(output_field)
         output_layout.setContentsMargins(0, 0, 0, 0)
         self.merge_output_edit = QLineEdit()
         self.merge_output_edit.setPlaceholderText('合并结果保存到…')
@@ -226,18 +271,17 @@ class TmMaintenancePage(QWidget):
         output_browse_btn.clicked.connect(self._browse_merge_output)
         output_layout.addWidget(self.merge_output_edit, 1)
         output_layout.addWidget(output_browse_btn)
-        layout.addWidget(section('第二步：保存到', output_row))
+        opts_layout.addLayout(_labeled('保存到', output_field), 1)
 
-        strategy_widget = QWidget()
-        strategy_form = QFormLayout(strategy_widget)
-        strategy_form.setContentsMargins(0, 0, 0, 0)
         self.merge_strategy_combo = QComboBox()
         self.merge_strategy_combo.setToolTip('同一原文在不同文件里译文不一样时怎么处理')
+        _compact_combo(self.merge_strategy_combo)
         for i, (display_text, value, item_tip) in enumerate(_STRATEGY_CHOICES):
             self.merge_strategy_combo.addItem(display_text, value)
             self.merge_strategy_combo.setItemData(i, item_tip, Qt.ToolTipRole)
-        strategy_form.addRow('冲突处理策略', self.merge_strategy_combo)
-        layout.addWidget(section('第三步：冲突处理', strategy_widget))
+        opts_layout.addLayout(_labeled('冲突处理策略', self.merge_strategy_combo))
+
+        layout.addWidget(section('保存与冲突处理', opts_widget))
 
         self.merge_btn = QPushButton('开始合并')
         self.merge_btn.setObjectName('primaryButton')
