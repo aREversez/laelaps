@@ -16,6 +16,15 @@ layout" form controls -- aligning a document needs exactly the same
 language/layout inputs as converting one, so duplicating that logic for a
 second page would just be two copies of the same combo box drifting
 apart over time.
+
+``compact_combo()``/``labeled_field()`` followed the same path again:
+``alignment_check`` introduced them (to lay 原文语言/译文语言/文档排版方式
+out inline in one row instead of three stacked full-width QFormLayout
+rows), ``tm_maintenance`` got a second private copy for its own
+保存到/冲突处理策略 row, and ``corpus_convert`` -- whose 语言/排版方式
+inputs are the exact ones ``alignment_check`` copied the pattern from in
+the first place -- is the third, so promoted here now with all three call
+sites switched over.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QVBoxLayout, QWidget
@@ -117,3 +126,36 @@ def make_layout_combo():
         combo.addItem(display_text, value)
         combo.setItemData(i, item_tip, Qt.ToolTipRole)
     return combo
+
+
+def compact_combo(combo):
+    """Makes a combo box's width track its actual content instead of
+    whatever the surrounding layout hands it. Without this, a combo whose
+    longest item is a handful of characters (e.g. "自动识别（推荐）") ends
+    up stretched to hundreds of pixels wide the moment it's the field in a
+    QFormLayout row (that layout's default field-growth policy stretches
+    the field column to the row's full width regardless of the widget's
+    own size hint) -- which is why controls like this used to look so
+    oversized for how little text is in them. AdjustToContents recomputes
+    the width whenever the current item/text changes, so it stays
+    correctly sized as the user picks a different option, not just on
+    first show.
+    """
+    combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+    combo.setMinimumContentsLength(10)
+
+
+def labeled_field(label_text, field_widget):
+    """A label stacked above a field widget, as a tight (label, field)
+    pair meant to sit inline with other such pairs in one QHBoxLayout --
+    the "several related short inputs in one compact row" replacement for
+    stacking each in its own full-width QFormLayout section.
+    """
+    box = QVBoxLayout()
+    box.setContentsMargins(0, 0, 0, 0)
+    box.setSpacing(4)
+    label = QLabel(label_text)
+    label.setStyleSheet('color: #6B7280; font-size: 12px;')
+    box.addWidget(label)
+    box.addWidget(field_widget)
+    return box

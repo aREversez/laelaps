@@ -33,18 +33,32 @@ value) + .currentData()).
 ``section()`` (imported from ``toolbox.widgets``) is the shared section-header
 helper used by every tool page -- see that module's docstring for why it's
 shared rather than a private copy per page.
+
+Section titles don't use "第一步"/"第二步" step-numbering language -- a
+fixed top-to-bottom sequence of inputs already reads as steps on its own
+without being told so, and the numbering was adding label text, not
+clarity. 原文语言/译文语言/文档排版方式 (previously two separate
+sections: one QFormLayout row per language, plus a whole other section
+for the layout combo -- each stretched to the row's full width for a
+combo box showing a handful of characters) are now one 语言与排版方式
+section with all three laid out inline in a single QHBoxLayout via
+``compact_combo()``/``labeled_field()`` (``toolbox.widgets``) -- this is
+in fact where ``alignment_check`` copied that pattern from in the first
+place, since it needs the identical three inputs; this page is just
+catching up to its own copy.
 """
 import html
 import os
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFileDialog, QFormLayout, QHBoxLayout,
+    QCheckBox, QFileDialog, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from language_tools import api
-from toolbox.widgets import LANG_TOOLTIP, lang_combo_code, make_lang_combo, make_layout_combo
+from toolbox.widgets import LANG_TOOLTIP, compact_combo, labeled_field, lang_combo_code
+from toolbox.widgets import make_lang_combo, make_layout_combo
 from toolbox.widgets import section as _section
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
@@ -108,28 +122,35 @@ class CorpusConvertPage(QWidget):
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
         file_layout.addWidget(browse_btn)
-        outer.addWidget(_section('第一步：选择文件', file_row))
+        outer.addWidget(_section('选择文件', file_row))
 
-        # --- language ---
-        lang_widget = QWidget()
-        lang_form = QFormLayout(lang_widget)
-        lang_form.setContentsMargins(0, 0, 0, 0)
+        # --- language + docx layout, all inline in one row ---
+        # 原文语言/译文语言/文档排版方式 show short text ("英语 (en-US)",
+        # "自动识别（推荐）") but used to each get a whole row at full page
+        # width -- that's QFormLayout's default field-growth policy
+        # stretching the field column regardless of the widget's own
+        # content, not anything actually needing that space.
+        # compact_combo() sizing plus laying all three out in one
+        # QHBoxLayout fixes that at the source.
+        opts_widget = QWidget()
+        opts_layout = QHBoxLayout(opts_widget)
+        opts_layout.setContentsMargins(0, 0, 0, 0)
+        opts_layout.setSpacing(28)
+
         self.src_edit = make_lang_combo('en-US')
         self.tgt_edit = make_lang_combo('zh-CN')
         self.src_edit.setToolTip(LANG_TOOLTIP)
         self.tgt_edit.setToolTip(LANG_TOOLTIP)
-        lang_form.addRow('原文语言', self.src_edit)
-        lang_form.addRow('译文语言', self.tgt_edit)
-        outer.addWidget(_section('第二步：确认语言', lang_widget))
-
-        # --- docx layout ---
-        layout_widget = QWidget()
-        layout_form = QFormLayout(layout_widget)
-        layout_form.setContentsMargins(0, 0, 0, 0)
         self.layout_combo = make_layout_combo()
         self.layout_combo.setToolTip('仅 .docx 需要关心')
-        layout_form.addRow('文档排版方式', self.layout_combo)
-        outer.addWidget(_section('文档排版方式', layout_widget))
+        for combo in (self.src_edit, self.tgt_edit, self.layout_combo):
+            compact_combo(combo)
+
+        opts_layout.addLayout(labeled_field('原文语言', self.src_edit))
+        opts_layout.addLayout(labeled_field('译文语言', self.tgt_edit))
+        opts_layout.addLayout(labeled_field('文档排版方式', self.layout_combo))
+        opts_layout.addStretch(1)
+        outer.addWidget(_section('语言与排版方式', opts_widget))
 
         # --- output formats ---
         fmt_widget = QWidget()
@@ -143,7 +164,7 @@ class CorpusConvertPage(QWidget):
             cb.setToolTip(_FORMAT_TOOLTIPS[key])
             fmt_row.addWidget(cb)
         fmt_row.addStretch(1)
-        outer.addWidget(_section('第三步：要生成哪些格式', fmt_widget))
+        outer.addWidget(_section('生成格式', fmt_widget))
 
         self.chk_qa = QCheckBox('运行内容检查')
         self.chk_qa.setToolTip(_QA_TOOLTIP)
@@ -175,8 +196,8 @@ class CorpusConvertPage(QWidget):
             self.input_edit.setText(path)  # triggers _sync_format_checkboxes via textChanged
 
     def _sync_format_checkboxes(self, input_path):
-        """Grey out (disable + uncheck) the step-3 checkbox matching the
-        step-1 input's own format -- converting a .tmx to .tmx (or a
+        """Grey out (disable + uncheck) the 生成格式 checkbox matching the
+        chosen input file's own format -- converting a .tmx to .tmx (or a
         .sdltm to .sdltm, or a .csv to .csv) is a no-op output the user
         didn't actually ask for, so don't offer it as a live choice.
         .csv is genuinely ambiguous (it's both a bilingual *source* format

@@ -76,8 +76,8 @@ from PySide6.QtWidgets import (
 from language_tools import align_report
 from language_tools import qa as qa_module
 from language_tools.writers import csv_writer
-from toolbox.widgets import LANG_TOOLTIP, lang_combo_code, make_lang_combo, make_layout_combo
-from toolbox.widgets import section
+from toolbox.widgets import LANG_TOOLTIP, compact_combo, labeled_field, lang_combo_code
+from toolbox.widgets import make_lang_combo, make_layout_combo, section
 from toolbox.workers import CallableWorker
 
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
@@ -92,38 +92,6 @@ _MOVE_TOOLTIPS = {
     '1:0': '这句原文在译文里完全找不到对应内容',
     '0:1': '这句译文在原文里完全找不到对应内容',
 }
-
-
-def _compact_combo(combo):
-    """Makes a combo box's width track its actual content instead of
-    whatever the surrounding layout hands it. Without this, a combo like
-    make_layout_combo() -- whose longest item is "自动识别 (推荐)" -- ends
-    up stretched to hundreds of pixels wide the moment it's the field in a
-    QFormLayout row (that layout's default field-growth policy stretches
-    the field column to the row's full width regardless of the widget's
-    own size hint), which is why these controls looked so oversized for
-    how little text is in them. AdjustToContents recomputes the width
-    whenever the current item/text changes, so it stays correctly sized
-    as the user picks a different option, not just on first show.
-    """
-    combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-    combo.setMinimumContentsLength(10)
-
-
-def _labeled(label_text, field_widget):
-    """A label stacked above a field widget, as a tight (label, field)
-    pair meant to sit inline with other such pairs in one QHBoxLayout --
-    see the "language + docx layout, all inline in one row" comment in
-    _build_ui for why this replaced three stacked QFormLayout rows.
-    """
-    box = QVBoxLayout()
-    box.setContentsMargins(0, 0, 0, 0)
-    box.setSpacing(4)
-    label = QLabel(label_text)
-    label.setStyleSheet('color: #6B7280; font-size: 12px;')
-    box.addWidget(label)
-    box.addWidget(field_widget)
-    return box
 
 
 class AlignmentCheckPage(QWidget):
@@ -165,7 +133,7 @@ class AlignmentCheckPage(QWidget):
         # that's QFormLayout's default field-growth policy stretching the
         # field column regardless of the widget's own content, not
         # anything actually needing that space. AdjustToContents sizing
-        # (_compact_combo below) plus laying all three out in one
+        # (compact_combo() from toolbox.widgets) plus laying all three out in one
         # QHBoxLayout fixes that at the source, rather than working around
         # it with a splitter/scroll area that hides 开始检查 instead.
         opts_widget = QWidget()
@@ -180,11 +148,11 @@ class AlignmentCheckPage(QWidget):
         self.layout_combo = make_layout_combo()
         self.layout_combo.setToolTip('仅 .docx 需要关心')
         for combo in (self.src_edit, self.tgt_edit, self.layout_combo):
-            _compact_combo(combo)
+            compact_combo(combo)
 
-        opts_layout.addLayout(_labeled('原文语言', self.src_edit))
-        opts_layout.addLayout(_labeled('译文语言', self.tgt_edit))
-        opts_layout.addLayout(_labeled('文档排版方式', self.layout_combo))
+        opts_layout.addLayout(labeled_field('原文语言', self.src_edit))
+        opts_layout.addLayout(labeled_field('译文语言', self.tgt_edit))
+        opts_layout.addLayout(labeled_field('文档排版方式', self.layout_combo))
         opts_layout.addStretch(1)
         outer.addWidget(section('语言与排版方式', opts_widget))
 
@@ -226,7 +194,7 @@ class AlignmentCheckPage(QWidget):
         self.move_filter_combo = QComboBox()
         self.move_filter_combo.addItem('全部对齐方式', None)
         self.move_filter_combo.currentIndexChanged.connect(self._refresh_table)
-        _compact_combo(self.move_filter_combo)
+        compact_combo(self.move_filter_combo)
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.move_filter_combo)
         filter_layout.addStretch(1)
