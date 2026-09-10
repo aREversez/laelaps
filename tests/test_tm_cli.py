@@ -120,3 +120,101 @@ def test_qa_export_writes_full_csv_report(tmp_path):
     # both rows present, not just the flagged one -- export is the full
     # corpus with QA columns, not a filtered "problems only" subset.
     assert content.count('\n') >= 3  # header + 2 data rows (+ trailing newline)
+
+
+# --------------------------------------------------------------------- align
+# `align` is the CLI counterpart to the GUI's 对齐检查 page -- both wrap
+# language_tools.align_report.run()/summarize(). No mocking here (unlike
+# the page's own tests): this drives the real reader + aligner + QA
+# pipeline through a subprocess, same as every other tmtool test in this
+# file, using small hand-built bilingual CSVs to land on deterministic
+# outcomes (a real docx's exact GAP/merge shape depends on the DP
+# aligner's cost model and isn't practical to target on demand -- see
+# tests/test_aligner_gap_moves.py's docstring for that same tradeoff).
+
+def _write_bilingual_csv(path, rows):
+    # No header, plain "src,tgt" rows -- --no-header below tells the
+    # reader not to treat row 0 as a header.
+    path.write_text('\n'.join('%s,%s' % row for row in rows), encoding='utf-8')
+
+
+def test_align_prints_summary_for_a_clean_bilingual_csv(tmp_path):
+    src = tmp_path / 'in.csv'
+    _write_bilingual_csv(src, [('Hello there.', '你好。'), ('Bye now.', '再见。')])
+    result = _run(['align', str(src), '--src', 'en-US', '--tgt', 'zh-CN', '--no-header'])
+    assert result.returncode == 0, result.stderr
+    assert 'Units=2 Gaps=0 Flagged=0' in result.stdout
+    assert '1:1 (一一对应): 2' in result.stdout
+
+
+def test_align_reports_qa_flagged_units(tmp_path):
+    src = tmp_path / 'in.csv'
+    _write_bilingual_csv(src, [
+        ('Hello there.', '你好。'),
+        ('Found %d results.', '找到了结果。'),  # placeholder mismatch
+    ])
+    result = _run(['align', str(src), '--src', 'en-US', '--tgt', 'zh-CN', '--no-header'])
+    assert result.returncode == 0, result.stderr
+    assert 'Units=2 Gaps=0 Flagged=1' in result.stdout
+
+
+def test_align_fail_on_issues_is_off_by_default(tmp_path):
+    # A successful run always exits 0 unless --fail-on-issues is given,
+    # same convention as every other tmtool subcommand -- the summary
+    # line is informational, it doesn't change the exit code on its own.
+    src = tmp_path / 'in.csv'
+    _write_bilingual_csv(src, [('Found %d results.', '找到了结果。')])
+    result = _run(['align', str(src), '--src', 'en-US', '--tgt', 'zh-CN', '--no-header'])
+    assert result.returncode == 0, result.stderr
+
+
+def test_align_fail_on_issues_exits_2_when_flagged(tmp_path):
+    src = tmp_path / 'in.csv'
+    _write_bilingual_csv(src, [('Found %d results.', '找到了结果。')])
+    result = _run(['align', str(src), '--src', 'en-US', '--tgt', 'zh-CN', '--no-header',
+                   '--fail-on-issues'])
+    assert result.returncode == 2, result.stderr
+
+
+def test_align_fail_on_issues_exits_0_when_clean(tmp_path):
+    src = tmp_path / 'in.csv'
+    _write_bilingual_csv(src, [('Hello there.', '你好。')])
+    result = _run(['align', str(src), '--src', 'en-US', '--tgt', 'zh-CN', '--no-header',
+                   '--fail-on-issues'])
+    assert result.returncode == 0, result.stderr
+
+
+def test_align_export_writes_full_csv_with_align_and_qa_columns(tmp_path):
+    src = tmp_path / 'in.csv'
+    out = tmp_path / 'report.csv'
+    _write_bilingual_csv(src, [
+        ('Hello there.', '你好。'),
+        ('Found %d results.', '找到了结果。'),
+    ])
+    result = _run(['align', str(src), '--src', 'en-US', '--tgt', 'zh-CN', '--no-header',
+                   '--export', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    assert out.exists()
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'align_move' in content
+    assert 'PLACEHOLDER_MISMATCH' in content
+    # both rows present, not filtered to problems only -- same convention
+    # as `qa --export`.
+    assert content.count('\n') >= 3
+
+
+def test_align_requires_src_and_tgt(tmp_path):
+    src = tmp_path / 'in.csv'
+    _write_bilingual_csv(src, [('Hello there.', '你好。')])
+    result = _run(['align', str(src)])
+    assert result.returncode != 0
+    assert 'required' in result.stderr.lower()
+
+
+def test_align_unsupported_format_errors_cleanly(tmp_path):
+    bad = tmp_path / 'in.tmx'
+    bad.write_text('<tmx/>')
+    result = _run(['align', str(bad), '--src', 'en-US', '--tgt', 'zh-CN'])
+    assert result.returncode != 0
+    assert 'unsupported bilingual source format' in result.stderr

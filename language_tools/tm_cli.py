@@ -1,25 +1,50 @@
-"""``tmtool`` -- CLI for corpus-level TM maintenance (clean/merge/stats).
+"""``tmtool`` -- CLI for corpus-level TM maintenance (clean/merge/stats/qa)
+and bilingual-source alignment checking (align).
 
 Kept as a separate entry point from ``biconvert`` (see DESIGN.md section
 12 for why ``biconvert`` itself stays a thin wrapper with no pipeline
 logic of its own): this is a different concern -- operating on
-already-corpus (tmx/sdltm) files rather than converting bilingual sources
-into corpora -- and giving it its own command avoids growing
-``biconvert``'s argument surface with flags unrelated to conversion.
+already-corpus (tmx/sdltm) files (plus, for ``align``, on a bilingual
+source that hasn't been converted into one yet -- see that subcommand's
+own note below) rather than converting bilingual sources into corpora --
+and giving it its own command avoids growing ``biconvert``'s argument
+surface with flags unrelated to conversion.
 
 Like ``biconvert``, no pipeline logic lives here: each subcommand is
-argument parsing plus a call into ``language_tools.tm.<module>``, so a
-future GUI tool page can call the same functions directly.
+argument parsing plus a call into ``language_tools.tm.<module>`` (or, for
+``align``, ``language_tools.align_report``), so a future GUI tool page
+can call the same functions directly. ``align`` was the one alignment-
+diagnostics entry point that stayed GUI-only when ``toolbox/tools/
+alignment_check`` shipped -- reasonable at the time (this is a "glance at
+it" tool, most people checking one document's alignment just want to look
+at the table), but it left no way to batch-check a folder of documents
+short of clicking through each one by hand. Its ``--fail-on-issues`` flag
+exists specifically for that: a non-zero exit code is the one thing a
+shell loop can act on that "read the printed summary" can't give it.
+``align``'s argument surface (``--layout``/``--sheet``/``--src-col``/
+``--tgt-col``/``--delimiter``/``--header``) intentionally mirrors
+``biconvert``'s bilingual-source options exactly (reusing
+``language_tools.cli._build_reader_opts`` rather than a second copy of
+the same flag-to-reader_opts translation) -- checking a document's
+alignment needs to locate the same source/target columns and docx layout
+that converting it would, so the flags for "which cells/columns are
+source vs. target" shouldn't need to be relearned between the two
+commands.
 """
 import argparse
+import os
 import sys
 
+from language_tools import align_report
+from language_tools.cli import _build_reader_opts
 from language_tools.tm import clean as clean_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import merge as merge_module
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.tm import stats as stats_module
 from language_tools.writers import csv_writer
+
+_BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 
 
 def _cmd_clean(args):
@@ -80,10 +105,38 @@ def _cmd_qa(args):
     return 0
 
 
+def _cmd_align(args):
+    ext = os.path.splitext(args.input)[1].lower()
+    if ext not in _BILINGUAL_EXTS:
+        print('error: unsupported bilingual source format %r (expected one of %s); '
+              'a .tmx/.sdltm corpus has no alignment to diagnose -- see the `qa` '
+              'subcommand for that instead' % (ext, sorted(_BILINGUAL_EXTS)),
+              file=sys.stderr)
+        return 1
+
+    reader_opts = _build_reader_opts(args, ext)
+    units = align_report.run(
+        args.input, args.src, args.tgt, repair_path=args.repair, reader_opts=reader_opts)
+    s = align_report.summarize(units)
+    print('Units=%d Gaps=%d Flagged=%d' % (s['total'], s['gap_count'], s['qa_flagged']))
+    for move_code in sorted(s['move_counts']):
+        print('  %s (%s): %d' % (
+            move_code, align_report.move_label(move_code), s['move_counts'][move_code]))
+
+    if args.export:
+        csv_writer.write(args.export, units, args.src, args.tgt, include_qa=True, include_align=True)
+        print('Wrote %s' % args.export)
+
+    if args.fail_on_issues and (s['gap_count'] or s['qa_flagged']):
+        return 2
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(
-        prog='tmtool', description='Translation-memory maintenance: clean, merge, and '
-                                    'summarize .tmx/.sdltm corpus files.')
+        prog='tmtool', description='Translation-memory maintenance: clean, merge, '
+                                    'summarize, and check alignment quality for '
+                                    '.tmx/.sdltm corpus files and bilingual sources.')
     sub = p.add_subparsers(dest='command', required=True)
 
     clean_p = sub.add_parser('clean', help='normalize and remove duplicate/empty segments')
@@ -115,6 +168,42 @@ def build_parser():
                        help='write a full CSV report (all units, with confidence/status/issues '
                             'columns) to PATH')
     qa_p.set_defaults(func=_cmd_qa)
+
+    align_p = sub.add_parser(
+        'align', help='check sentence-alignment quality for a bilingual source file '
+                       '(docx/xlsx/csv/tsv), without writing a corpus')
+    align_p.add_argument('input', help='bilingual source file (docx/xlsx/csv/tsv) -- NOT a '
+                                        '.tmx/.sdltm corpus, those are already sentence-level '
+                                        'and have nothing to align')
+    align_p.add_argument('--src', required=True, help='source language code, e.g. en-US')
+    align_p.add_argument('--tgt', required=True, help='target language code, e.g. zh-CN')
+    align_p.add_argument('--layout', choices=['auto', 'numbered', 'table', 'alternating'],
+                          default='auto', help='docx layout; ignored for non-docx input. '
+                                                'Default: auto-detect.')
+    align_p.add_argument('--sheet', help='xlsx sheet name (default: first sheet)')
+    align_p.add_argument('--src-col', help='source column: Excel letter (xlsx) or 0-based '
+                                            'index (docx table/csv)')
+    align_p.add_argument('--tgt-col', help='target column: Excel letter (xlsx) or 0-based '
+                                            'index (docx table/csv)')
+    align_p.add_argument('--delimiter', help='csv/tsv delimiter override (default: auto-sniffed)')
+    align_header = align_p.add_mutually_exclusive_group()
+    align_header.add_argument('--header', dest='header', action='store_true', default=None,
+                               help='treat the first row as a header (xlsx/csv/docx table)')
+    align_header.add_argument('--no-header', dest='header', action='store_false',
+                               help='treat the first row as data, not a header')
+    align_p.add_argument('--repair', metavar='PATH', help='path to a repairs.json rule file')
+    align_p.add_argument('--export', metavar='PATH',
+                          help='write a full CSV report (all units incl. clean ones, with '
+                               'align_move/align_gap/qa columns) to PATH')
+    align_p.add_argument('--fail-on-issues', action='store_true',
+                          help='exit with status 2 if any GAP or QA-flagged unit was found -- '
+                               'off by default (a successful run always exits 0 otherwise, '
+                               'same as every other tmtool subcommand); turn this on when '
+                               'scripting a batch check over many files, so a non-zero exit '
+                               'marks which ones need a look, e.g.: '
+                               'for f in *.docx; do tmtool align "$f" --src en-US --tgt zh-CN '
+                               '--fail-on-issues || echo "check: $f"; done')
+    align_p.set_defaults(func=_cmd_align)
 
     return p
 

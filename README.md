@@ -7,9 +7,9 @@
 - **双语文档 → 翻译记忆库**：docx（三种版式）、xlsx、csv/tsv → sdltm、tmx、csv
 - **语料库互转**：tmx ↔ sdltm，语言自动从内容识别
 - 内置 Gale-Church 式句级对齐算法，处理常见缩写（a.m./e.g./U.S. 等）不误切句
-- **对齐检查**：不写文件，单独预览一个双语文档会被怎样对齐——哪些段落被合并/拆分、哪句完全没找到对应（GAP），转换前先心里有数（桌面 GUI「对齐检查」页）
+- **对齐检查**：不写文件，单独预览一个双语文档会被怎样对齐——哪些段落被合并/拆分、哪句完全没找到对应（GAP），转换前先心里有数（`tmtool align` / 桌面 GUI「对齐检查」页），命令行版本额外支持 `--fail-on-issues` 退出码，方便脚本批量检查一堆文档
 - QA 检查：空值、长度比异常、重复条目（源冲突/译文冲突）、数字不匹配、占位符不匹配（`{name}`/`%s` 等）、URL 丢失或改动、inline 标签不匹配（TMX 带格式标记时）——转换时可选勾选，也可以单独对着一个已有的 tmx/sdltm 跑（`tmtool qa` / 桌面 GUI「QA 检查」页），支持导出 CSV 审阅报告
-- **TM 维护**（`tmtool` 命令行 + 桌面 GUI「语料维护」页）：清理（去重/去空/normalize）、多文件合并（可选冲突策略）、语料统计
+- **TM 维护**（`tmtool` 命令行 + 桌面 GUI「语料维护」页）：清理（去重/去空/normalize）、多文件合并（可选冲突策略）、语料统计、对齐检查
 - 桌面 GUI（PySide6），也可以纯命令行/脚本调用
 - 打包成本地 Windows exe，不需要联网、不上传文件
 
@@ -49,9 +49,9 @@ biconvert input.docx --src en-US --tgt zh-CN --min-confidence 0.6   # 低质量�
 
 `biconvert --help` 看完整参数。
 
-### TM 维护（`tmtool` 命令行 / GUI「语料维护」页）
+### TM 维护（`tmtool` 命令行 / GUI「语料维护」「对齐检查」页）
 
-只处理 tmx/sdltm 语料库文件，不涉及双语源文件转换，所以命令行是独立的 `tmtool`，不是 `biconvert` 的子选项；GUI 里对应侧边栏的「语料维护」，三个标签页（清理/合并/统计）分别对应下面三个子命令，内部调的是同一套 `language_tools.tm.*` 函数。
+`clean`/`merge`/`stats`/`qa` 四个子命令只处理 tmx/sdltm 语料库文件，不涉及双语源文件转换，所以命令行是独立的 `tmtool`，不是 `biconvert` 的子选项；GUI 里对应侧边栏的「语料维护」，三个标签页（清理/合并/统计）分别对应下面前三个子命令，内部调的是同一套 `language_tools.tm.*` 函数。`align` 子命令是个例外——它处理的是双语源文件（docx/xlsx/csv/tsv），不是语料库，参数和 `biconvert` 的双语源文件那部分（`--layout`/`--sheet`/`--src-col`/`--tgt-col`/`--delimiter`/`--header`）是同一套，跟 GUI「对齐检查」页调的是同一个 `language_tools.align_report`。
 
 ```bash
 tmtool clean a.tmx                                    # 原地清理：normalize + 去重 + 去空段
@@ -62,9 +62,19 @@ tmtool merge a.tmx b.tmx -o merged.tmx --strategy prefer-newer  # 同源不同�
 tmtool stats a.tmx                                     # 打印条目数/去重率/空段/语言对分布
 tmtool qa a.tmx                                        # 跑全部 QA 检查，打印问题条数和分类统计
 tmtool qa a.tmx --export report.csv                     # 同上，并导出完整 CSV 报告（含未标记问题的条目）
+tmtool align input.docx --src en-US --tgt zh-CN         # 对齐检查一个双语文档，打印 GAP/QA 统计，不写任何文件
+tmtool align input.docx --src en-US --tgt zh-CN --export report.csv  # 同上，并导出完整 CSV 报告
 ```
 
 合并冲突策略（`--strategy`）：`keep-all`（默认，全部保留，交给后续 QA 检查去发现冲突）、`prefer-first`（同源冲突时保留先出现的译文）、`prefer-last`（保留后出现的）、`prefer-newer`（按 `modified_at` 时间戳取较新的，没有时间戳的条目视为最旧）。
+
+批量检查一堆文档的对齐质量：`tmtool align` 加上 `--fail-on-issues` 时，只要发现 GAP 或被 QA 标记的条目就以退出码 2 结束（不加这个参数则和其它子命令一样，跑成功了就是退出码 0，不管内容有没有问题）——配合 shell 循环，用退出码筛出需要人工看一眼的文档，不用每个文件都读一遍打印内容：
+
+```bash
+for f in *.docx; do
+  tmtool align "$f" --src en-US --tgt zh-CN --fail-on-issues || echo "需要检查: $f"
+done
+```
 
 `tmtool <子命令> --help` 看完整参数。
 
