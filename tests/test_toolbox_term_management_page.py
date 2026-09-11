@@ -168,10 +168,13 @@ def test_remove_with_no_selection_shows_validation_error(qtbot):
 
 # ----------------------------------------------------------- context menu
 
-def _fake_menu_module(monkeypatch, choose_index):
+def _fake_menu_module(monkeypatch, choose_text):
     """Swaps QMenu (as used inside term_management.page) for a fake that
-    records added actions and, on exec(), returns whichever one is at
-    choose_index -- QMenu.exec() is otherwise modal and would block.
+    records added actions/separators and, on exec(), returns whichever
+    action's text matches choose_text (or None, e.g. simulating a
+    dismissed menu, if nothing matches) -- QMenu.exec() is otherwise
+    modal and would block. Matching by text rather than position keeps
+    these tests unaffected by menu-item reordering.
     """
     class _FakeAction:
         def __init__(self, text):
@@ -193,8 +196,14 @@ def _fake_menu_module(monkeypatch, choose_index):
             self.actions.append(action)
             return action
 
+        def addSeparator(self):
+            pass
+
         def exec(self, pos):
-            return self.actions[choose_index] if self.actions else None
+            for action in self.actions:
+                if action.text == choose_text:
+                    return action
+            return None
 
     import toolbox.tools.term_management.page as page_module
     monkeypatch.setattr(page_module, 'QMenu', _FakeMenu)
@@ -208,12 +217,58 @@ def _row_center(page, row):
     return page.entry_table.visualRect(page.entry_table.model().index(row, 0)).center()
 
 
+def test_context_menu_add_action_dispatches_to_add(qtbot, monkeypatch):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+    _fake_menu_module(monkeypatch, choose_text='添加…')
+
+    calls = []
+    monkeypatch.setattr(page, '_add_entry', lambda: calls.append('add'))
+    page._show_entry_context_menu(_row_center(page, 0))
+    assert calls == ['add']
+
+
+def test_context_menu_on_empty_area_offers_only_add(qtbot, monkeypatch):
+    from PySide6.QtCore import QPoint
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+
+    seen_texts = []
+
+    class _RecordingMenu:
+        def __init__(self, parent=None):
+            pass
+
+        def addAction(self, text):
+            seen_texts.append(text)
+
+            class _Action:
+                def setEnabled(_self, enabled):
+                    pass
+            return _Action()
+
+        def addSeparator(self):
+            seen_texts.append('---')
+
+        def exec(self, pos):
+            return None
+
+    import toolbox.tools.term_management.page as page_module
+    monkeypatch.setattr(page_module, 'QMenu', _RecordingMenu)
+    page._show_entry_context_menu(QPoint(5, 9999))  # well below any row
+    assert seen_texts == ['添加…']  # no separator, no 编辑/删除 -- nothing to act on
+
+
 def test_context_menu_edit_action_dispatches_to_edit(qtbot, monkeypatch):
     page = TermManagementPage()
     qtbot.addWidget(page)
     page._entries = [_entry('big data', '大数据')]
     page._refresh_entry_table()
-    _fake_menu_module(monkeypatch, choose_index=0)  # "编辑…" is added first
+    _fake_menu_module(monkeypatch, choose_text='编辑…')
 
     calls = []
     monkeypatch.setattr(page, '_edit_selected_entry', lambda: calls.append('edit'))
@@ -226,7 +281,7 @@ def test_context_menu_delete_action_dispatches_to_delete(qtbot, monkeypatch):
     qtbot.addWidget(page)
     page._entries = [_entry('big data', '大数据')]
     page._refresh_entry_table()
-    _fake_menu_module(monkeypatch, choose_index=1)  # "删除" is added second
+    _fake_menu_module(monkeypatch, choose_text='删除')
 
     calls = []
     monkeypatch.setattr(page, '_remove_selected_entries', lambda: calls.append('delete'))
@@ -239,19 +294,20 @@ def test_right_clicking_an_unselected_row_selects_it(qtbot, monkeypatch):
     qtbot.addWidget(page)
     page._entries = [_entry('a', 'A'), _entry('b', 'B')]
     page._refresh_entry_table()
-    _fake_menu_module(monkeypatch, choose_index=1)  # "删除", so nothing else fires
+    _fake_menu_module(monkeypatch, choose_text='删除')
 
     monkeypatch.setattr(page, '_remove_selected_entries', lambda: None)
     page._show_entry_context_menu(_row_center(page, 1))
     assert page._selected_entry_rows() == [1]
 
 
-def test_right_click_outside_any_row_does_nothing(qtbot):
+def test_right_click_outside_any_row_does_not_select_anything(qtbot, monkeypatch):
     from PySide6.QtCore import QPoint
     page = TermManagementPage()
     qtbot.addWidget(page)
     page._entries = [_entry('a', 'A')]
     page._refresh_entry_table()
+    _fake_menu_module(monkeypatch, choose_text=None)  # dismissed
     page._show_entry_context_menu(QPoint(5, 9999))  # well below any row
     assert page._selected_entry_rows() == []
 
@@ -284,6 +340,9 @@ def test_context_menu_edit_disabled_when_multiple_rows_selected(qtbot, monkeypat
                 def setEnabled(_self, enabled):
                     action_holder['enabled'] = enabled
             return _Action()
+
+        def addSeparator(self):
+            pass
 
         def exec(self, pos):
             return None  # dismissed, doesn't matter for this test
@@ -610,12 +669,83 @@ def test_open_glossary_resets_dirty(qtbot, monkeypatch, tmp_path):
     path = tmp_path / 'glossary.csv'
     glossary_module.write(str(path), [_entry('cloud', '云')])
     monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+    # Dirty before opening now triggers the same save/discard/cancel
+    # prompt _close_glossary() uses (see the dedicated tests below for
+    # that prompt itself) -- Discard here to isolate this test's actual
+    # point, which is just that a clean open resets _dirty.
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Discard)
 
     page = TermManagementPage()
     qtbot.addWidget(page)
     page._dirty = True  # pretend there was unsaved work before opening a different file
     page._open_glossary()
     assert page.has_unsaved_changes() is False
+    page.cleanup()
+
+
+def test_open_glossary_with_unsaved_changes_prompts_and_cancel_keeps_state(qtbot, monkeypatch, tmp_path):
+    other_path = tmp_path / 'other.csv'
+    glossary_module.write(str(other_path), [_entry('api', '接口')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(other_path), ''))
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Cancel)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+    page._refresh_entry_table()
+
+    page._open_glossary()
+    # Cancelled at the prompt -- the other file must never have been loaded.
+    assert page.entry_table.rowCount() == 1
+    assert page.entry_table.item(0, 0).text() == 'cloud'
+    assert page._glossary_path is None
+    assert page.has_unsaved_changes() is True
+
+
+def test_open_glossary_with_unsaved_changes_discard_loads_the_new_file(qtbot, monkeypatch, tmp_path):
+    other_path = tmp_path / 'other.csv'
+    glossary_module.write(str(other_path), [_entry('api', '接口')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(other_path), ''))
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Discard)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+    page._refresh_entry_table()
+
+    page._open_glossary()
+    assert page.entry_table.rowCount() == 1
+    assert page.entry_table.item(0, 0).text() == 'api'  # the unsaved 'cloud' entry is gone
+    assert page._glossary_path == str(other_path)
+    assert page.has_unsaved_changes() is False
+    page.cleanup()
+
+
+def test_open_glossary_with_unsaved_changes_save_writes_old_file_then_loads_new_one(
+        qtbot, monkeypatch, tmp_path):
+    old_path = tmp_path / 'old.csv'
+    other_path = tmp_path / 'other.csv'
+    glossary_module.write(str(other_path), [_entry('api', '接口')])
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Save)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._glossary_path = str(old_path)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(other_path), ''))
+    page._open_glossary()
+
+    # The old (unsaved) glossary got written to disk before switching...
+    old_back = glossary_module.read(str(old_path), 'en-US', 'zh-CN')
+    assert len(old_back) == 1
+    assert old_back[0].src_term == 'cloud'
+    # ...and the new file is now the one loaded.
+    assert page._glossary_path == str(other_path)
+    assert page.entry_table.item(0, 0).text() == 'api'
     page.cleanup()
 
 

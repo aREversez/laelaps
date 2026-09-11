@@ -5,22 +5,19 @@ maintain a bilingual glossary (csv/xlsx) and check an existing corpus
 Two tabs, same ``QTabWidget`` shape as ``tm_maintenance/page.py``:
 
 - 术语库: CRUD over a glossary file. Additions/edits go through
-  ``_TermEntryDialog`` (a modal add/edit form, reachable via the 添加…
-  button, the entry table's right-click menu, or double-clicking a row),
-  NOT inline QTableWidgetItem editing -- same "data changes, rebuild the
-  table" pattern as ``tm_maintenance``'s ``_set_stats_table_rows`` (see
-  that method's docstring), chosen here for an extra reason specific to a
-  form: a modal dialog validates (non-empty src/tgt term) before anything
-  is written back, where an inline-edited cell has no equivalent
-  checkpoint and would need its own ``itemChanged`` validation/rollback
-  plumbing for the same guarantee. No separate "编辑所选"/"删除所选"
-  toolbar buttons -- the right-click menu and double-click cover single-
-  row edit, and the right-click menu's 删除 already handles a multi-row
-  selection, so dedicated buttons for the same two actions were pure
-  duplication once those were added. Glossary language pair is page-level
-  (two compact combos), not per-row -- see
-  ``language_tools/terms/glossary.py``'s docstring for why a glossary
-  file doesn't store it per row.
+  ``_TermEntryDialog`` (a modal add/edit form, reachable via the entry
+  table's right-click menu -- 添加/编辑/删除 all live there, no separate
+  toolbar buttons for any of the three -- or by double-clicking a row to
+  edit it), NOT inline QTableWidgetItem editing -- same "data changes,
+  rebuild the table" pattern as ``tm_maintenance``'s
+  ``_set_stats_table_rows`` (see that method's docstring), chosen here
+  for an extra reason specific to a form: a modal dialog validates
+  (non-empty src/tgt term) before anything is written back, where an
+  inline-edited cell has no equivalent checkpoint and would need its own
+  ``itemChanged`` validation/rollback plumbing for the same guarantee.
+  Glossary language pair is page-level (two compact combos), not per-row
+  -- see ``language_tools/terms/glossary.py``'s docstring for why a
+  glossary file doesn't store it per row.
 - 一致性检查: pick a TM (tmx/sdltm) + a glossary file, run
   ``language_tools.terms.check.run()``, browse/export results. Deliberately
   mirrors ``qa_check/page.py`` almost line for line (file picker ->
@@ -279,13 +276,6 @@ class TermManagementPage(QWidget):
 
         layout.addWidget(section('术语库文件', file_widget))
 
-        entry_btn_row = QHBoxLayout()
-        add_btn = QPushButton('添加…')
-        add_btn.clicked.connect(self._add_entry)
-        entry_btn_row.addWidget(add_btn)
-        entry_btn_row.addStretch(1)
-        layout.addLayout(entry_btn_row)
-
         self.entry_table = QTableWidget(0, 5)
         self.entry_table.setHorizontalHeaderLabels(['原文术语', '译文术语', '状态', '领域', '备注'])
         self.entry_table.verticalHeader().setVisible(False)
@@ -304,7 +294,7 @@ class TermManagementPage(QWidget):
         self.entry_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.entry_table.customContextMenuRequested.connect(self._show_entry_context_menu)
         self.entry_table.cellDoubleClicked.connect(self._on_entry_double_clicked)
-        layout.addWidget(section('术语条目', self.entry_table), 1)
+        layout.addWidget(section('术语条目（右键新增/编辑/删除）', self.entry_table), 1)
         return tab
 
     def _refresh_entry_table(self):
@@ -341,21 +331,31 @@ class TermManagementPage(QWidget):
         self._edit_selected_entry()
 
     def _show_entry_context_menu(self, pos):
+        # No separate "添加…" toolbar button -- 添加/编辑/删除 all live in
+        # this one right-click menu instead. Right-clicking empty space
+        # below the last row (row == -1) still shows 添加…, just without
+        # 编辑/删除, which need an actual row to act on.
         row = self.entry_table.rowAt(pos.y())
-        if row < 0:
-            return
-        if row not in self._selected_entry_rows():
+        if row >= 0 and row not in self._selected_entry_rows():
             self.entry_table.selectRow(row)
 
         menu = QMenu(self)
-        edit_action = menu.addAction('编辑…')
-        edit_action.setEnabled(len(self._selected_entry_rows()) == 1)
-        delete_action = menu.addAction('删除')
+        add_action = menu.addAction('添加…')
+        edit_action = None
+        delete_action = None
+        if row >= 0:
+            menu.addSeparator()
+            edit_action = menu.addAction('编辑…')
+            edit_action.setEnabled(len(self._selected_entry_rows()) == 1)
+            delete_action = menu.addAction('删除')
         chosen = menu.exec(self.entry_table.viewport().mapToGlobal(pos))
-        if chosen == edit_action:
+        if chosen == add_action:
+            self._add_entry()
+        elif chosen == edit_action:
             self._edit_selected_entry()
         elif chosen == delete_action:
             self._remove_selected_entries()
+
 
     def _edit_selected_entry(self):
         rows = self._selected_entry_rows()
@@ -395,6 +395,23 @@ class TermManagementPage(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, '打开术语库', '', _GLOSSARY_OPEN_FILTER)
         if not path:
             return
+
+        # Opening another file (or re-opening the current file to reload
+        # it) replaces the in-memory glossary. Give the person the same
+        # save/discard/cancel choice _close_glossary() uses before doing
+        # anything that could discard unsaved edits -- this used to be
+        # missing here specifically, so opening a second glossary while
+        # the first had unsaved changes silently discarded them with no
+        # warning at all (the same protection existed for closing the
+        # app and for the 关闭 button, just not for 打开).
+        if self._dirty:
+            choice = self._prompt_save_before_discard(
+                '当前术语库有未保存的更改，打开文件前要保存吗？')
+            if choice == QMessageBox.Cancel:
+                return
+            if choice == QMessageBox.Save and not self.save_unsaved_changes():
+                return
+
         if office_lock_marker_exists(path):
             proceed = QMessageBox.warning(
                 self, '文件可能正被占用',

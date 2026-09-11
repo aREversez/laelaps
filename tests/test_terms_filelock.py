@@ -167,7 +167,12 @@ def test_write_around_does_not_self_block_a_real_write(tmp_path):
     lock.release()
 
 
-def test_write_around_propagates_write_fn_exception(tmp_path):
+def test_write_around_propagates_write_fn_exception_but_still_restores_the_lock(tmp_path):
+    # Matches write_around()'s "always try to restore protection, even
+    # after a failed write" design (see that method's docstring): the
+    # write failing is a reason to still attempt re-locking, not a
+    # reason to leave the file unprotected on top of whatever else went
+    # wrong with the write itself.
     path = str(tmp_path / 'glossary.csv')
     _write(path)
     lock = FileLock(path)
@@ -178,4 +183,69 @@ def test_write_around_propagates_write_fn_exception(tmp_path):
 
     with pytest.raises(ValueError):
         lock.write_around(boom)
-    assert lock.is_held is False  # released before the write, and never reacquired since it raised
+    assert lock.is_held is True
+    lock.release()
+
+
+# ------------------------------------------------- shared vs exclusive locking
+
+def test_held_lock_still_permits_a_plain_unlocked_read(tmp_path):
+    # The actual bug this two-lock design exists to fix: an earlier
+    # version locked the real file exclusively, which (on Windows, via
+    # mandatory locking) blocked even plain reads from other programs --
+    # a shared lock on the real file must not do that.
+    path = str(tmp_path / 'glossary.csv')
+    _write(path, b'src_term,tgt_term\ncloud,\xe4\xba\x91\n')
+    lock = FileLock(path)
+    lock.acquire()
+    try:
+        with open(path, 'rb') as f:
+            content = f.read()
+        assert b'cloud' in content
+    finally:
+        lock.release()
+
+
+def test_two_locks_on_different_paths_can_both_be_held(tmp_path):
+    path_a = str(tmp_path / 'a.csv')
+    path_b = str(tmp_path / 'b.csv')
+    _write(path_a)
+    _write(path_b)
+    a = FileLock(path_a)
+    b = FileLock(path_b)
+    a.acquire()
+    try:
+        b.acquire()  # must not raise -- unrelated files
+        b.release()
+    finally:
+        a.release()
+
+
+def test_acquire_creates_and_release_removes_the_sidecar_file(tmp_path):
+    path = str(tmp_path / 'glossary.csv')
+    _write(path)
+    lock = FileLock(path)
+    lock.acquire()
+    assert os.path.exists(path + '.lock')
+    lock.release()
+    assert not os.path.exists(path + '.lock')
+
+
+def test_double_acquire_on_the_same_lock_object_raises(tmp_path):
+    path = str(tmp_path / 'glossary.csv')
+    _write(path)
+    lock = FileLock(path)
+    lock.acquire()
+    try:
+        with pytest.raises(OSError):
+            lock.acquire()
+    finally:
+        lock.release()
+
+
+def test_write_around_raises_if_the_lock_is_not_currently_held(tmp_path):
+    path = str(tmp_path / 'glossary.csv')
+    _write(path)
+    lock = FileLock(path)
+    with pytest.raises(OSError, match='not held'):
+        lock.write_around(lambda: None)
