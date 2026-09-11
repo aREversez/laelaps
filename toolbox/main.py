@@ -25,6 +25,12 @@ def _load_stylesheet():
 
 def main():
     app = QApplication(sys.argv)
+    # QSettings() (used by MainWindow to remember window geometry across
+    # launches) needs these set to know where to store its data -- without
+    # them it falls back to a generic/unset scope that isn't guaranteed
+    # stable across runs.
+    app.setOrganizationName('language-tools')
+    app.setApplicationName('toolbox')
     app.setStyleSheet(_load_stylesheet())
     app.setWindowIcon(QIcon(os.path.join(RESOURCES_DIR, 'logo.svg')))
     tooltips.install(app)

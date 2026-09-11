@@ -25,12 +25,17 @@ pair by convention here).
 Encoding fallback for csv mirrors ``readers/csv_bilingual.py`` exactly
 (utf-8-sig -> utf-8 -> gb18030) -- same real-world "Excel export from
 Chinese Windows isn't UTF-8" problem, same fix, not reinvented.
+
+``import openpyxl`` is deferred to inside the two functions that actually
+need it, same reasoning and same fix as ``readers/xlsx_bilingual.py``'s
+docstring: this module (like every ``toolbox/tools/*/page.py``) gets
+imported at app startup regardless of whether the person ever opens an
+xlsx glossary in the session, so an eager import would make every launch
+pay openpyxl's load cost, not just the ones that use it.
 """
 import csv
 import io
 import os
-
-import openpyxl
 
 from language_tools.terms.model import TermEntry
 
@@ -119,6 +124,7 @@ def read(path, src_lang, tgt_lang):
         text, _enc = _read_text(path)
         rows = [row for row in csv.reader(io.StringIO(text)) if any(c.strip() for c in row)]
     elif ext in ('.xlsx', '.xlsm'):
+        import openpyxl
         wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
         try:
             ws = wb.worksheets[0]
@@ -142,6 +148,7 @@ def write(path, entries):
         with open(path, 'w', encoding='utf-8-sig', newline='') as f:
             csv.writer(f).writerows(rows)
     elif ext in ('.xlsx', '.xlsm'):
+        import openpyxl
         wb = openpyxl.Workbook()
         ws = wb.active
         for row in rows:

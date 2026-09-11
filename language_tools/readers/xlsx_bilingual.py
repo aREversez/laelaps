@@ -6,17 +6,27 @@ routinely have merged cells, inline rich text, and date-typed cells that a
 minimal parser would get wrong, and openpyxl is pure Python with no
 PyInstaller packaging cost.
 
+``import openpyxl`` is deferred to inside ``read()`` rather than at module
+level: openpyxl pulls in its chart/pivot/drawing submodules on import,
+which is measurably slow (hundreds of ms, worse under antivirus real-time
+scanning on Windows than in a quick Linux check) -- and this module gets
+imported at app startup regardless of which tool page a person actually
+opens, since ``toolbox.registry.discover()`` imports every ``toolbox/
+tools/*/page.py`` up front to build the sidebar (see that module's
+docstring). Paying that cost only when an xlsx file is actually read,
+rather than on every launch whether or not xlsx ever comes up in the
+session, is the difference between a slow app and a slow xlsx read.
+
 Column selection and header detection mirror docx_table.py via
 _rowreader.py. Column overrides use Excel-style letters ('A', 'B', ...).
 """
-import openpyxl
-
 from language_tools.readers._rowreader import (
     col_letter_to_index, looks_like_header, pick_src_tgt_columns, rows_to_pairs,
 )
 
 
 def read(path, sheet=None, src_col=None, tgt_col=None, header=None, **opts):
+    import openpyxl
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     try:
         ws = wb[sheet] if sheet else wb.worksheets[0]

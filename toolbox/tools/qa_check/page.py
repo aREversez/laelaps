@@ -139,6 +139,20 @@ class QaCheckPage(QWidget):
         self.summary_label.setStyleSheet('color: #4B5262;')
         outer.addWidget(self.summary_label)
 
+        # --- QA 结果: filter row + table together under one section ---
+        # 筛选 used to be its own section above this one; folded in here
+        # instead (filter row first, then the table it filters), same
+        # move alignment_check made for its own 对齐结果 section (see
+        # that page's comment at the equivalent spot) -- a standalone
+        # "筛选" box for controls that only ever act on the table right
+        # below it reads as "configure the filter, then see results",
+        # when it's really the other way around: there's nothing to
+        # filter until a check has actually run.
+        results_content = QWidget()
+        results_layout = QVBoxLayout(results_content)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        results_layout.setSpacing(10)
+
         filter_row = QWidget()
         filter_layout = QHBoxLayout(filter_row)
         filter_layout.setContentsMargins(0, 0, 0, 0)
@@ -158,7 +172,7 @@ class QaCheckPage(QWidget):
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.type_filter_combo)
         filter_layout.addStretch(1)
-        outer.addWidget(section('筛选', filter_row))
+        results_layout.addWidget(filter_row)
 
         self.results_table = QTableWidget(0, 5)
         self.results_table.setHorizontalHeaderLabels(['#', '原文', '译文', '问题类型', '置信度'])
@@ -178,7 +192,9 @@ class QaCheckPage(QWidget):
         self.results_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
-        outer.addWidget(section('QA 结果', self.results_table), 1)
+        results_layout.addWidget(self.results_table, 1)
+
+        outer.addWidget(section('QA 结果', results_content), 1)
 
         self.log = QTextEdit()
         self.log.setObjectName('logConsole')

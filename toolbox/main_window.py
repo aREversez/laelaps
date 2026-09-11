@@ -1,25 +1,55 @@
 """Main window: a branded sidebar (logo + tool list) + a stacked widget
 showing the selected tool's page. Never needs to change when a new tool
 is added -- it just iterates ``registry.discover()``.
+
+Unsaved-changes-on-close and window-geometry persistence are both handled
+here, in ``closeEvent()``, rather than in each tool page, since only this
+window's own close is the event that matters for either -- switching
+sidebar tools doesn't lose anything (``QStackedWidget`` keeps every page
+alive, just hidden) or need the window's size remembered again.
+
+Any tool page can opt into the unsaved-changes prompt by implementing
+``has_unsaved_changes()`` (-> bool), ``unsaved_changes_label()`` (-> str,
+shown in the prompt), and ``save_unsaved_changes()`` (-> bool, True if
+it's now safe to close). This is a soft convention checked with
+``getattr(page, name, None)``, not an ABC/Protocol every page must
+implement -- most tool pages have nothing to lose on close (they only
+ever write a file when the person explicitly clicks convert/export, never
+hold in-memory state the person would expect to survive), so forcing an
+interface on all of them for one page's (``term_management``'s) actual
+need would be the wrong amount of coupling. A page can also implement
+``cleanup()`` (no return value) for any last-moment teardown that should
+happen on a real close regardless of the save outcome (``term_management``
+uses this to release its glossary file lock -- see that page's module
+docstring).
 """
 import os
 
-from PySide6.QtCore import QSize, Qt
+from PySide6.QtCore import QSettings, QSize, Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QMessageBox, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from toolbox import registry
 from toolbox.paths import RESOURCES_DIR
+
+# Bigger than Qt's/this window's old fixed 960x660 default: the first
+# thing a person sees on first launch should show a full results table
+# (e.g. term_management's 一致性检查 tab) more than a couple of rows tall,
+# not require an immediate manual resize before the app is usable.
+# Only used the very first time the app runs on a given machine --
+# _restore_geometry() below remembers whatever the person resizes to
+# after that, same as any desktop app.
+_DEFAULT_SIZE = QSize(1280, 860)
+_GEOMETRY_KEY = 'mainWindow/geometry'
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('语言工具箱')
-        self.resize(960, 660)
 
         sidebar_panel = self._build_sidebar_panel()
         self.stack = QStackedWidget()
@@ -46,6 +76,51 @@ class MainWindow(QMainWindow):
         row.addWidget(sidebar_panel)
         row.addWidget(self.stack, 1)
         self.setCentralWidget(central)
+
+        self._restore_geometry()
+
+    def _restore_geometry(self):
+        geometry = QSettings().value(_GEOMETRY_KEY)
+        if geometry is not None and self.restoreGeometry(geometry):
+            return
+        self.resize(_DEFAULT_SIZE)
+
+    def _pages(self):
+        return [self.stack.widget(i) for i in range(self.stack.count())]
+
+    def closeEvent(self, event):
+        dirty_pages = [p for p in self._pages()
+                        if getattr(p, 'has_unsaved_changes', lambda: False)()]
+        if dirty_pages:
+            choice = self._prompt_unsaved_changes(dirty_pages)
+            if choice == QMessageBox.Cancel:
+                event.ignore()
+                return
+            if choice == QMessageBox.Save:
+                for page in dirty_pages:
+                    if not page.save_unsaved_changes():
+                        # Save failed or the person backed out of a
+                        # save-location prompt mid-close -- stay open
+                        # rather than lose their work silently.
+                        event.ignore()
+                        return
+
+        QSettings().setValue(_GEOMETRY_KEY, self.saveGeometry())
+        for page in self._pages():
+            cleanup = getattr(page, 'cleanup', None)
+            if cleanup:
+                cleanup()
+        event.accept()
+
+    def _prompt_unsaved_changes(self, dirty_pages):
+        names = '、'.join(
+            getattr(p, 'unsaved_changes_label', lambda: '未命名')() for p in dirty_pages)
+        box = QMessageBox(self)
+        box.setWindowTitle('有未保存的更改')
+        box.setText('%s 有未保存的更改，要保存吗？' % names)
+        box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Save)
+        return box.exec()
 
     def _build_sidebar_panel(self):
         panel = QWidget()

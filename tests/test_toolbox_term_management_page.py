@@ -1,7 +1,9 @@
-from PySide6.QtWidgets import QDialog, QFileDialog
+import pytest
+from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from language_tools.model import TranslationUnit
 from language_tools.terms import glossary as glossary_module
+from language_tools.terms.filelock import SidecarLock
 from language_tools.terms.model import TermEntry
 from language_tools.writers import tmx_writer
 from toolbox.tools.term_management.page import TermManagementPage, _TermEntryDialog
@@ -294,3 +296,300 @@ def test_check_export_writes_csv_with_term_issues_column(qtbot, monkeypatch, tmp
     assert 'term_issues' in content
     assert 'big data->大资料' in content
     assert '已导出到' in page.log.toPlainText()
+
+
+# ------------------------------------------------------------ dirty tracking
+
+def test_page_starts_clean(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.has_unsaved_changes() is False
+
+
+def test_add_entry_marks_dirty(qtbot, monkeypatch):
+    monkeypatch.setattr(_TermEntryDialog, 'exec', lambda self: QDialog.Rejected)
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+
+    def fake_exec(self):
+        self.src_term_edit.setText('cloud')
+        self.tgt_term_edit.setText('云')
+        return QDialog.Accepted
+    monkeypatch.setattr(_TermEntryDialog, 'exec', fake_exec)
+    page._add_entry()
+    assert page.has_unsaved_changes() is True
+
+
+def test_edit_entry_marks_dirty(qtbot, monkeypatch):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+    page.entry_table.selectRow(0)
+
+    monkeypatch.setattr(_TermEntryDialog, 'exec',
+                         lambda self: (self.tgt_term_edit.setText('改过了'), QDialog.Accepted)[1])
+    page._edit_selected_entry()
+    assert page.has_unsaved_changes() is True
+
+
+def test_remove_entry_marks_dirty(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('a', 'A')]
+    page._refresh_entry_table()
+    page.entry_table.selectRow(0)
+    page.remove_entry_btn.click()
+    assert page.has_unsaved_changes() is True
+
+
+def test_open_glossary_resets_dirty(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._dirty = True  # pretend there was unsaved work before opening a different file
+    page._open_glossary()
+    assert page.has_unsaved_changes() is False
+    page.cleanup()
+
+
+def test_save_resets_dirty(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary.csv'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+    page._save_glossary_as()
+    assert page.has_unsaved_changes() is False
+    page.cleanup()
+
+
+def test_unsaved_changes_label(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.unsaved_changes_label() == '术语管理'
+
+
+# -------------------------------------------------- save_unsaved_changes()
+
+def test_save_unsaved_changes_is_noop_when_clean(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.save_unsaved_changes() is True
+
+
+def test_save_unsaved_changes_writes_to_existing_path(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    page._entries.append(_entry('cloud', '云'))
+    page._dirty = True
+
+    assert page.save_unsaved_changes() is True
+    assert page.has_unsaved_changes() is False
+    back = glossary_module.read(str(path), 'en-US', 'zh-CN')
+    assert len(back) == 1
+    page.cleanup()
+
+
+def test_save_unsaved_changes_prompts_for_path_when_none_yet(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary.csv'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+
+    assert page.save_unsaved_changes() is True
+    assert out.exists()
+    page.cleanup()
+
+
+def test_save_unsaved_changes_returns_false_when_save_dialog_cancelled(qtbot, monkeypatch):
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: ('', ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+
+    assert page.save_unsaved_changes() is False
+    assert page.has_unsaved_changes() is True  # still dirty, nothing was lost
+
+
+# --------------------------------------------------------------- file locking
+
+def test_open_glossary_shows_warning_when_office_marker_present(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    (tmp_path / ('~$%s' % path.name)).write_bytes(b'')
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *a, **kw: QMessageBox.Cancel)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    # Cancelled at the warning -- must not actually load the file.
+    assert page.entry_table.rowCount() == 0
+    assert page._glossary_path is None
+
+
+def test_open_glossary_proceeds_past_office_marker_warning_if_confirmed(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    (tmp_path / ('~$%s' % path.name)).write_bytes(b'')
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *a, **kw: QMessageBox.Yes)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    assert page.entry_table.rowCount() == 1
+    page.cleanup()
+
+
+def test_open_glossary_fails_when_already_locked_by_another_instance(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    other = SidecarLock(str(path))
+    other.acquire()
+    try:
+        monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+        page = TermManagementPage()
+        qtbot.addWidget(page)
+        page._open_glossary()
+        assert page.entry_table.rowCount() == 0
+        assert '另一个实例' in page.log.toPlainText()
+    finally:
+        other.release()
+
+
+def test_open_glossary_acquires_lock_and_cleanup_releases_it(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    assert page._file_lock is not None
+
+    # While our lock is held, a second attempt from elsewhere must fail --
+    # this is the point of holding it in the first place.
+    other = SidecarLock(str(path))
+    with pytest.raises(OSError):
+        other.acquire()
+
+    page.cleanup()
+    assert page._file_lock is None
+    # Released now, so someone else (or a re-open) can acquire it.
+    other.acquire()
+    other.release()
+
+
+def test_open_a_different_glossary_releases_the_previous_lock(qtbot, monkeypatch, tmp_path):
+    path_a = tmp_path / 'a.csv'
+    path_b = tmp_path / 'b.csv'
+    glossary_module.write(str(path_a), [_entry('cloud', '云')])
+    glossary_module.write(str(path_b), [_entry('api', '接口')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path_a), ''))
+    page._open_glossary()
+
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path_b), ''))
+    page._open_glossary()
+
+    # path_a's lock should be free again -- it was released when path_b opened.
+    a_lock = SidecarLock(str(path_a))
+    a_lock.acquire()
+    a_lock.release()
+    page.cleanup()
+
+
+def test_save_as_to_new_path_transfers_the_lock(qtbot, monkeypatch, tmp_path):
+    path_a = tmp_path / 'a.csv'
+    path_b = tmp_path / 'b.csv'
+    glossary_module.write(str(path_a), [_entry('cloud', '云')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path_a), ''))
+    page._open_glossary()
+
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(path_b), ''))
+    page._save_glossary_as()
+
+    # a's lock released, b's lock now held.
+    a_lock = SidecarLock(str(path_a))
+    a_lock.acquire()
+    a_lock.release()
+    with pytest.raises(OSError):
+        SidecarLock(str(path_b)).acquire()
+    page.cleanup()
+
+
+# ---------------------------------------------------- split save-format filter
+
+def test_save_as_defaults_to_csv_when_filter_unselected(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary'  # no extension typed
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._save_glossary_as()
+
+    assert (tmp_path / 'glossary.csv').exists()
+    page.cleanup()
+
+
+def test_save_as_uses_xlsx_extension_when_that_filter_is_selected(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary'  # no extension typed
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName',
+                         lambda *a, **kw: (str(out), 'Excel (*.xlsx)'))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._save_glossary_as()
+
+    assert (tmp_path / 'glossary.xlsx').exists()
+    page.cleanup()
+
+
+def test_reopening_the_same_already_open_file_does_not_self_block(qtbot, monkeypatch, tmp_path):
+    # Regression test: acquiring a second SidecarLock on a path this page
+    # already holds one for would incorrectly fail (POSIX flock() denies
+    # a second same-process lock via a different fd), so re-opening the
+    # currently-open file to discard local edits and reload from disk
+    # must not try to acquire a new lock at all.
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    assert page.entry_table.rowCount() == 1
+
+    page._entries.append(_entry('extra', '额外'))
+    page._refresh_entry_table()
+    assert page.entry_table.rowCount() == 2
+
+    page._open_glossary()  # reload from disk, discarding the in-memory addition
+    assert page.entry_table.rowCount() == 1  # back to what's on disk
+    assert page.has_unsaved_changes() is False
+    page.cleanup()
