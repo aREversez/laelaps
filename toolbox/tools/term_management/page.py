@@ -5,16 +5,22 @@ maintain a bilingual glossary (csv/xlsx) and check an existing corpus
 Two tabs, same ``QTabWidget`` shape as ``tm_maintenance/page.py``:
 
 - 术语库: CRUD over a glossary file. Additions/edits go through
-  ``_TermEntryDialog`` (a modal add/edit form), NOT inline QTableWidgetItem
-  editing -- same "data changes, rebuild the table" pattern as
-  ``tm_maintenance``'s ``_set_stats_table_rows`` (see that method's
-  docstring), chosen here for an extra reason specific to a form: a modal
-  dialog validates (non-empty src/tgt term) before anything is written
-  back, where an inline-edited cell has no equivalent checkpoint and would
-  need its own ``itemChanged`` validation/rollback plumbing for the same
-  guarantee. Glossary language pair is page-level (two compact combos),
-  not per-row -- see ``language_tools/terms/glossary.py``'s docstring for
-  why a glossary file doesn't store it per row.
+  ``_TermEntryDialog`` (a modal add/edit form, reachable via the 添加…
+  button, the entry table's right-click menu, or double-clicking a row),
+  NOT inline QTableWidgetItem editing -- same "data changes, rebuild the
+  table" pattern as ``tm_maintenance``'s ``_set_stats_table_rows`` (see
+  that method's docstring), chosen here for an extra reason specific to a
+  form: a modal dialog validates (non-empty src/tgt term) before anything
+  is written back, where an inline-edited cell has no equivalent
+  checkpoint and would need its own ``itemChanged`` validation/rollback
+  plumbing for the same guarantee. No separate "编辑所选"/"删除所选"
+  toolbar buttons -- the right-click menu and double-click cover single-
+  row edit, and the right-click menu's 删除 already handles a multi-row
+  selection, so dedicated buttons for the same two actions were pure
+  duplication once those were added. Glossary language pair is page-level
+  (two compact combos), not per-row -- see
+  ``language_tools/terms/glossary.py``'s docstring for why a glossary
+  file doesn't store it per row.
 - 一致性检查: pick a TM (tmx/sdltm) + a glossary file, run
   ``language_tools.terms.check.run()``, browse/export results. Deliberately
   mirrors ``qa_check/page.py`` almost line for line (file picker ->
@@ -27,27 +33,42 @@ Two tabs, same ``QTabWidget`` shape as ``tm_maintenance/page.py``:
   have a fixed enumerable code the way ``qa.py``'s issues do (a hit names
   its own glossary entry) -- just "只显示有问题的条目".
 
+术语库文件 section layout: 打开/关闭/保存/另存为 sit together on their own
+button row, with the current path shown on the line below rather than
+inline with the buttons. An earlier version put the path label first
+(stretched to fill the row) and the buttons after -- which pushed all
+four buttons to the far right edge, reading as lopsided rather than as a
+single coherent toolbar. Buttons together, path underneath, matches how
+most desktop apps lay out a file-action bar.
+
 Unsaved-changes tracking: ``has_unsaved_changes()``/``save_unsaved_
 changes()``/``unsaved_changes_label()`` are a convention ``MainWindow.
 closeEvent()`` looks for on every tool page via ``getattr(..., None)``
 (not an ABC/Protocol -- see that method's docstring for why a soft
 convention, not an enforced interface, is the right amount of coupling
 for something only one page currently implements). ``_dirty`` flips true
-on any entry add/edit/remove, false again after a successful open/save --
-mirrors it against the in-memory ``_entries`` list, not against the table
-widget, since the table is a derived view rebuilt from ``_entries`` (see
-``_refresh_entry_table()``), not a source of truth itself.
+on any entry add/edit/remove, false again after a successful open/save/
+close -- mirrors it against the in-memory ``_entries`` list, not against
+the table widget, since the table is a derived view rebuilt from
+``_entries`` (see ``_refresh_entry_table()``), not a source of truth
+itself. ``_close_glossary()`` (关闭 button) is the same prompt-then-act
+flow as a window close with unsaved changes, just scoped to this one
+file instead of the whole app -- see ``_prompt_save_before_discard()``.
 
 File-in-use detection (``language_tools.terms.filelock``, see that
-module's docstring for what it can and can't actually detect): opening a
-glossary checks for Office/WPS's own lock marker first (warn, don't
-block -- best-effort, see the module docstring for why) and then tries to
-acquire this tool's own sidecar lock (block outright on failure -- that
-one's a real conflict, most likely a second instance of this same tool
-already editing the file). The held lock moves with ``_glossary_path``:
-released on open of a different file, transferred to a new path on save-
-as, released in ``cleanup()`` (called by ``MainWindow.closeEvent()``) so
-a normal app exit doesn't leave a stale lock file behind.
+module's docstring for what it can and can't actually detect and why an
+earlier sidecar-file-based version of this was replaced after real
+testing showed it didn't actually protect against WPS/Office at all):
+opening a glossary checks for Office/WPS's own lock marker first (warn,
+don't block -- best-effort) and then tries to acquire a lock on the real
+file (block outright on failure). The held lock moves with
+``_glossary_path``: released on open of a different file, transferred to
+a new path on save-as, released in ``cleanup()`` (called by
+``MainWindow.closeEvent()``) and in ``_close_glossary()``, so neither a
+normal app exit nor closing the file mid-session leaves a stale lock
+behind. Saving while a lock is held on the very file being written to
+goes through ``FileLock.write_around()`` (see that method's docstring for
+why a direct write would self-block on Windows).
 
 Same conventions as the other three tools: ``section()``/``CallableWorker``
 (``toolbox.widgets``/``toolbox.workers``), ``compact_combo()``/
@@ -62,13 +83,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem, QTabWidget,
-    QTextEdit, QVBoxLayout, QWidget,
+    QMenu, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
+    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from language_tools.terms import check as term_check_module
 from language_tools.terms import glossary as glossary_module
-from language_tools.terms.filelock import SidecarLock, office_lock_marker_exists
+from language_tools.terms.filelock import FileLock, office_lock_marker_exists
 from language_tools.terms.model import STATUSES, TermEntry
 from language_tools.tm import io as tm_io
 from language_tools.writers import csv_writer
@@ -108,6 +129,12 @@ def _check_job(corpus_path, glossary_path, src_lang, tgt_lang):
 def _format_term_hit(hit):
     text = '%s→%s' % (hit['src_term'], hit['tgt_term'])
     return '%s（%s）' % (text, hit['note']) if hit.get('note') else text
+
+
+def _pick_save_extension(path, selected_filter):
+    if path.lower().endswith('.csv') or path.lower().endswith('.xlsx'):
+        return path
+    return path + ('.xlsx' if 'xlsx' in selected_filter.lower() else '.csv')
 
 
 class _TermEntryDialog(QDialog):
@@ -174,7 +201,7 @@ class TermManagementPage(QWidget):
         self._entries = []           # currently-loaded/edited glossary, in memory
         self._glossary_path = None   # None until opened/saved once
         self._dirty = False          # True if _entries has changes not yet saved to _glossary_path
-        self._file_lock = None       # SidecarLock held on _glossary_path while editing, or None
+        self._file_lock = None       # FileLock held on _glossary_path while editing, or None
         self._last_units = None      # last consistency-check result
         self._check_worker = None
         self._export_worker = None
@@ -229,33 +256,33 @@ class TermManagementPage(QWidget):
         file_layout.addLayout(lang_row)
 
         btn_row = QHBoxLayout()
-        self.glossary_path_label = QLabel('未打开文件（当前为新建）')
-        self.glossary_path_label.setStyleSheet('color: #6B7280;')
         open_btn = QPushButton('打开…')
         open_btn.clicked.connect(self._open_glossary)
+        self.glossary_close_btn = QPushButton('关闭')
+        self.glossary_close_btn.setEnabled(False)
+        self.glossary_close_btn.clicked.connect(self._close_glossary)
         self.glossary_save_btn = QPushButton('保存')
         self.glossary_save_btn.setEnabled(False)
         self.glossary_save_btn.clicked.connect(self._save_glossary)
         save_as_btn = QPushButton('另存为…')
         save_as_btn.clicked.connect(self._save_glossary_as)
-        btn_row.addWidget(self.glossary_path_label, 1)
         btn_row.addWidget(open_btn)
+        btn_row.addWidget(self.glossary_close_btn)
         btn_row.addWidget(self.glossary_save_btn)
         btn_row.addWidget(save_as_btn)
+        btn_row.addStretch(1)
         file_layout.addLayout(btn_row)
+
+        self.glossary_path_label = QLabel('未打开文件（当前为新建）')
+        self.glossary_path_label.setStyleSheet('color: #6B7280;')
+        file_layout.addWidget(self.glossary_path_label)
 
         layout.addWidget(section('术语库文件', file_widget))
 
         entry_btn_row = QHBoxLayout()
         add_btn = QPushButton('添加…')
         add_btn.clicked.connect(self._add_entry)
-        self.edit_entry_btn = QPushButton('编辑所选…')
-        self.edit_entry_btn.clicked.connect(self._edit_selected_entry)
-        self.remove_entry_btn = QPushButton('删除所选')
-        self.remove_entry_btn.clicked.connect(self._remove_selected_entries)
         entry_btn_row.addWidget(add_btn)
-        entry_btn_row.addWidget(self.edit_entry_btn)
-        entry_btn_row.addWidget(self.remove_entry_btn)
         entry_btn_row.addStretch(1)
         layout.addLayout(entry_btn_row)
 
@@ -274,6 +301,9 @@ class TermManagementPage(QWidget):
         self.entry_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.entry_table.setShowGrid(False)
         self.entry_table.setAlternatingRowColors(True)
+        self.entry_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.entry_table.customContextMenuRequested.connect(self._show_entry_context_menu)
+        self.entry_table.cellDoubleClicked.connect(self._on_entry_double_clicked)
         layout.addWidget(section('术语条目', self.entry_table), 1)
         return tab
 
@@ -286,6 +316,11 @@ class TermManagementPage(QWidget):
             self.entry_table.setItem(row, 3, QTableWidgetItem(e.domain or ''))
             self.entry_table.setItem(row, 4, QTableWidgetItem(e.note or ''))
 
+    def _sync_glossary_buttons(self):
+        has_path = self._glossary_path is not None
+        self.glossary_save_btn.setEnabled(has_path)
+        self.glossary_close_btn.setEnabled(has_path or bool(self._entries))
+
     def _add_entry(self):
         dialog = _TermEntryDialog(self)
         if dialog.exec() == QDialog.Accepted:
@@ -295,10 +330,32 @@ class TermManagementPage(QWidget):
                 tgt_lang=lang_combo_code(self.glossary_tgt_lang), **values))
             self._dirty = True
             self._refresh_entry_table()
+            self._sync_glossary_buttons()
             self._log('已添加：%s → %s' % (values['src_term'], values['tgt_term']))
 
     def _selected_entry_rows(self):
         return sorted({idx.row() for idx in self.entry_table.selectedIndexes()})
+
+    def _on_entry_double_clicked(self, row, column):
+        self.entry_table.selectRow(row)
+        self._edit_selected_entry()
+
+    def _show_entry_context_menu(self, pos):
+        row = self.entry_table.rowAt(pos.y())
+        if row < 0:
+            return
+        if row not in self._selected_entry_rows():
+            self.entry_table.selectRow(row)
+
+        menu = QMenu(self)
+        edit_action = menu.addAction('编辑…')
+        edit_action.setEnabled(len(self._selected_entry_rows()) == 1)
+        delete_action = menu.addAction('删除')
+        chosen = menu.exec(self.entry_table.viewport().mapToGlobal(pos))
+        if chosen == edit_action:
+            self._edit_selected_entry()
+        elif chosen == delete_action:
+            self._remove_selected_entries()
 
     def _edit_selected_entry(self):
         rows = self._selected_entry_rows()
@@ -314,6 +371,7 @@ class TermManagementPage(QWidget):
                 src_lang=entry.src_lang, tgt_lang=entry.tgt_lang, **values)
             self._dirty = True
             self._refresh_entry_table()
+            self._sync_glossary_buttons()
             self._log('已更新：%s → %s' % (values['src_term'], values['tgt_term']))
 
     def _remove_selected_entries(self):
@@ -325,6 +383,7 @@ class TermManagementPage(QWidget):
             del self._entries[row]
         self._dirty = True
         self._refresh_entry_table()
+        self._sync_glossary_buttons()
         self._log('已删除 %d 条术语' % len(rows))
 
     def _release_file_lock(self):
@@ -345,42 +404,72 @@ class TermManagementPage(QWidget):
             if proceed != QMessageBox.Yes:
                 return
 
-        # Re-opening the file already loaded (e.g. to discard local edits
-        # and reload from disk) needs no new lock -- we already hold one.
-        # Actually acquiring a second SidecarLock here would incorrectly
-        # self-block: POSIX flock() denies a second lock from the same
-        # process via a different file descriptor even on a file that
-        # process already holds a lock on through its first descriptor.
-        reopening_same_file = (path == self._glossary_path)
-        new_lock = None
-        if not reopening_same_file:
-            new_lock = SidecarLock(path)
-            try:
-                new_lock.acquire()
-            except OSError:
-                self._log('无法打开：%s 正在被本工具的另一个实例编辑' % path, 'error')
-                return
-
+        # Read before locking, not after: glossary.read() opens its own
+        # short-lived handle, separate from the lock's -- if the lock
+        # were acquired first, this second handle would (on Windows)
+        # collide with this tool's own just-acquired lock, the same
+        # same-process self-block FileLock.write_around() exists to avoid
+        # on the write side.
         try:
             entries = glossary_module.read(
                 path, lang_combo_code(self.glossary_src_lang),
                 lang_combo_code(self.glossary_tgt_lang))
         except ValueError as e:
-            if new_lock is not None:
-                new_lock.release()
             self._log('打开失败：%s' % e, 'error')
             return
+        except OSError as e:
+            self._log('打开失败：文件可能正被其他程序占用（%s）' % e, 'error')
+            return
 
+        # Re-opening the file already loaded (e.g. to discard local edits
+        # and reload from disk) needs no new lock -- we already hold one,
+        # and acquiring a second FileLock on it here would incorrectly
+        # self-block (same reasoning as above, this time for the lock
+        # itself rather than the read).
+        reopening_same_file = (path == self._glossary_path)
         if not reopening_same_file:
+            new_lock = FileLock(path)
+            try:
+                new_lock.acquire()
+            except OSError:
+                self._log(
+                    '无法打开：%s 可能正被其他程序占用（例如 WPS/Office，或本工具的另一个实例）' % path,
+                    'error')
+                return
             self._release_file_lock()
             self._file_lock = new_lock
+
         self._entries = entries
         self._glossary_path = path
         self._dirty = False
         self.glossary_path_label.setText(path)
-        self.glossary_save_btn.setEnabled(True)
+        self._sync_glossary_buttons()
         self._refresh_entry_table()
         self._log('已打开 %s，共 %d 条术语' % (path, len(entries)), 'success')
+
+    def _close_glossary(self):
+        if self._dirty:
+            choice = self._prompt_save_before_discard('当前术语库有未保存的更改，关闭前要保存吗？')
+            if choice == QMessageBox.Cancel:
+                return
+            if choice == QMessageBox.Save and not self.save_unsaved_changes():
+                return
+        self._release_file_lock()
+        self._entries = []
+        self._glossary_path = None
+        self._dirty = False
+        self.glossary_path_label.setText('未打开文件（当前为新建）')
+        self._refresh_entry_table()
+        self._sync_glossary_buttons()
+        self._log('已关闭术语库')
+
+    def _prompt_save_before_discard(self, text):
+        box = QMessageBox(self)
+        box.setWindowTitle('未保存的更改')
+        box.setText(text)
+        box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
+        box.setDefaultButton(QMessageBox.Save)
+        return box.exec()
 
     def _save_glossary(self):
         if not self._glossary_path:
@@ -393,43 +482,47 @@ class TermManagementPage(QWidget):
             self, '另存为', '', _GLOSSARY_SAVE_FILTER)
         if not path:
             return
-        if not (path.lower().endswith('.csv') or path.lower().endswith('.xlsx')):
-            path += '.xlsx' if 'xlsx' in selected_filter.lower() else '.csv'
-        self._write_glossary(path)
+        self._write_glossary(_pick_save_extension(path, selected_filter))
 
     def _write_glossary(self, path):
         """Writes ``self._entries`` to ``path``. Returns True on success,
         False on failure -- used both by the plain save/save-as flows
-        (which just log either way) and by ``save_unsaved_changes()``
-        (which needs to know whether it's safe to let the app actually
-        close, or has to keep it open so the person doesn't lose work).
+        (which just log either way) and by ``save_unsaved_changes()``/
+        ``_close_glossary()`` (which need to know whether it's safe to
+        proceed, or have to stop so the person doesn't lose work).
         """
         is_new_path = path != self._glossary_path
-        new_lock = None
-        if is_new_path:
-            new_lock = SidecarLock(path)
-            try:
-                new_lock.acquire()
-            except OSError:
-                self._log('保存失败：%s 正在被本工具的另一个实例编辑' % path, 'error')
-                return False
-
         try:
-            glossary_module.write(path, self._entries)
-        except ValueError as e:
-            if new_lock is not None:
-                new_lock.release()
+            if is_new_path or self._file_lock is None:
+                glossary_module.write(path, self._entries)
+            else:
+                # Already holding a lock on this exact path -- route
+                # through write_around() so this tool's own save doesn't
+                # collide with its own held lock. See FileLock.write_
+                # around()'s docstring for why that's needed at all.
+                self._file_lock.write_around(lambda: glossary_module.write(path, self._entries))
+        except (ValueError, OSError) as e:
             self._log('保存失败：%s' % e, 'error')
             return False
 
+        lock_warning = None
         if is_new_path:
             self._release_file_lock()
-            self._file_lock = new_lock
+            new_lock = FileLock(path)
+            try:
+                new_lock.acquire()
+                self._file_lock = new_lock
+            except OSError:
+                lock_warning = '已保存，但无法锁定该文件（可能正被其他程序占用），后续编辑将不受保护'
+
         self._glossary_path = path
         self._dirty = False
         self.glossary_path_label.setText(path)
-        self.glossary_save_btn.setEnabled(True)
-        self._log('已保存到 %s' % path, 'success')
+        self._sync_glossary_buttons()
+        if lock_warning:
+            self._log(lock_warning, 'error')
+        else:
+            self._log('已保存到 %s' % path, 'success')
         return True
 
     # -------------------------------------- MainWindow unsaved-changes hook
@@ -456,16 +549,14 @@ class TermManagementPage(QWidget):
                 self, '另存为', '', _GLOSSARY_SAVE_FILTER)
             if not path:
                 return False
-            if not (path.lower().endswith('.csv') or path.lower().endswith('.xlsx')):
-                path += '.xlsx' if 'xlsx' in selected_filter.lower() else '.csv'
-            return self._write_glossary(path)
+            return self._write_glossary(_pick_save_extension(path, selected_filter))
         return self._write_glossary(self._glossary_path)
 
     def cleanup(self):
         """Called by MainWindow.closeEvent() once it's decided the app is
-        actually closing, so a normal exit releases the sidecar lock file
-        instead of leaving a stale one behind for the next session to
-        trip over.
+        actually closing, so a normal exit releases the file lock instead
+        of leaving it held (and the file unusable elsewhere) after this
+        tool itself has stopped running.
         """
         self._release_file_lock()
 

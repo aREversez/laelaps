@@ -1,9 +1,9 @@
 """Best-effort "is this glossary file already in use elsewhere" checks for
 the term-management GUI page.
 
-Two independent, one-directional checks -- deliberately not one unified
-mechanism, because the two directions need genuinely different techniques
-and neither can see into the other's world:
+Two complementary checks, combined by the page rather than used alone --
+see that module's ``_open_glossary()``/``_write_glossary()`` for exactly
+how:
 
 1. ``office_lock_marker_exists(path)``: a read-only check for the hidden
    sibling marker file ("~$<filename>") Office/WPS create next to a
@@ -20,28 +20,53 @@ and neither can see into the other's world:
    genuinely-open file from out here, so a hit should be surfaced as a
    dismissible warning, not treated as a hard block.
 
-2. ``SidecarLock``: an OS-level advisory lock on a *separate* sidecar
-   file (``<path>.lock``), not the glossary file itself. Locking the real
-   file directly was the first design tried here, and was dropped: this
-   module's own ``glossary.read()``/``write()`` open the real file
-   independently for I/O, and a lock held on it -- especially msvcrt's
-   Windows byte-range locking, which (unlike POSIX flock) is enforced
-   against the very process holding it too -- risks this tool blocking
-   its own save. A sidecar avoids that risk entirely, at the cost of a
-   narrower guarantee: it only protects against a *second instance of
-   this tool* editing the same glossary concurrently, not against
-   Office/WPS (a sidecar file only this tool ever reads isn't something
-   Office checks). Stated plainly here rather than implied to be a
-   general "detect any other program has it open" mechanism, which it
-   isn't.
+2. ``FileLock``: an OS-level lock on the *real* glossary file itself.
 
-Neither mechanism has been verified against a real Microsoft Office or
-WPS installation -- there isn't one in this project's dev/CI environment
-to test against (same class of limitation as this codebase's documented
-"Linux offscreen rendering can't verify Windows font/CSS behavior" for
-the docx viewer). If you hit a case where either check gives a false
-positive or false negative against a real Office/WPS session, that's
-useful to know about.
+   An earlier version of this locked a separate sidecar file instead
+   (``<path>.lock``), specifically to avoid this tool's own save
+   conflicting with a lock it held on the real file. That turned out to
+   defeat the entire point: a sidecar file only this tool ever reads
+   isn't something WPS/Office can be blocked by or checks against, and
+   real testing confirmed it -- WPS could open, edit, and save a file
+   this tool had "locked" via a sidecar with no conflict at all, and this
+   tool never noticed when WPS had the file open first either. Locking
+   the real file is the only version of this that can actually interact
+   with another *application*, not just another instance of this tool.
+
+   On Windows this uses ``msvcrt.locking()`` on a 1-byte region at the
+   start of the file. Unlike POSIX advisory locking, Windows file locking
+   is mandatory: the OS itself denies another process's read/write
+   across that region regardless of how permissively that other process
+   opened the file -- which is what gives this a real chance of causing
+   WPS/Office's own read or write to fail (and, for anything in the
+   Office family specifically, surface as their own "file in use"
+   handling) rather than only ever protecting against another instance
+   of this same tool.
+
+   This tool's own read/write need to coexist with a lock it's holding on
+   the very file they touch. Reading happens *before* a lock is
+   acquired (``glossary.read()`` uses its own separate, short-lived file
+   handle -- see the page's ``_open_glossary()``), so there's no overlap
+   there. Writing while a lock is already held is the harder case:
+   Windows mandatory locking blocks a second handle from the *same*
+   process too, not just other processes, so this tool's own
+   ``glossary.write()`` -- which opens its own handle -- would otherwise
+   be blocked by a lock this tool is holding on itself. ``write_around()``
+   handles that: release, run the write via a fresh unlocked handle,
+   re-acquire.
+
+   On non-Windows platforms (dev/CI -- this app ships as a Windows exe,
+   real end users are on Windows) this falls back to ``fcntl.flock``,
+   which is advisory-only: correct for testing this module's own logic
+   in this environment, but -- unlike the Windows path -- not something a
+   non-Python process would ever be blocked by. Neither backend has been
+   verified against a real Microsoft Office or WPS installation -- there
+   isn't one in this project's dev/CI environment to test against (same
+   class of limitation as this codebase's documented "Linux offscreen
+   rendering can't verify Windows font/CSS behavior" for the docx
+   viewer). If you hit a case where either check gives a false positive
+   or false negative against a real Office/WPS session, that's useful to
+   know about.
 """
 import os
 
@@ -60,42 +85,50 @@ def office_lock_marker_exists(path):
     return os.path.exists(office_lock_marker_path(path))
 
 
-class SidecarLock:
-    """Advisory lock on ``<path>.lock``, held for as long as this object
-    stays alive (until ``release()``, or the process exits -- the OS
-    releases the underlying lock automatically then even without an
-    explicit release, so a crash doesn't leave a permanently-stuck lock
-    the way a plain marker *file*'s mere existence would). See module
-    docstring for why the sidecar, not the real glossary file, is locked.
+def _lock_region(fh):
+    if os.name == 'nt':
+        import msvcrt
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
 
-    ``acquire()`` raises ``OSError`` if another ``SidecarLock`` already
-    holds it (this tool's own other instance, most plausibly). Callers
-    should catch ``OSError`` specifically (not some lock-specific
-    exception type) since the two platform backends below raise
-    different concrete subclasses of it.
+
+def _unlock_region(fh):
+    if os.name == 'nt':
+        import msvcrt
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+
+
+class FileLock:
+    """Locks ``path`` itself (see module docstring for why, and for what
+    this can and can't actually do). Only usable on a file that already
+    exists and has at least one byte -- true for every glossary this tool
+    would ever lock, since ``glossary.write()`` always writes a header row
+    at minimum.
+
+    ``acquire()`` raises ``OSError`` if the region is already locked
+    (another process -- ideally WPS/Office, but most reliably tested here
+    against another instance of this tool -- or a lock this same
+    ``FileLock`` already holds; re-acquiring without releasing first is a
+    caller bug, not something this class silently tolerates). Callers
+    should catch ``OSError`` specifically, not a lock-specific type, since
+    the two platform backends raise different concrete subclasses of it.
     """
 
     def __init__(self, path):
-        self.lock_path = path + '.lock'
+        self.path = path
         self._fh = None
 
     def acquire(self):
-        fh = open(self.lock_path, 'a+b')
-        fh.seek(0)
-        if fh.read(1) == b'':
-            # msvcrt.locking() below locks a byte range, which needs at
-            # least one actual byte to lock on Windows -- a brand-new
-            # empty sidecar file wouldn't have one yet.
-            fh.write(b'\0')
-            fh.flush()
-        fh.seek(0)
+        fh = open(self.path, 'r+b')
         try:
-            if os.name == 'nt':
-                import msvcrt
-                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock_region(fh)
         except OSError:
             fh.close()
             raise
@@ -106,19 +139,38 @@ class SidecarLock:
             return
         fh, self._fh = self._fh, None
         try:
-            if os.name == 'nt':
-                import msvcrt
-                fh.seek(0)
-                msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            _unlock_region(fh)
         finally:
             fh.close()
-            try:
-                os.remove(self.lock_path)
-            except OSError:
-                pass  # already gone, or another process still has it open elsewhere -- either way, not fatal
+
+    def write_around(self, write_fn):
+        """Runs ``write_fn()`` (a callable that rewrites ``self.path`` on
+        disk -- e.g. ``lambda: glossary.write(path, entries)``) with this
+        lock momentarily released, then re-acquired -- see module
+        docstring for why a held lock on the real file needs this instead
+        of just calling ``write_fn()`` directly.
+
+        If ``write_fn()`` raises, that propagates normally (the save
+        failed; the lock is left released -- re-acquiring it after a
+        failed save that may not even have touched the file isn't this
+        method's call to make, so it doesn't try). If the write succeeds
+        but re-acquiring the lock afterward fails (something else grabbed
+        it in the brief window it was released -- rare, but possible),
+        that's swallowed rather than raised: the save itself already
+        succeeded, and failing the whole operation over a lock that's now
+        just protecting an already-completed write would be the wrong
+        tradeoff. Callers that care can check ``is_held`` afterward.
+        """
+        self.release()
+        write_fn()
+        try:
+            self.acquire()
+        except OSError:
+            pass
+
+    @property
+    def is_held(self):
+        return self._fh is not None
 
     def __enter__(self):
         self.acquire()
