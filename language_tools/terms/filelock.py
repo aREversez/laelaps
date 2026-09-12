@@ -72,18 +72,48 @@ how:
    modes this briefly-unprotected window creates and how they're
    surfaced rather than hidden.
 
-   None of this has been verified against a real Microsoft Office or WPS
-   installation -- there isn't one in this project's dev/CI environment
-   to test against (same class of limitation as this codebase's
-   documented "Linux offscreen rendering can't verify Windows font/CSS
-   behavior" for the docx viewer). The POSIX fallback (``fcntl.flock``,
-   used for both the sidecar and the real-file lock on non-Windows) has
-   been tested here and proves this module's own two-lock coordination is
-   internally consistent, but -- being advisory rather than Windows'
-   mandatory locking -- doesn't prove anything about actual behavior
-   against a real non-Python application on Windows. If you hit a case
-   where this still gives a false positive or false negative against a
-   real Office/WPS session, that's useful to know about.
+   Real Windows testing of the shared-lock version above surfaced a
+   *second*, independent problem with the same symptom (Excel's "cannot
+   be accessed... may be corrupted" dialog on the real file, while a
+   plain text editor opened it fine) even after switching to a shared
+   ``LockFileEx`` lock. The shared/exclusive lock *type* was never the
+   only thing standing between Excel and this file: the real-file handle
+   this module opens to hold that lock was opened ``'r+b'`` (read+write),
+   and Windows' ``CreateFile`` sharing check is a completely separate
+   mechanism from byte-range locking -- it compares a *new* open
+   request's desired access against the access rights *already granted*
+   to every existing open handle on the same file, independent of what
+   any of those handles have locked. Excel opening a csv commonly asks
+   for a share mode that only tolerates other *readers*, not other
+   *writers*; our handle already holding GENERIC_WRITE access (even
+   though nothing was ever written through it -- actual saves go through
+   a completely different handle opened by ``glossary.write()``, funneled
+   through ``write_around()`` below) was exactly the kind of "other
+   writer" that share mode refuses to coexist with, so the open failed
+   with a sharing violation regardless of which ``LockFileEx`` mode was
+   used on top of it. Since this module's own real-file handle never
+   reads or writes file *content* either -- it exists purely to have
+   something to call ``LockFileEx``/``UnlockFileEx`` on, and both of
+   those only require ``GENERIC_READ`` *or* ``GENERIC_WRITE`` per their
+   own documentation, not both -- it's opened ``'rb'`` instead. That
+   removes the "other writer" that Excel's share mode was rejecting,
+   while the shared lock itself still does its job of blocking actual
+   writes from elsewhere.
+
+   Still not verified against a real Microsoft Office or WPS
+   installation beyond this one round of Windows testing -- there isn't
+   one in this project's dev/CI environment to test against (same class
+   of limitation as this codebase's documented "Linux offscreen
+   rendering can't verify Windows font/CSS behavior" for the docx
+   viewer). The POSIX fallback (``fcntl.flock``, used for both the
+   sidecar and the real-file lock on non-Windows) has been tested here
+   and proves this module's own two-lock coordination is internally
+   consistent, but -- being advisory rather than Windows' mandatory
+   locking, and not sensitive to read/write open mode the way
+   ``CreateFile`` sharing is -- it can't reproduce either of the two
+   Windows-specific problems described above. If you hit a case where
+   this still gives a false positive or false negative against a real
+   Office/WPS session, that's useful to know about.
 """
 import os
 
@@ -247,7 +277,12 @@ class FileLock:
             instance_fh.close()
             raise
 
-        shared_fh = open(self.path, 'r+b')
+        # Read-only, deliberately: this handle never reads or writes file
+        # content, only holds a LockFileEx/flock lock -- see module
+        # docstring for why opening it with GENERIC_WRITE access was
+        # itself enough to make Excel's own open of the same file fail,
+        # independent of the shared-vs-exclusive lock type.
+        shared_fh = open(self.path, 'rb')
         try:
             _lock_shared(shared_fh)
         except OSError:
@@ -318,7 +353,7 @@ class FileLock:
             write_error = exc
         finally:
             try:
-                new_shared_fh = open(self.path, 'r+b')
+                new_shared_fh = open(self.path, 'rb')  # read-only -- see acquire()
                 _lock_shared(new_shared_fh)
                 self._shared_fh = new_shared_fh
             except OSError as reacquire_error:

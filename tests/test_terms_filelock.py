@@ -206,6 +206,48 @@ def test_held_lock_still_permits_a_plain_unlocked_read(tmp_path):
         lock.release()
 
 
+def test_real_file_handle_is_opened_read_only(tmp_path, monkeypatch):
+    """Regression test for the Excel-specific sharing violation: the
+    real-file handle backing the shared lock must never be opened with
+    write access, since Windows' CreateFile sharing check treats that as
+    an "existing writer" and rejects a second application's own open even
+    though nothing is ever written through this handle -- see the module
+    docstring's "second, independent problem" for the full story. Can't
+    reproduce the actual Windows sharing violation on POSIX (this suite
+    doesn't run on Windows), so this asserts the open() call itself uses
+    a read-only mode rather than the symptom.
+    """
+    import builtins
+
+    path = str(tmp_path / 'glossary.csv')
+    _write(path)
+
+    real_open = builtins.open
+    modes_by_path = {}
+
+    def spy_open(file, mode='r', *args, **kwargs):
+        modes_by_path.setdefault(str(file), []).append(mode)
+        return real_open(file, mode, *args, **kwargs)
+
+    import language_tools.terms.filelock as filelock_module
+    monkeypatch.setattr(filelock_module, 'open', spy_open, raising=False)
+
+    lock = FileLock(path)
+    lock.acquire()
+    try:
+        assert modes_by_path[path] == ['rb']
+        assert 'w' not in modes_by_path[path][0] and '+' not in modes_by_path[path][0]
+    finally:
+        lock.release()
+
+    lock2 = FileLock(path)
+    lock2.acquire()
+    modes_by_path[path].clear()
+    lock2.write_around(lambda: None)
+    assert modes_by_path[path] == ['rb']
+    lock2.release()
+
+
 def test_two_locks_on_different_paths_can_both_be_held(tmp_path):
     path_a = str(tmp_path / 'a.csv')
     path_b = str(tmp_path / 'b.csv')
