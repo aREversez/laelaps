@@ -41,10 +41,33 @@ from language_tools.terms.model import TermEntry
 
 ENCODINGS = ['utf-8-sig', 'utf-8', 'gb18030']
 
-# Header column names, in write order. Read matches header cells
-# case-insensitively/whitespace-trimmed against these; write always
-# emits exactly this set, in this order.
+# Header column names, in write order. write() always emits exactly this
+# set, in this order. read() is more permissive -- see HEADER_ALIASES.
 COLUMNS = ['src_term', 'tgt_term', 'status', 'domain', 'note']
+
+# Alternate header spellings read() accepts for each canonical column,
+# matched case-insensitively/whitespace-trimmed (see _parse_header()).
+# This tool only ever *writes* the exact COLUMNS names, but real glossary
+# files brought in from elsewhere routinely use a different header
+# convention for the same two columns everything else here depends on --
+# a real hand-off file rejected outright for saying "source"/"target"
+# instead of "src_term"/"tgt_term" is a false negative, not a genuinely
+# unusable file. Each canonical name is listed first as its own alias so
+# COLUMNS stays a strict subset of this mapping's keys covered.
+# 中文表头（原文/译文…）同样是常见的第三方术语表命名，一并识别。
+HEADER_ALIASES = {
+    'src_term': (
+        'src_term', 'source_term', 'src', 'source', 'sourceterm',
+        'term_source', 'source term', '原文', '原文术语', '源术语', '源语言术语',
+    ),
+    'tgt_term': (
+        'tgt_term', 'target_term', 'tgt', 'target', 'targetterm',
+        'term_target', 'target term', '译文', '译文术语', '目标术语', '目标语言术语',
+    ),
+    'status': ('status', '状态'),
+    'domain': ('domain', 'category', 'subject', '领域', '类别'),
+    'note': ('note', 'notes', 'comment', 'comments', 'remark', 'remarks', '备注'),
+}
 
 _VALID_STATUSES = {'approved', 'forbidden'}
 _SUPPORTED_EXTS = ('.csv', '.xlsx', '.xlsm')
@@ -61,22 +84,34 @@ def _read_text(path):
     raise ValueError('could not decode %s with any of %s: %s' % (path, ENCODINGS, last_err))
 
 
+_ALIAS_TO_CANONICAL = {
+    alias.strip().lower(): canonical
+    for canonical, aliases in HEADER_ALIASES.items()
+    for alias in aliases
+}
+
+
 def _parse_header(row):
-    """Maps recognized column names to their position. Requires
+    """Maps recognized column names to their position, accepting any
+    spelling in HEADER_ALIASES (not just the exact COLUMNS names this
+    tool itself writes -- see that mapping's docstring for why). Requires
     src_term/tgt_term at minimum -- a glossary without those two has
     nothing to check against, so failing loudly here (rather than
     returning an empty entry list a caller might mistake for "empty
-    file") is the right failure mode.
+    file") is the right failure mode. First matching header cell wins if
+    a row somehow has more than one alias for the same canonical column.
     """
     col_index = {}
     for i, cell in enumerate(row):
         name = (cell or '').strip().lower()
-        if name in COLUMNS:
-            col_index[name] = i
+        canonical = _ALIAS_TO_CANONICAL.get(name)
+        if canonical and canonical not in col_index:
+            col_index[canonical] = i
     missing = [c for c in ('src_term', 'tgt_term') if c not in col_index]
     if missing:
         raise ValueError(
-            '术语表缺少必需的表头列 %s（需要 src_term/tgt_term 表头，大小写不敏感）' % missing)
+            '术语表缺少必需的表头列 %s（需要 src_term/tgt_term 或其常见别名，如 '
+            'source/target、原文/译文，大小写不敏感）' % missing)
     return col_index
 
 

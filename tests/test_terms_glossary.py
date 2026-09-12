@@ -70,6 +70,58 @@ def test_header_matching_is_case_insensitive_and_order_independent(tmp_path):
     assert entries[0].tgt_term == '云'
 
 
+def test_header_accepts_source_target_alias(tmp_path):
+    """Real-world glossary made in another tool: 'source'/'target'
+    instead of this tool's own 'src_term'/'tgt_term' -- see
+    HEADER_ALIASES docstring for why rejecting this outright is a false
+    negative.
+    """
+    path = tmp_path / 'glossary.csv'
+    path.write_text('source,target,status\ncloud,云,approved\n', encoding='utf-8')
+    entries = glossary.read(str(path), 'en-US', 'zh-CN')
+    assert len(entries) == 1
+    assert entries[0].src_term == 'cloud'
+    assert entries[0].tgt_term == '云'
+    assert entries[0].status == 'approved'
+
+
+def test_header_accepts_source_term_target_term_alias(tmp_path):
+    path = tmp_path / 'glossary.csv'
+    path.write_text('Source_Term,Target_Term\ncloud,云\n', encoding='utf-8')
+    entries = glossary.read(str(path), 'en-US', 'zh-CN')
+    assert entries[0].src_term == 'cloud'
+    assert entries[0].tgt_term == '云'
+
+
+def test_header_accepts_chinese_alias(tmp_path):
+    path = tmp_path / 'glossary.csv'
+    path.write_text('原文术语,译文术语,备注\ncloud,云,首选译法\n', encoding='utf-8')
+    entries = glossary.read(str(path), 'en-US', 'zh-CN')
+    assert entries[0].src_term == 'cloud'
+    assert entries[0].tgt_term == '云'
+    assert entries[0].note == '首选译法'
+
+
+def test_header_alias_matching_is_case_insensitive(tmp_path):
+    path = tmp_path / 'glossary.csv'
+    path.write_text('SOURCE,TARGET\ncloud,云\n', encoding='utf-8')
+    entries = glossary.read(str(path), 'en-US', 'zh-CN')
+    assert entries[0].src_term == 'cloud'
+
+
+def test_header_still_rejects_genuinely_unrecognized_columns(tmp_path):
+    # Broadening HEADER_ALIASES must not turn this into a
+    # match-anything scheme -- 'foo'/'bar' still isn't recognized as
+    # either src_term or tgt_term by any alias.
+    path = tmp_path / 'glossary.csv'
+    path.write_text('foo,bar\ncloud,云\n', encoding='utf-8')
+    try:
+        glossary.read(str(path), 'en-US', 'zh-CN')
+        assert False, 'expected ValueError'
+    except ValueError as e:
+        assert 'src_term' in str(e) and 'tgt_term' in str(e)
+
+
 def test_header_only_file_is_empty_not_an_error(tmp_path):
     path = tmp_path / 'glossary.csv'
     path.write_text('src_term,tgt_term\n', encoding='utf-8')
