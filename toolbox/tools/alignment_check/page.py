@@ -76,14 +76,12 @@ from PySide6.QtWidgets import (
 from language_tools import align_report
 from language_tools import qa as qa_module
 from language_tools.writers import csv_writer
-from toolbox.widgets import LANG_TOOLTIP, compact_combo, labeled_field, lang_combo_code
+from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, section
 from toolbox.workers import CallableWorker
 
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
 _CSV_FILTER = 'CSV (*.csv)'
-
-_LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
 _MOVE_TOOLTIPS = {
     '1:1': '一句对一句，最常见的情况',
@@ -240,7 +238,7 @@ class AlignmentCheckPage(QWidget):
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
-        color = _LOG_COLORS.get(kind, _LOG_COLORS['info'])
+        color = LOG_COLORS.get(kind, LOG_COLORS['info'])
         self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))
 
     # ------------------------------------------------------------- check

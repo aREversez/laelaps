@@ -90,7 +90,7 @@ from language_tools.terms.filelock import FileLock, office_lock_marker_exists
 from language_tools.terms.model import STATUSES, TermEntry
 from language_tools.tm import io as tm_io
 from language_tools.writers import csv_writer
-from toolbox.widgets import LANG_TOOLTIP, compact_combo, labeled_field, lang_combo_code
+from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, section
 from toolbox.workers import CallableWorker
 
@@ -107,8 +107,6 @@ _GLOSSARY_SAVE_FILTER = 'CSV (*.csv);;Excel (*.xlsx)'
 _CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 _CSV_FILTER = 'CSV (*.csv)'
 
-
-_LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
 _STATUS_LABELS = {'approved': '推荐译法', 'forbidden': '禁用译法'}
 _STATUS_TOOLTIPS = {
@@ -773,5 +771,5 @@ class TermManagementPage(QWidget):
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
-        color = _LOG_COLORS.get(kind, _LOG_COLORS['info'])
+        color = LOG_COLORS.get(kind, LOG_COLORS['info'])
         self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))

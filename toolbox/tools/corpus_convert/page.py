@@ -57,14 +57,12 @@ from PySide6.QtWidgets import (
 )
 
 from language_tools import api
-from toolbox.widgets import LANG_TOOLTIP, compact_combo, labeled_field, lang_combo_code
+from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo
 from toolbox.widgets import section as _section
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.sdltm)'
-
-_LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
 _QA_TOOLTIP = '检查漏译、数字不一致等问题'
 _FORMAT_TOOLTIPS = {
@@ -186,7 +184,7 @@ class CorpusConvertPage(QWidget):
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
-        color = _LOG_COLORS.get(kind, _LOG_COLORS['info'])
+        color = LOG_COLORS.get(kind, LOG_COLORS['info'])
         self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))
 
     # ------------------------------------------------------------ actions

@@ -57,13 +57,11 @@ from language_tools import qa as qa_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
-from toolbox.widgets import section
+from toolbox.widgets import LOG_COLORS, section
 from toolbox.workers import CallableWorker
 
 _CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 _CSV_FILTER = 'CSV (*.csv)'
-
-_LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
 # Short tooltip per issue type, for the filter dropdown. The *label* text
 # (used both in the dropdown and now in the results table's "问题类型"
@@ -212,7 +210,7 @@ class QaCheckPage(QWidget):
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
-        color = _LOG_COLORS.get(kind, _LOG_COLORS['info'])
+        color = LOG_COLORS.get(kind, LOG_COLORS['info'])
         self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))
 
     # ------------------------------------------------------------- check

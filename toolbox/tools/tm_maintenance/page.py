@@ -45,13 +45,11 @@ from language_tools.tm import clean as clean_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import merge as merge_module
 from language_tools.tm import stats as stats_module
-from toolbox.widgets import compact_combo, labeled_field, section
+from toolbox.widgets import LOG_COLORS, compact_combo, labeled_field, section
 from toolbox.workers import CallableWorker
 
 _CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
-
-_LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
 _CLEAN_TOOLTIPS = {
     'normalize': 'Unicode/空白标准化，让格式不同但内容相同的条目能被正确识别为重复',
@@ -317,7 +315,7 @@ class TmMaintenancePage(QWidget):
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
-        color = _LOG_COLORS.get(kind, _LOG_COLORS['info'])
+        color = LOG_COLORS.get(kind, LOG_COLORS['info'])
         self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))
 
     # ------------------------------------------------------- file dialogs

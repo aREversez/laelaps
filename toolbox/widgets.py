@@ -25,9 +25,23 @@ rows), ``tm_maintenance`` got a second private copy for its own
 inputs are the exact ones ``alignment_check`` copied the pattern from in
 the first place -- is the third, so promoted here now with all three call
 sites switched over.
+
+``LOG_COLORS`` is the same story, several times over: ``corpus_convert``,
+``qa_check``, ``tm_maintenance``, ``alignment_check``, and
+``term_management`` had each independently grown their own identical
+``_LOG_COLORS = {'info': ..., 'error': ..., 'success': ...}`` for their
+append-only result log's text color -- five private copies of the same
+three hex codes, well past the "third call site" signal, so promoted
+here now with every call site switched over.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QVBoxLayout, QWidget
+
+
+# Shared by every tool page's append-only result log (and, from
+# batch_convert onward, per-row status text too): gray for a neutral
+# progress note, red for a failure, green for a success.
+LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
 
 def section(title, content_widget):
