@@ -26,6 +26,16 @@ list here is a ``QTableWidget`` from the start (文件/状态 columns) so the
 same widget serves as both the "what's queued" list before conversion and
 the live per-file progress display during/after it -- no separate log
 widget needed the way the single-file tool has one.
+
+Adding files after a batch has finished (2026-09-13, per Eliot): a
+freshly-added file and a row still showing last run's "成功：8 组" look
+the same in the table, and clicking 开始批量转换 doesn't distinguish them
+either -- it reconverts the whole list, silently redoing already-finished
+files. So any 添加文件/添加文件夹 call first drops every row that already
+has a terminal result (success or error), keeping only rows still
+等待中, before appending what was just picked. Deliberately not
+conditioned on file-vs-folder -- a different clearing rule for each would
+be one more thing to remember, for no real benefit.
 """
 import os
 
@@ -124,7 +134,8 @@ class BatchConvertWorker(QThread):
 class BatchConvertPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._paths = []  # str, in the same order as the table's rows
+        self._paths = []     # str, in the same order as the table's rows
+        self._row_done = []  # bool per row -- True once it has a terminal (success/error) result
         self._worker = None
         self._build_ui()
 
@@ -148,15 +159,15 @@ class BatchConvertPage(QWidget):
         list_layout.setSpacing(8)
 
         btn_row = QHBoxLayout()
-        add_files_btn = QPushButton('添加文件…')
-        add_files_btn.clicked.connect(self._add_files)
-        add_folder_btn = QPushButton('添加文件夹…')
-        add_folder_btn.clicked.connect(self._add_folder)
+        self.add_files_btn = QPushButton('添加文件…')
+        self.add_files_btn.clicked.connect(self._add_files)
+        self.add_folder_btn = QPushButton('添加文件夹…')
+        self.add_folder_btn.clicked.connect(self._add_folder)
         self.remove_btn = QPushButton('移除选中')
         self.remove_btn.clicked.connect(self._remove_selected)
         self.clear_btn = QPushButton('清空')
         self.clear_btn.clicked.connect(self._clear_all)
-        for b in (add_files_btn, add_folder_btn, self.remove_btn, self.clear_btn):
+        for b in (self.add_files_btn, self.add_folder_btn, self.remove_btn, self.clear_btn):
             btn_row.addWidget(b)
         btn_row.addStretch(1)
         list_layout.addLayout(btn_row)
@@ -235,6 +246,9 @@ class BatchConvertPage(QWidget):
     # ------------------------------------------------------------ file list
     def _add_files(self):
         paths, _ = QFileDialog.getOpenFileNames(self, '选择文件', '', _SUPPORTED_FILTER)
+        if not paths:
+            return
+        self._clear_completed_rows()
         for path in paths:
             self._append_path(path)
         self._refresh_count()
@@ -243,6 +257,7 @@ class BatchConvertPage(QWidget):
         folder = QFileDialog.getExistingDirectory(self, '选择文件夹')
         if not folder:
             return
+        self._clear_completed_rows()
         for root, dirs, files in os.walk(folder):
             dirs[:] = [d for d in dirs if not d.startswith('.')]
             for name in sorted(files):
@@ -250,10 +265,22 @@ class BatchConvertPage(QWidget):
                     self._append_path(os.path.join(root, name))
         self._refresh_count()
 
+    def _clear_completed_rows(self):
+        """Drop every row that already finished (success or error) from a
+        previous run, keeping only rows still 等待中. Called right before
+        a new file/folder gets added -- see the module docstring for why.
+        """
+        for row in reversed(range(len(self._row_done))):
+            if self._row_done[row]:
+                self.file_table.removeRow(row)
+                del self._paths[row]
+                del self._row_done[row]
+
     def _append_path(self, path):
         if path in self._paths:
             return  # already queued -- adding the same file twice would double-convert it
         self._paths.append(path)
+        self._row_done.append(False)
         row = self.file_table.rowCount()
         self.file_table.insertRow(row)
         name_item = QTableWidgetItem(os.path.basename(path))
@@ -266,11 +293,13 @@ class BatchConvertPage(QWidget):
         for row in rows:
             self.file_table.removeRow(row)
             del self._paths[row]
+            del self._row_done[row]
         self._refresh_count()
 
     def _clear_all(self):
         self.file_table.setRowCount(0)
         self._paths.clear()
+        self._row_done.clear()
         self._refresh_count()
 
     def _refresh_count(self):
@@ -294,7 +323,7 @@ class BatchConvertPage(QWidget):
         return None
 
     def _set_controls_enabled(self, enabled):
-        for w in (self.remove_btn, self.clear_btn, self.start_btn,
+        for w in (self.add_files_btn, self.add_folder_btn, self.remove_btn, self.clear_btn, self.start_btn,
                   self.src_edit, self.tgt_edit, self.layout_combo,
                   self.chk_sdltm, self.chk_tmx, self.chk_csv, self.chk_qa):
             w.setEnabled(enabled)
@@ -336,6 +365,7 @@ class BatchConvertPage(QWidget):
         self._worker.start()
 
     def _on_file_done(self, row, ok, message):
+        self._row_done[row] = True
         self._set_row_status(row, message, 'success' if ok else 'error')
 
     def _on_all_done(self, succeeded, failed):

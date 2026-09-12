@@ -197,6 +197,101 @@ def test_controls_disabled_while_running_and_reenabled_after(qtbot, tmp_path):
     # disabling has definitely happened (it's the very first thing
     # _start_batch does after validation), so no race to poll around here.
     assert not page.start_btn.isEnabled()
+    assert not page.add_files_btn.isEnabled()
+    assert not page.add_folder_btn.isEnabled()
     qtbot.waitUntil(lambda: page.start_btn.isEnabled(), timeout=5000)
     assert page.remove_btn.isEnabled()
     assert page.clear_btn.isEnabled()
+    assert page.add_files_btn.isEnabled()
+    assert page.add_folder_btn.isEnabled()
+
+
+def test_adding_files_after_run_clears_finished_rows(qtbot, tmp_path, monkeypatch):
+    good_src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+    page = BatchConvertPage()
+    qtbot.addWidget(page)
+    page._append_path(str(good_src))
+    page._refresh_count()
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
+    page.start_btn.click()
+    qtbot.waitUntil(lambda: page.start_btn.isEnabled(), timeout=5000)
+    assert page.file_table.rowCount() == 1  # sanity: one finished row before adding more
+
+    another_src = shutil.copy(fixture_path('table_layout.docx'), tmp_path / 'table_layout.docx')
+    monkeypatch.setattr(
+        'toolbox.tools.batch_convert.page.QFileDialog.getOpenFileNames',
+        staticmethod(lambda *a, **k: ([str(another_src)], '')),
+    )
+    page._add_files()
+
+    # The finished basic.docx row is gone; only the newly-added, still-等待中 file remains.
+    assert page._paths == [str(another_src)]
+    assert page.file_table.rowCount() == 1
+    assert _status_text(page, 0) == '等待中'
+
+
+def test_adding_folder_after_run_clears_finished_rows(qtbot, tmp_path, monkeypatch):
+    good_src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+    page = BatchConvertPage()
+    qtbot.addWidget(page)
+    page._append_path(str(good_src))
+    page._refresh_count()
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
+    page.start_btn.click()
+    qtbot.waitUntil(lambda: page.start_btn.isEnabled(), timeout=5000)
+
+    other_dir = tmp_path / 'next_batch'
+    other_dir.mkdir()
+    other_src = shutil.copy(fixture_path('table_layout.docx'), other_dir / 'table_layout.docx')
+    monkeypatch.setattr(
+        'toolbox.tools.batch_convert.page.QFileDialog.getExistingDirectory',
+        staticmethod(lambda *a, **k: str(other_dir)),
+    )
+    page._add_folder()
+
+    assert page._paths == [str(other_src)]
+    assert page.file_table.rowCount() == 1
+    assert _status_text(page, 0) == '等待中'
+
+
+def test_adding_more_files_keeps_still_pending_rows(qtbot, tmp_path, monkeypatch):
+    # Two files queued, neither run yet -- adding a third shouldn't clear
+    # the first two, since 等待中 rows aren't "finished".
+    page = BatchConvertPage()
+    qtbot.addWidget(page)
+    page._append_path(fixture_path('basic.docx'))
+    page._refresh_count()
+
+    third = shutil.copy(fixture_path('table_layout.docx'), tmp_path / 'table_layout.docx')
+    monkeypatch.setattr(
+        'toolbox.tools.batch_convert.page.QFileDialog.getOpenFileNames',
+        staticmethod(lambda *a, **k: ([str(third)], '')),
+    )
+    page._add_files()
+
+    assert page._paths == [fixture_path('basic.docx'), str(third)]
+    assert page.file_table.rowCount() == 2
+
+
+def test_cancelling_add_files_dialog_does_not_clear_finished_rows(qtbot, tmp_path, monkeypatch):
+    good_src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+    page = BatchConvertPage()
+    qtbot.addWidget(page)
+    page._append_path(str(good_src))
+    page._refresh_count()
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
+    page.start_btn.click()
+    qtbot.waitUntil(lambda: page.start_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.batch_convert.page.QFileDialog.getOpenFileNames',
+        staticmethod(lambda *a, **k: ([], '')),  # user cancelled the dialog
+    )
+    page._add_files()
+
+    assert page._paths == [str(good_src)]
+    assert page.file_table.rowCount() == 1
+    assert '成功' in _status_text(page, 0)
