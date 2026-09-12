@@ -128,6 +128,14 @@ def make_layout_combo():
     return combo
 
 
+# QComboBox chrome reserved by style.qss's QComboBox/QComboBox::drop-down
+# rules (padding: 6px 8px, 1px border each side, 26px drop-down arrow),
+# plus a small safety margin. AdjustToContents' own sizeHint() doesn't
+# reliably add this back once a style sheet is in play -- see
+# compact_combo()'s docstring for what that looked like on real Windows.
+_COMBO_STYLESHEET_CHROME_PX = 56
+
+
 def compact_combo(combo):
     """Makes a combo box's width track its actual content instead of
     whatever the surrounding layout hands it. Without this, a combo whose
@@ -140,9 +148,35 @@ def compact_combo(combo):
     the width whenever the current item/text changes, so it stays
     correctly sized as the user picks a different option, not just on
     first show.
+
+    Real Windows testing surfaced a second problem this alone doesn't
+    fix: with this app's style.qss applied, AdjustToContents' computed
+    width didn't reliably include the stylesheet's own padding/border/
+    drop-down-arrow chrome on top of the text -- a longer item like
+    "简体中文 (zh-CN)" got a box just narrow enough that its first
+    character was clipped against the left edge, while shorter items
+    (which happened to still fit inside whatever width the box was
+    already getting from minimumContentsLength) looked fine, which is
+    why this went unnoticed until a long language label was actually
+    tried. AdjustToContents is a *relative* fit -- it sizes to whatever
+    the box's own sizeHint() reports, and doesn't know to pad that for
+    chrome a style sheet adds outside Qt's own metrics -- so this backs
+    it with an *absolute* floor computed straight from font metrics on
+    every current item, sized generously enough to cover that chrome
+    regardless of what AdjustToContents alone comes up with.
     """
     combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
     combo.setMinimumContentsLength(10)
+    _ensure_minimum_width_for_items(combo)
+
+
+def _ensure_minimum_width_for_items(combo):
+    fm = combo.fontMetrics()
+    widest_text_px = max(
+        (fm.horizontalAdvance(combo.itemText(i)) for i in range(combo.count())),
+        default=0,
+    )
+    combo.setMinimumWidth(widest_text_px + _COMBO_STYLESHEET_CHROME_PX)
 
 
 def labeled_field(label_text, field_widget):
