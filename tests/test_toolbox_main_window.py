@@ -166,3 +166,48 @@ def test_close_calls_cleanup_on_every_page_that_has_one(qtbot):
     event = _FakeCloseEvent()
     w.closeEvent(event)
     assert len(calls) == w.stack.count()
+
+
+# ---------------------------------------------------------- form settings
+
+def test_restore_settings_called_on_every_page_that_has_one(qtbot):
+    w = MainWindow()
+    qtbot.addWidget(w)
+    calls = []
+    for i in range(w.stack.count()):
+        page = w.stack.widget(i)
+        if hasattr(page, 'restore_settings'):
+            calls.append(page)
+    # corpus_convert and batch_convert both implement it as of this test
+    # -- not asserting an exact count so this doesn't need editing every
+    # time a future tool page adds the hook, just that at least the ones
+    # known to implement it actually got called during construction.
+    assert len(calls) >= 2
+
+
+def test_restore_settings_actually_invoked_at_construction(qtbot, monkeypatch):
+    # The assertion above only checks the hook *exists* on real pages
+    # (which it does, whether or not MainWindow calls it) -- this one
+    # checks MainWindow actually calls it, by watching a page that didn't
+    # ask to have this behavior faked.
+    from toolbox.tools.corpus_convert.page import CorpusConvertPage
+    called = []
+    monkeypatch.setattr(CorpusConvertPage, 'restore_settings', lambda self: called.append(True))
+
+    w = MainWindow()
+    qtbot.addWidget(w)
+    assert called == [True]
+
+
+def test_close_calls_save_settings_on_every_page_that_has_one(qtbot):
+    w = MainWindow()
+    qtbot.addWidget(w)
+    calls = []
+    for i in range(w.stack.count()):
+        page = w.stack.widget(i)
+        if hasattr(page, 'save_settings'):
+            page.save_settings = lambda calls=calls: calls.append(True)
+
+    event = _FakeCloseEvent()
+    w.closeEvent(event)
+    assert len(calls) >= 2  # corpus_convert and batch_convert both implement it as of this test

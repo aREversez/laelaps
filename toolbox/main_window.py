@@ -22,6 +22,14 @@ need would be the wrong amount of coupling. A page can also implement
 happen on a real close regardless of the save outcome (``term_management``
 uses this to release its glossary file lock -- see that page's module
 docstring).
+
+Same soft-convention treatment for persisted form settings (语言/排版/
+输出格式 and the like -- see ``toolbox/settings.py``): a page can
+implement ``restore_settings()`` (called once, right after this window
+creates it, before it's ever shown) and ``save_settings()`` (called here
+in ``closeEvent()``, alongside ``cleanup()``). Neither is required --
+a page with no such state to remember just doesn't define them, same as
+today's ``cleanup()``.
 """
 import os
 
@@ -63,7 +71,11 @@ class MainWindow(QMainWindow):
                 item.setIcon(QIcon(spec.icon))
             item.setToolTip(spec.description)
             self.sidebar.addItem(item)
-            self.stack.addWidget(spec.page_factory())
+            page = spec.page_factory()
+            restore_settings = getattr(page, 'restore_settings', None)
+            if restore_settings:
+                restore_settings()
+            self.stack.addWidget(page)
 
         self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
         if tools:
@@ -107,6 +119,9 @@ class MainWindow(QMainWindow):
 
         QSettings().setValue(_GEOMETRY_KEY, self.saveGeometry())
         for page in self._pages():
+            save_settings = getattr(page, 'save_settings', None)
+            if save_settings:
+                save_settings()
             cleanup = getattr(page, 'cleanup', None)
             if cleanup:
                 cleanup()

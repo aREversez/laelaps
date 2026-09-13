@@ -101,6 +101,22 @@ LAYOUT_CHOICES = [
 ]
 
 
+def set_lang_combo_code(combo, code):
+    """Selects the ``LANG_CHOICES`` entry matching ``code`` if there is
+    one, otherwise types ``code`` in directly (freeform entry) -- the
+    same "prefer a matching preset, fall back to as-typed" rule
+    ``make_lang_combo()`` uses for its own initial default. Pulled out
+    on its own so ``toolbox/settings.py``-backed restore_settings()
+    hooks can reapply a saved code the same way, without duplicating
+    this matching logic per tool page.
+    """
+    idx = combo.findData(code)
+    if idx >= 0:
+        combo.setCurrentIndex(idx)
+    else:
+        combo.setCurrentText(code)
+
+
 def make_lang_combo(default_code):
     """An editable QComboBox prefilled with common language pairs
     (``LANG_CHOICES``) but that still accepts a freely typed code --
@@ -111,11 +127,7 @@ def make_lang_combo(default_code):
     combo.setEditable(True)
     for display_text, code in LANG_CHOICES:
         combo.addItem(display_text, code)
-    idx = combo.findData(default_code)
-    if idx >= 0:
-        combo.setCurrentIndex(idx)
-    else:
-        combo.setCurrentText(default_code)
+    set_lang_combo_code(combo, default_code)
     return combo
 
 
