@@ -66,10 +66,29 @@ digit that has nothing to do with a date. Matching case-sensitively (not
 matching "march"/"may" lowercase) avoids the same class of collision with
 "march" the noun/verb ("the march continued").
 
+Magnitude-word equivalence: a source amount written with an English
+magnitude word ("$350bn") and a target amount written with a Chinese
+magnitude character ("3500亿美元") are the same value at different
+bases/scales, but the old check compared the bare digits ("350" vs
+"3500") as if they were unrelated numbers. A recognized "<number>
+<magnitude word>" span is expanded to its full value (350 * 1e9 ==
+3500 * 1e8) before the usual digit extraction runs, so both sides land
+on the same canonical value. Deliberately excludes single-letter
+abbreviations ("5m", "3b"): those are genuinely ambiguous (5 million? 5
+meters? 5 minutes?) and a wrong expansion silently clearing a real
+NUMBER_MISMATCH is worse than the false positive it would silence -- an
+ambiguous case is left to fire NUMBER_MISMATCH and go to human review,
+same as any other unrecognized pattern. "bn" is the one abbreviation
+kept, since it is unambiguous specifically in the financial-amount
+context this check already lives in.
+
 Caveats kept deliberately narrow (DESIGN.md says don't over-build):
 we do NOT collapse ranges (``1-3`` vs ``1 to 3``), do NOT match spelled-out
-numbers (``two`` vs ``2``), do NOT track units (``5 km`` vs ``3 miles``).
-Real translation mismatches in those cases are a different check.
+numbers (``two`` vs ``2``), and do NOT attempt unit conversion (``5 km``
+vs ``3 miles``, ``100°F`` vs ``38°C``) -- unlike month names and
+magnitude words, these are approximate-equivalence judgment calls, not
+unambiguous rule-checkable equivalence, and stay a matter for human
+review rather than something this check silently clears.
 """
 import re
 
@@ -141,6 +160,28 @@ _MONTH_TO_NUM = {
     'December': '12', 'Dec': '12',
 }
 
+# Magnitude-word matcher: a digit run immediately (optionally through
+# whitespace) followed by a recognized magnitude word/character. English
+# words use a trailing \b; the CJK characters 万/亿 don't (Python's \b is
+# \w-boundary-based, and a following CJK word character like 美 in "亿美元"
+# is itself \w, so a trailing \b after 万/亿 would never match a real
+# "<number>万/亿<more CJK text>" span) -- see the deliberate omission of
+# single-letter abbreviations in the module docstring. Case-insensitive
+# so "Million"/"MILLION"/"million" (start of sentence, headings, etc.)
+# all match the same way.
+_MAGNITUDE_RE = re.compile(
+    r'(\d+(?:\.\d+)?)\s*(thousand\b|million\b|billion\b|trillion\b|bn\b|万|亿)',
+    re.IGNORECASE)
+_MAGNITUDE_MULTIPLIER = {
+    'thousand': 1_000,
+    'million': 1_000_000,
+    'billion': 1_000_000_000,
+    'bn': 1_000_000_000,
+    'trillion': 1_000_000_000_000,
+    '万': 10_000,
+    '亿': 100_000_000,
+}
+
 
 def _expand_month_names(text):
     """Replace recognized month-name tokens with their numeral (e.g.
@@ -153,15 +194,39 @@ def _expand_month_names(text):
     return _MONTH_RE.sub(lambda m: ' ' + _MONTH_TO_NUM[m.group(1)] + ' ', text)
 
 
+def _expand_magnitude_words(text):
+    """Replace "<number> <magnitude word>" spans with the fully expanded
+    integer, e.g. "$350bn" -> "$350000000000", "3500亿美元" ->
+    "350000000000美元", so the two compare equal at the digit-extraction
+    step below instead of comparing the bare "350" against "3500" as if
+    they were different values. The whole matched span (digit run +
+    magnitude word) is replaced, so the original bare digits never also
+    end up in the output as a separate, spurious token.
+    """
+    def _expand(m):
+        value = float(m.group(1))
+        expanded = value * _MAGNITUDE_MULTIPLIER[m.group(2).lower()]
+        # Every multiplier above is >= 1000, so a fractional input like
+        # "1.5 million" always lands on a whole number; format without a
+        # trailing ".0" so it matches the plain-integer canonical form
+        # the rest of this module already produces for plain digit runs.
+        if expanded == int(expanded):
+            return ' ' + str(int(expanded)) + ' '
+        return ' ' + str(expanded) + ' '
+    return _MAGNITUDE_RE.sub(_expand, text)
+
+
 def _normalize_numbers(text):
     """Return the set of normalized numeric values found in ``text``.
 
     Normalization order matters: expand month names first (so "September"
-    becomes "9" before anything else runs), then strip currency (so
-    "$1,000" becomes "1,000"), then thousands separators ("1,000" ->
-    "1000"), then unify decimal separators ("1,5" -> "1.5"), then drop
-    trailing-zero decimals ("1.20" -> "1.2") so the final set comparison
-    is on a canonical form.
+    becomes "9" before anything else runs), then expand magnitude words
+    (so "350bn" becomes "350000000000" before thousands-separator
+    stripping could misinterpret it), then strip currency (so "$1,000"
+    becomes "1,000"), then thousands separators ("1,000" -> "1000"), then
+    unify decimal separators ("1,5" -> "1.5"), then drop trailing-zero
+    decimals ("1.20" -> "1.2") so the final set comparison is on a
+    canonical form.
 
     Kept as a single function rather than a chain of compiled regexes
     invoked inline so the normalization logic is in one place to read,
@@ -169,6 +234,7 @@ def _normalize_numbers(text):
     in, this is the only function that changes).
     """
     s = _expand_month_names(text)
+    s = _expand_magnitude_words(s)
     s = _CURRENCY_RE.sub('', s)
     s = _THOUSANDS_RE.sub('', s)
     s = _DECIMAL_RE.sub(r'\1.\2', s)

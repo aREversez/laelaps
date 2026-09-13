@@ -154,6 +154,43 @@ def test_month_name_expansion_does_not_misfire_on_lowercase_march():
     assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
 
 
+def test_no_number_mismatch_for_billion_to_yi():
+    # "$350bn" vs "3500亿美元" -- same value (350e9 == 3500e8), different
+    # base/scale. Old bare-digit comparison saw {350} vs {3500}.
+    units = [_tu('Revenue reached $350bn last year.', '去年收入达到3500亿美元。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_no_number_mismatch_for_fractional_billion_to_yi():
+    units = [_tu('The deal is worth $1.5bn.', '这笔交易价值15亿美元。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_no_number_mismatch_for_million_to_wan():
+    units = [_tu('We raised $2 million.', '我们筹集了200万美元。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_number_mismatch_still_fires_for_different_billion_amount():
+    # Real value drift ($350bn vs $450bn) must still be caught after
+    # both sides are expanded to their full canonical value.
+    units = [_tu('Revenue reached $350bn last year.', '去年收入达到4500亿美元。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_magnitude_expansion_does_not_misfire_on_single_letter_abbreviation():
+    # "5m" is genuinely ambiguous (5 million? 5 meters? 5 minutes?) and is
+    # deliberately NOT in the magnitude table -- expanding it wrongly
+    # would be worse than leaving it to the plain bare-digit comparison.
+    units = [_tu('The room is 5m long.', '这个房间长5米。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
 def test_flags_length_ratio_outlier():
     # length_ratio says target should be roughly src_len/1.0; a target
     # 1/10th the expected length should trip the outlier check.
