@@ -260,6 +260,42 @@ def _normalize_numbers(text):
     return out
 
 
+def find_number_spans(text):
+    """Return a sorted list of (start, end) character spans in the
+    *original*, untransformed ``text`` that ``_normalize_numbers()``
+    treats as numeric content -- the literal substrings a caller should
+    point at to show a reviewer *which* numbers a NUMBER_MISMATCH is
+    about (see ``toolbox/tools/qa_check/page.py``'s highlighting).
+
+    Kept separate from ``_normalize_numbers()`` rather than having that
+    function also return spans: ``_normalize_numbers()`` only needs to
+    produce a comparable canonical *value* and transforms the text
+    along the way (month/magnitude expansion), which is exactly what
+    throws away the original character offsets a highlighter needs --
+    two different contracts, so two different functions, each scanning
+    the original text directly with the same regexes rather than one
+    trying to serve both callers.
+
+    Magnitude-word and month-name spans (e.g. the whole "$350bn" or
+    "September", not just the "350"/"9" inside them) take priority over
+    the bare digit run within/near them, so the whole meaningful
+    expression gets highlighted as one unit instead of only part of it.
+    """
+    spans = []
+    claimed = []
+    for pattern in (_MAGNITUDE_RE, _MONTH_RE):
+        for m in pattern.finditer(text):
+            spans.append(m.span())
+            claimed.append(m.span())
+    for m in _RAW_DIGIT_RE.finditer(text):
+        span = m.span()
+        if any(cs <= span[0] and span[1] <= ce for cs, ce in claimed):
+            continue  # already covered by a magnitude/month span above
+        spans.append(span)
+    spans.sort()
+    return spans
+
+
 def _extract_placeholders(text):
     return set(_PLACEHOLDER_RE.findall(text))
 

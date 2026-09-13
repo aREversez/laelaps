@@ -220,6 +220,29 @@ def test_no_qa_details_when_numbers_match():
     assert 'qa_details' not in units[0].meta
 
 
+def test_find_number_spans_returns_original_substrings():
+    text = "Since he replaced Jobs in 2011, sales quadrupled to $416bn."
+    spans = qa.find_number_spans(text)
+    assert [text[s:e] for s, e in spans] == ['2011', '416bn']
+
+
+def test_find_number_spans_expands_month_and_magnitude_as_whole_tokens():
+    # "September" and "4万亿" should each highlight as one whole span, not
+    # get split into a bare digit plus leftover unrecognized characters.
+    assert [
+        '苹果市值达到4万亿美元。'[s:e]
+        for s, e in qa.find_number_spans('苹果市值达到4万亿美元。')
+    ] == ['4万亿']
+    assert [
+        'Sales grew in September.'[s:e]
+        for s, e in qa.find_number_spans('Sales grew in September.')
+    ] == ['September']
+
+
+def test_find_number_spans_returns_empty_list_for_no_numbers():
+    assert qa.find_number_spans('You may proceed.') == []
+
+
 def test_flags_length_ratio_outlier():
     # length_ratio says target should be roughly src_len/1.0; a target
     # 1/10th the expected length should trip the outlier check.
