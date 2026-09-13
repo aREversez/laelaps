@@ -25,6 +25,35 @@ just wants the punch list) and an issue-type filter dropdown. Both are
 display-only filters over data already in memory (``self._last_units``)
 -- neither re-runs QA or touches the file, so toggling them is instant.
 
+A third control, "自动换行" (unchecked by default), trades that compact
+one-row-per-item layout for readability: the default single-line view
+elides long 原文/译文 text with "…", which is the right call for scanning
+a punch list quickly but means a long sentence can't actually be read
+without opening the exported CSV. Checking it switches those two columns
+to word-wrapped, auto-growing rows instead. Only *that* toggle -- not the
+row-count filters above -- rebuilds 原文/译文 as ``QLabel`` cell widgets
+rather than plain ``QTableWidgetItem``\\ s: a ``QLabel`` is how word-wrap
+*and* rich-text highlighting (below) both become possible in one widget,
+but it also means giving up ``QTableWidgetItem``'s built-in elide, which
+is exactly why the single-line view stays on the cheap, well-tested plain
+item path and only pays that cost when the user actually asked to see
+full content. ``resizeRowsToContents()`` after populating, and again on
+every ``sectionResized`` while wrap is on (the 原文/译文 columns are
+``Stretch``-resized, so a window resize changes wrap width and therefore
+the height each row needs), keeps rows sized to their wrapped content.
+
+For a NUMBER_MISMATCH row specifically, wrap mode also highlights every
+number-like span ``qa.find_number_spans()`` finds in 原文/译文 (bold,
+danger-red -- the one semantic "problem" color this app's stylesheet
+defines, not a new decorative one). The point isn't to mark which number
+is "the" wrong one -- with a set-based comparison there often isn't a
+single answer to that, e.g. one extra number on either side shifts every
+pairing -- it's to make every number in a long sentence visually findable
+at a glance, since NUMBER_MISMATCH itself is silent about which of
+possibly several numbers in the sentence is involved (see qa.py's
+NUMBER_MISMATCH docstring and ``find_number_spans()``'s for the
+detection/highlighting split this relies on).
+
 Export is deliberately NOT filtered by the current view: "导出 CSV"
 always writes the full corpus (every unit, QA columns included) via the
 existing ``csv_writer.write(..., include_qa=True)``, unfiltered. Two
@@ -62,6 +91,13 @@ from toolbox.workers import CallableWorker
 
 _CSV_FILTER = 'CSV (*.csv)'
 
+# Bold + this app's one "problem" semantic color (see toolbox/resources/
+# style.qss's design-token comment: "danger -- semantic only, not
+# decorative") for number spans highlighted in wrap mode -- deliberately
+# not a new background-highlight color, to stay inside that existing,
+# disciplined palette rather than inventing a decorative one for this.
+_NUMBER_HIGHLIGHT_STYLE = 'color:#B23B3B; font-weight:600;'
+
 # Short tooltip per issue type, for the filter dropdown. The *label* text
 # (used both in the dropdown and now in the results table's "问题类型"
 # column -- that's the bug this comment is here to prevent recurring)
@@ -85,6 +121,25 @@ _ISSUE_TOOLTIPS = {
 
 def _issue_label(issue_code):
     return qa_module.ISSUE_LABELS.get(issue_code, issue_code)
+
+
+def _highlighted_html(text):
+    """Escape ``text`` for rich-text display, wrapping every span
+    ``qa.find_number_spans()`` finds in ``_NUMBER_HIGHLIGHT_STYLE``.
+    Spans come from the *original* text's character offsets, so slicing
+    happens before escaping each piece individually -- escaping the
+    whole string first would shift every offset past the first ``&``,
+    ``<``, or ``>`` it introduced.
+    """
+    spans = qa_module.find_number_spans(text)
+    out = []
+    pos = 0
+    for start, end in spans:
+        out.append(html.escape(text[pos:start]))
+        out.append('<b style="%s">%s</b>' % (_NUMBER_HIGHLIGHT_STYLE, html.escape(text[start:end])))
+        pos = end
+    out.append(html.escape(text[pos:]))
+    return ''.join(out)
 
 
 class QaCheckPage(QWidget):
@@ -168,6 +223,11 @@ class QaCheckPage(QWidget):
         self.type_filter_combo.currentIndexChanged.connect(self._refresh_table)
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.type_filter_combo)
+        self.wrap_chk = QCheckBox('自动换行')
+        self.wrap_chk.setToolTip(
+            '显示完整原文/译文（自动换行），并把"数字不匹配"涉及的数字标红')
+        self.wrap_chk.stateChanged.connect(self._refresh_table)
+        filter_layout.addWidget(self.wrap_chk)
         filter_layout.addStretch(1)
         results_layout.addWidget(filter_row)
 
@@ -189,6 +249,12 @@ class QaCheckPage(QWidget):
         self.results_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
+        # 原文/译文 are Stretch-resized, so a window resize changes their
+        # width and, in wrap mode, therefore the height each row needs --
+        # re-flow row heights on every resize while wrap is on. A no-op
+        # (guarded by the wrap check) while wrap is off, since plain
+        # QTableWidgetItem's elide doesn't need per-resize recalculation.
+        header.sectionResized.connect(self._on_column_resized)
         results_layout.addWidget(self.results_table, 1)
 
         outer.addWidget(section('QA 结果', results_content), 1)
@@ -263,6 +329,7 @@ class QaCheckPage(QWidget):
 
         hide_clean = self.hide_clean_chk.isChecked()
         selected_type = self.type_filter_combo.currentData()
+        wrap = self.wrap_chk.isChecked()
 
         rows = []
         for i, u in enumerate(self._last_units, 1):
@@ -278,10 +345,33 @@ class QaCheckPage(QWidget):
             conf = u.meta.get('qa_confidence', 1.0)
             issue_text = '、'.join(_issue_label(code) for code in issues) if issues else '-'
             self.results_table.setItem(row, 0, QTableWidgetItem(str(i)))
-            self.results_table.setItem(row, 1, QTableWidgetItem(u.src_text))
-            self.results_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
+            if wrap:
+                highlight = 'NUMBER_MISMATCH' in issues
+                self.results_table.setCellWidget(row, 1, self._make_wrapped_label(u.src_text, highlight))
+                self.results_table.setCellWidget(row, 2, self._make_wrapped_label(u.tgt_text, highlight))
+            else:
+                self.results_table.setItem(row, 1, QTableWidgetItem(u.src_text))
+                self.results_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
             self.results_table.setItem(row, 3, QTableWidgetItem(issue_text))
             self.results_table.setItem(row, 4, QTableWidgetItem('%.2f' % conf))
+        if wrap:
+            self.results_table.resizeRowsToContents()
+
+    def _make_wrapped_label(self, text, highlight):
+        label = QLabel()
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.RichText)
+        # Stylesheet's blanket "QWidget { background: ... }" rule (see
+        # style.qss) would otherwise paint every cell a flat, non-
+        # alternating color instead of letting the table's own
+        # alternating-row background show through this widget.
+        label.setStyleSheet('background: transparent;')
+        label.setText(_highlighted_html(text) if highlight else html.escape(text))
+        return label
+
+    def _on_column_resized(self, *_args):
+        if self.wrap_chk.isChecked():
+            self.results_table.resizeRowsToContents()
 
     # ------------------------------------------------------------ export
     def _start_export(self):

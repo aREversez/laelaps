@@ -229,3 +229,83 @@ def test_results_table_header_is_left_aligned(qtbot):
     qtbot.addWidget(page)
     alignment = page.results_table.horizontalHeader().defaultAlignment()
     assert alignment & Qt.AlignLeft
+
+
+# --------------------------------------------------------------- wrap/highlight
+
+def test_wrap_off_by_default_uses_plain_items(qtbot):
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    assert not page.wrap_chk.isChecked()
+    page.input_edit.setText(tmx_path('inline_markup_qa.tmx'))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    assert page.results_table.item(0, 1) is not None
+    assert page.results_table.cellWidget(0, 1) is None
+
+
+def test_toggling_wrap_on_switches_to_wrapped_labels(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    label = page.results_table.cellWidget(0, 1)
+    assert isinstance(label, QLabel)
+    assert label.wordWrap()
+    # item(row, col) is only meaningful for the plain-item path; wrap mode
+    # renders through a cell widget instead, so the item slot is unused.
+    assert page.results_table.item(0, 1) is None
+
+
+def test_wrap_on_highlights_mismatched_numbers_in_both_columns(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    src_html = page.results_table.cellWidget(0, 1).text()
+    tgt_html = page.results_table.cellWidget(0, 2).text()
+    assert '<b style="color:#B23B3B; font-weight:600;">42</b>' in src_html
+    assert '<b style="color:#B23B3B; font-weight:600;">43</b>' in tgt_html
+    # The rest of the sentence is untouched, plain text.
+    assert 'We shipped' in src_html
+    assert '我们发货了' in tgt_html
+
+
+def test_wrap_on_does_not_highlight_rows_without_number_mismatch(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])  # PLACEHOLDER_MISMATCH, not NUMBER_MISMATCH
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    src_html = page.results_table.cellWidget(0, 1).text()
+    assert '<b' not in src_html
+
+
+def test_toggling_wrap_off_again_restores_plain_items(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    page.wrap_chk.setChecked(False)
+    assert page.results_table.cellWidget(0, 1) is None
+    assert page.results_table.item(0, 1).text() == 'We shipped 42 units.'
