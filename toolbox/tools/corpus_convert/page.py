@@ -46,6 +46,13 @@ section with all three laid out inline in a single QHBoxLayout via
 in fact where ``alignment_check`` copied that pattern from in the first
 place, since it needs the identical three inputs; this page is just
 catching up to its own copy.
+
+Settings persistence (2026-09-13): implements the optional
+``restore_settings()``/``save_settings()`` hooks ``main_window.py``
+checks for (see that module's docstring) -- 语言/排版方式/生成格式/QA
+checkbox and the file dialog's last-used directory all round-trip across
+launches via ``toolbox/settings.py``, under the ``corpus_convert/`` key
+prefix.
 """
 import html
 import os
@@ -57,8 +64,9 @@ from PySide6.QtWidgets import (
 )
 
 from language_tools import api
+from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
-from toolbox.widgets import make_lang_combo, make_layout_combo
+from toolbox.widgets import make_lang_combo, make_layout_combo, set_lang_combo_code
 from toolbox.widgets import section as _section
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
@@ -70,6 +78,8 @@ _FORMAT_TOOLTIPS = {
     'tmx': 'CAT 工具通用记忆库格式',
     'csv': '可人工核对的表格',
 }
+
+_SETTINGS_PREFIX = 'corpus_convert/'
 
 
 class ConvertWorker(QThread):
@@ -94,6 +104,7 @@ class CorpusConvertPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker = None
+        self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         self._build_ui()
 
     # ---------------------------------------------------------------- UI
@@ -187,11 +198,35 @@ class CorpusConvertPage(QWidget):
         color = LOG_COLORS.get(kind, LOG_COLORS['info'])
         self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))
 
+    # ------------------------------------------------------------ settings
+    def restore_settings(self):
+        set_lang_combo_code(self.src_edit, settings.get_str(_SETTINGS_PREFIX + 'srcLang', 'en-US'))
+        set_lang_combo_code(self.tgt_edit, settings.get_str(_SETTINGS_PREFIX + 'tgtLang', 'zh-CN'))
+        idx = self.layout_combo.findData(settings.get_str(_SETTINGS_PREFIX + 'layout', 'auto'))
+        if idx >= 0:
+            self.layout_combo.setCurrentIndex(idx)
+        self.chk_sdltm.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtSdltm', True))
+        self.chk_tmx.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtTmx', True))
+        self.chk_csv.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtCsv', True))
+        self.chk_qa.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'qa', False))
+        self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
+
+    def save_settings(self):
+        settings.set_value(_SETTINGS_PREFIX + 'srcLang', lang_combo_code(self.src_edit))
+        settings.set_value(_SETTINGS_PREFIX + 'tgtLang', lang_combo_code(self.tgt_edit))
+        settings.set_value(_SETTINGS_PREFIX + 'layout', self.layout_combo.currentData())
+        settings.set_value(_SETTINGS_PREFIX + 'fmtSdltm', self.chk_sdltm.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'fmtTmx', self.chk_tmx.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'fmtCsv', self.chk_csv.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'qa', self.chk_qa.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
+
     # ------------------------------------------------------------ actions
     def _browse_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _SUPPORTED_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, _SUPPORTED_FILTER)
         if path:
             self.input_edit.setText(path)  # triggers _sync_format_checkboxes via textChanged
+            self._last_dir = os.path.dirname(path)
 
     def _sync_format_checkboxes(self, input_path):
         """Grey out (disable + uncheck) the 生成格式 checkbox matching the
