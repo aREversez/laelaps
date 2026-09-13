@@ -2,6 +2,7 @@ import os
 import shutil
 
 from toolbox.tools.batch_convert.page import BatchConvertPage
+from toolbox.widgets import lang_combo_code
 
 from conftest import fixture_path, tmx_path
 
@@ -295,3 +296,74 @@ def test_cancelling_add_files_dialog_does_not_clear_finished_rows(qtbot, tmp_pat
     assert page._paths == [str(good_src)]
     assert page.file_table.rowCount() == 1
     assert '成功' in _status_text(page, 0)
+
+
+# ------------------------------------------------------------- settings
+
+def test_restore_settings_defaults_when_nothing_saved_yet(qtbot):
+    page = BatchConvertPage()
+    qtbot.addWidget(page)
+    page.restore_settings()
+    assert lang_combo_code(page.src_edit) == 'en-US'
+    assert lang_combo_code(page.tgt_edit) == 'zh-CN'
+    assert page.layout_combo.currentData() == 'auto'
+    assert page.chk_sdltm.isChecked() and page.chk_tmx.isChecked() and page.chk_csv.isChecked()
+    assert page.chk_qa.isChecked() is False
+    assert page._last_dir == ''
+
+
+def test_save_then_restore_settings_round_trips(qtbot):
+    page = BatchConvertPage()
+    qtbot.addWidget(page)
+    page.src_edit.setEditText('fr-FR')
+    page.tgt_edit.setEditText('de-DE')
+    idx = page.layout_combo.findData('alternating')
+    page.layout_combo.setCurrentIndex(idx)
+    page.chk_sdltm.setChecked(False)
+    page.chk_qa.setChecked(True)
+    page._last_dir = '/some/batch/folder'
+    page.save_settings()
+
+    fresh = BatchConvertPage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert lang_combo_code(fresh.src_edit) == 'fr-FR'
+    assert lang_combo_code(fresh.tgt_edit) == 'de-DE'
+    assert fresh.layout_combo.currentData() == 'alternating'
+    assert fresh.chk_sdltm.isChecked() is False
+    assert fresh.chk_tmx.isChecked() is True
+    assert fresh.chk_csv.isChecked() is True
+    assert fresh.chk_qa.isChecked() is True
+    assert fresh._last_dir == '/some/batch/folder'
+
+
+def test_add_files_and_add_folder_share_and_update_last_dir(qtbot, tmp_path, monkeypatch):
+    page = BatchConvertPage()
+    qtbot.addWidget(page)
+    page._last_dir = '/wherever/i/was'
+
+    seen = {}
+    src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+
+    def _fake_get_files(parent, caption, dir_, filt):
+        seen['files_start_dir'] = dir_
+        return [str(src)], ''
+
+    monkeypatch.setattr(
+        'toolbox.tools.batch_convert.page.QFileDialog.getOpenFileNames', _fake_get_files)
+    page._add_files()
+    assert seen['files_start_dir'] == '/wherever/i/was'
+    assert page._last_dir == str(tmp_path)  # moved to wherever the picked file lives
+
+    other_dir = tmp_path / 'next'
+    other_dir.mkdir()
+
+    def _fake_get_folder(parent, caption, dir_):
+        seen['folder_start_dir'] = dir_
+        return str(other_dir)
+
+    monkeypatch.setattr(
+        'toolbox.tools.batch_convert.page.QFileDialog.getExistingDirectory', _fake_get_folder)
+    page._add_folder()
+    assert seen['folder_start_dir'] == str(tmp_path)  # picked up where 添加文件 left it
+    assert page._last_dir == str(other_dir)  # ...and moved on to the folder just picked

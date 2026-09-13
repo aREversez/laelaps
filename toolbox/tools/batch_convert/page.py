@@ -36,6 +36,15 @@ has a terminal result (success or error), keeping only rows still
 等待中, before appending what was just picked. Deliberately not
 conditioned on file-vs-folder -- a different clearing rule for each would
 be one more thing to remember, for no real benefit.
+
+Settings persistence (2026-09-13): implements the optional
+``restore_settings()``/``save_settings()`` hooks ``main_window.py``
+checks for -- see ``corpus_convert/page.py``'s module docstring, this
+page's version is the same idea under the ``batch_convert/`` key prefix.
+The one added field over ``corpus_convert``: a single ``lastDir`` shared
+by both 添加文件 and 添加文件夹 (rather than one each) -- either action
+is "where was I last working" in the same sense, so whichever one you
+used most recently is where the other should also start browsing from.
 """
 import os
 
@@ -47,8 +56,9 @@ from PySide6.QtWidgets import (
 )
 
 from language_tools import api
+from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
-from toolbox.widgets import make_lang_combo, make_layout_combo
+from toolbox.widgets import make_lang_combo, make_layout_combo, set_lang_combo_code
 from toolbox.widgets import section as _section
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
@@ -72,6 +82,8 @@ _SAME_FORMAT_SKIP = {'.tmx': 'tmx', '.sdltm': 'sdltm', '.csv': 'csv'}
 
 _STATUS_PENDING = '等待中'
 _STATUS_RUNNING = '转换中…'
+
+_SETTINGS_PREFIX = 'batch_convert/'
 
 
 class BatchConvertWorker(QThread):
@@ -137,6 +149,7 @@ class BatchConvertPage(QWidget):
         self._paths = []     # str, in the same order as the table's rows
         self._row_done = []  # bool per row -- True once it has a terminal (success/error) result
         self._worker = None
+        self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         self._build_ui()
 
     # ---------------------------------------------------------------- UI
@@ -245,16 +258,17 @@ class BatchConvertPage(QWidget):
 
     # ------------------------------------------------------------ file list
     def _add_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件', '', _SUPPORTED_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件', self._last_dir, _SUPPORTED_FILTER)
         if not paths:
             return
         self._clear_completed_rows()
         for path in paths:
             self._append_path(path)
+        self._last_dir = os.path.dirname(paths[-1])
         self._refresh_count()
 
     def _add_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, '选择文件夹')
+        folder = QFileDialog.getExistingDirectory(self, '选择文件夹', self._last_dir)
         if not folder:
             return
         self._clear_completed_rows()
@@ -263,6 +277,7 @@ class BatchConvertPage(QWidget):
             for name in sorted(files):
                 if os.path.splitext(name)[1].lower() in _SUPPORTED_EXTS:
                     self._append_path(os.path.join(root, name))
+        self._last_dir = folder
         self._refresh_count()
 
     def _clear_completed_rows(self):
@@ -309,6 +324,29 @@ class BatchConvertPage(QWidget):
         item = QTableWidgetItem(text)
         item.setForeground(QColor(LOG_COLORS.get(kind, LOG_COLORS['info'])))
         self.file_table.setItem(row, 1, item)
+
+    # ------------------------------------------------------------ settings
+    def restore_settings(self):
+        set_lang_combo_code(self.src_edit, settings.get_str(_SETTINGS_PREFIX + 'srcLang', 'en-US'))
+        set_lang_combo_code(self.tgt_edit, settings.get_str(_SETTINGS_PREFIX + 'tgtLang', 'zh-CN'))
+        idx = self.layout_combo.findData(settings.get_str(_SETTINGS_PREFIX + 'layout', 'auto'))
+        if idx >= 0:
+            self.layout_combo.setCurrentIndex(idx)
+        self.chk_sdltm.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtSdltm', True))
+        self.chk_tmx.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtTmx', True))
+        self.chk_csv.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtCsv', True))
+        self.chk_qa.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'qa', False))
+        self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
+
+    def save_settings(self):
+        settings.set_value(_SETTINGS_PREFIX + 'srcLang', lang_combo_code(self.src_edit))
+        settings.set_value(_SETTINGS_PREFIX + 'tgtLang', lang_combo_code(self.tgt_edit))
+        settings.set_value(_SETTINGS_PREFIX + 'layout', self.layout_combo.currentData())
+        settings.set_value(_SETTINGS_PREFIX + 'fmtSdltm', self.chk_sdltm.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'fmtTmx', self.chk_tmx.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'fmtCsv', self.chk_csv.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'qa', self.chk_qa.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
     # ------------------------------------------------------------ actions
     def _validate(self):
