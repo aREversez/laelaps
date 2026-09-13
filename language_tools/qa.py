@@ -330,7 +330,11 @@ ISSUE_LABELS = {
 
 def run(units, length_ratio):
     """Mutates each unit's meta in place: 'qa_issues' (list[str]) and
-    'qa_confidence' (float, 1.0 = no issues found). Returns units for
+    'qa_confidence' (float, 1.0 = no issues found). On NUMBER_MISMATCH
+    specifically, also sets 'qa_details' -> {'NUMBER_MISMATCH':
+    {'src_numbers': [...], 'tgt_numbers': [...]}} with the normalized
+    numbers found on each side, for diagnosing real TM output later
+    (not currently surfaced by the CSV/GUI report). Returns units for
     chaining convenience.
 
     Consistency check flags SOURCE_CONFLICT/TARGET_CONFLICT -- the same
@@ -369,8 +373,18 @@ def run(units, length_ratio):
                 ratio = tgt_len / max(expected, 1e-6)
                 if ratio < 0.3 or ratio > 3.0:
                     issues.append('LENGTH_RATIO_OUTLIER')
-            if _normalize_numbers(src) != _normalize_numbers(tgt):
+            src_numbers, tgt_numbers = _normalize_numbers(src), _normalize_numbers(tgt)
+            if src_numbers != tgt_numbers:
                 issues.append('NUMBER_MISMATCH')
+                # Not surfaced in the CSV/GUI report yet -- this is just
+                # somewhere to look when sampling real TM output to decide
+                # whether a recurring false-positive pattern is worth a
+                # new high-confidence equivalence rule (month names,
+                # magnitude words, ...) versus a genuine mismatch.
+                u.meta.setdefault('qa_details', {})['NUMBER_MISMATCH'] = {
+                    'src_numbers': sorted(src_numbers),
+                    'tgt_numbers': sorted(tgt_numbers),
+                }
             if _extract_placeholders(src) != _extract_placeholders(tgt):
                 issues.append('PLACEHOLDER_MISMATCH')
             if _extract_urls(src) != _extract_urls(tgt):

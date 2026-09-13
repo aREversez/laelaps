@@ -191,6 +191,19 @@ def test_magnitude_expansion_does_not_misfire_on_single_letter_abbreviation():
     assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
 
 
+def test_number_mismatch_sets_qa_details_with_normalized_numbers_on_each_side():
+    units = [_tu('We shipped 42 units.', '我们发货了43个单位。')]
+    qa.run(units, length_ratio=1.0)
+    details = units[0].meta['qa_details']['NUMBER_MISMATCH']
+    assert details == {'src_numbers': ['42'], 'tgt_numbers': ['43']}
+
+
+def test_no_qa_details_when_numbers_match():
+    units = [_tu('We shipped 42 units.', '我们发货了42个单位。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'qa_details' not in units[0].meta
+
+
 def test_flags_length_ratio_outlier():
     # length_ratio says target should be roughly src_len/1.0; a target
     # 1/10th the expected length should trip the outlier check.
