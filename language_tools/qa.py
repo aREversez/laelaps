@@ -50,6 +50,22 @@ before comparison:
   currency formatting, and a translation that writes "1000 dollars" for
   "$1,000" is correct, not a mismatch
 
+Month-name equivalence: en-US source TMs commonly write a month as a name
+("September") while the zh-CN target writes it as a digit ("9月") -- both
+express the same value but the old raw-digit-only extraction saw an empty
+number set on the source side and a non-empty one on the target side, a
+guaranteed false NUMBER_MISMATCH on any TU mentioning a month by name. A
+recognized month name is expanded to its numeral before the usual digit
+extraction runs, so both sides land on the same canonical value. Kept to a
+literal lookup table (no date parsing) and case-sensitive on purpose:
+"May" is excluded entirely because it collides with the common modal verb
+("You may proceed") and a false *expansion* there is worse than leaving
+this one month unhandled -- it would silently add a spurious "5" to the
+number set and could flag or clear NUMBER_MISMATCH based on an accidental
+digit that has nothing to do with a date. Matching case-sensitively (not
+matching "march"/"may" lowercase) avoids the same class of collision with
+"march" the noun/verb ("the march continued").
+
 Caveats kept deliberately narrow (DESIGN.md says don't over-build):
 we do NOT collapse ranges (``1-3`` vs ``1 to 3``), do NOT match spelled-out
 numbers (``two`` vs ``2``), do NOT track units (``5 km`` vs ``3 miles``).
@@ -102,21 +118,58 @@ _URL_TRAILING_PUNCT = '.,;:!?)\'"\u3001\u3002\uff0c\uff1b\uff1a\uff01\uff1f\uff0
 # like ``<bpt i="1">&lt;b&gt;</bpt>`` (an InlineNode 'tag' node's content).
 _TAG_NAME_RE = re.compile(r'<\s*([a-zA-Z][\w:-]*)')
 
+# Month-name matcher: case-sensitive on purpose (see module docstring --
+# lowercase "march"/"may" collide with the common noun/verb and modal
+# verb respectively). "May" is deliberately absent from both the regex
+# and the table below. Matched *before* the trailing "." so "Sept." and
+# "Sept" both come out as "Sept" in group 1.
+_MONTH_RE = re.compile(
+    r'\b(January|February|March|April|June|July|August|September|'
+    r'October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|'
+    r'Oct|Nov|Dec)\.?\b')
+_MONTH_TO_NUM = {
+    'January': '1', 'Jan': '1',
+    'February': '2', 'Feb': '2',
+    'March': '3', 'Mar': '3',
+    'April': '4', 'Apr': '4',
+    'June': '6', 'Jun': '6',
+    'July': '7', 'Jul': '7',
+    'August': '8', 'Aug': '8',
+    'September': '9', 'Sep': '9', 'Sept': '9',
+    'October': '10', 'Oct': '10',
+    'November': '11', 'Nov': '11',
+    'December': '12', 'Dec': '12',
+}
+
+
+def _expand_month_names(text):
+    """Replace recognized month-name tokens with their numeral (e.g.
+    "September" -> "9", "Sept." -> "9") so the digit extraction below
+    picks them up the same way it already picks up an explicit "9月" on
+    the other side. Padded with spaces so an expansion never fuses with
+    an adjacent digit (e.g. "March 3" -> "3 3", two separate tokens, not
+    "33").
+    """
+    return _MONTH_RE.sub(lambda m: ' ' + _MONTH_TO_NUM[m.group(1)] + ' ', text)
+
 
 def _normalize_numbers(text):
     """Return the set of normalized numeric values found in ``text``.
 
-    Normalization order matters: strip currency first (so "$1,000" becomes
-    "1,000"), then thousands separators ("1,000" -> "1000"), then unify
-    decimal separators ("1,5" -> "1.5"), then drop trailing-zero decimals
-    ("1.20" -> "1.2") so the final set comparison is on a canonical form.
+    Normalization order matters: expand month names first (so "September"
+    becomes "9" before anything else runs), then strip currency (so
+    "$1,000" becomes "1,000"), then thousands separators ("1,000" ->
+    "1000"), then unify decimal separators ("1,5" -> "1.5"), then drop
+    trailing-zero decimals ("1.20" -> "1.2") so the final set comparison
+    is on a canonical form.
 
     Kept as a single function rather than a chain of compiled regexes
     invoked inline so the normalization logic is in one place to read,
     audit, and extend (e.g. if we later want to fold spelled-out numbers
     in, this is the only function that changes).
     """
-    s = _CURRENCY_RE.sub('', text)
+    s = _expand_month_names(text)
+    s = _CURRENCY_RE.sub('', s)
     s = _THOUSANDS_RE.sub('', s)
     s = _DECIMAL_RE.sub(r'\1.\2', s)
     out = set()

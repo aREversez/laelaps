@@ -116,6 +116,44 @@ def test_number_mismatch_still_fires_for_extra_number_in_translation():
     assert 'NUMBER_MISMATCH' in units[0].meta['qa_issues']
 
 
+def test_no_number_mismatch_for_month_name_to_numeric_month():
+    # "September" (no digits at all) vs "9月" -- both express month 9.
+    # Old raw-digit-only extraction saw {} vs {"9"} and false-fired.
+    units = [_tu('Sales grew in September.', '销售额在9月增长。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_no_number_mismatch_for_abbreviated_month_name():
+    units = [_tu('Sept. 2024 report.', '2024年9月报告。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_number_mismatch_still_fires_for_different_month():
+    units = [_tu('Sales grew in September.', '销售额在10月增长。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_month_name_expansion_does_not_misfire_on_modal_verb_may():
+    # "May" is deliberately excluded from the month table -- it collides
+    # with the common modal verb. A wrong expansion here (treating "may"
+    # as month 5) would inject a spurious digit and could false-fire
+    # NUMBER_MISMATCH against a target with no corresponding "5".
+    units = [_tu('You may proceed.', '您可以继续。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_month_name_expansion_does_not_misfire_on_lowercase_march():
+    # Lowercase "march" (the noun/verb, e.g. a protest march) must not be
+    # treated as the month -- only case-sensitive "March" is.
+    units = [_tu('The march continued for hours.', '游行持续了几个小时。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
 def test_flags_length_ratio_outlier():
     # length_ratio says target should be roughly src_len/1.0; a target
     # 1/10th the expected length should trip the outlier check.
