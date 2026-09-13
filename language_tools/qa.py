@@ -78,9 +78,15 @@ abbreviations ("5m", "3b"): those are genuinely ambiguous (5 million? 5
 meters? 5 minutes?) and a wrong expansion silently clearing a real
 NUMBER_MISMATCH is worse than the false positive it would silence -- an
 ambiguous case is left to fire NUMBER_MISMATCH and go to human review,
-same as any other unrecognized pattern. "bn" is the one abbreviation
-kept, since it is unambiguous specifically in the financial-amount
-context this check already lives in.
+same as any other unrecognized pattern. "bn"/"trn" are the two
+abbreviations kept, since they are unambiguous specifically in the
+financial-amount context this check already lives in. "万亿" (trillion,
+literally "ten-thousand yi") is matched as its own two-character token
+ahead of the bare "万"/"亿" alternatives -- matching "万" alone first
+would consume only the "万" half of "4万亿" and leave a dangling,
+unmatched "亿" behind, silently computing the wrong value (40,000
+instead of 4,000,000,000,000) instead of either raising a mismatch or
+matching correctly.
 
 Caveats kept deliberately narrow (DESIGN.md says don't over-build):
 we do NOT collapse ranges (``1-3`` vs ``1 to 3``), do NOT match spelled-out
@@ -170,7 +176,7 @@ _MONTH_TO_NUM = {
 # so "Million"/"MILLION"/"million" (start of sentence, headings, etc.)
 # all match the same way.
 _MAGNITUDE_RE = re.compile(
-    r'(\d+(?:\.\d+)?)\s*(thousand\b|million\b|billion\b|trillion\b|bn\b|万|亿)',
+    r'(\d+(?:\.\d+)?)\s*(thousand\b|million\b|billion\b|trillion\b|trn\b|bn\b|万亿|万|亿)',
     re.IGNORECASE)
 _MAGNITUDE_MULTIPLIER = {
     'thousand': 1_000,
@@ -178,6 +184,8 @@ _MAGNITUDE_MULTIPLIER = {
     'billion': 1_000_000_000,
     'bn': 1_000_000_000,
     'trillion': 1_000_000_000_000,
+    'trn': 1_000_000_000_000,
+    '万亿': 1_000_000_000_000,
     '万': 10_000,
     '亿': 100_000_000,
 }

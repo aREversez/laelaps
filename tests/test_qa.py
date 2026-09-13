@@ -174,6 +174,21 @@ def test_no_number_mismatch_for_million_to_wan():
     assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
 
 
+def test_no_number_mismatch_for_trn_to_wanyi():
+    # "$4trn" vs "4万亿美元" -- "万亿" (literally "ten-thousand yi") is
+    # trillion, matched as its own two-character token so it doesn't get
+    # chopped into "万" (10,000) with a dangling, unmatched "亿" left over.
+    units = [_tu("Apple's market value hit $4trn.", '苹果市值达到4万亿美元。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_number_mismatch_still_fires_for_different_trillion_amount():
+    units = [_tu("Apple's market value hit $4trn.", '苹果市值达到5万亿美元。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'NUMBER_MISMATCH' in units[0].meta['qa_issues']
+
+
 def test_number_mismatch_still_fires_for_different_billion_amount():
     # Real value drift ($350bn vs $450bn) must still be caught after
     # both sides are expanded to their full canonical value.
@@ -189,6 +204,7 @@ def test_magnitude_expansion_does_not_misfire_on_single_letter_abbreviation():
     units = [_tu('The room is 5m long.', '这个房间长5米。')]
     qa.run(units, length_ratio=1.0)
     assert 'NUMBER_MISMATCH' not in units[0].meta['qa_issues']
+
 
 
 def test_number_mismatch_sets_qa_details_with_normalized_numbers_on_each_side():
