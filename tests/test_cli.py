@@ -81,12 +81,26 @@ def test_cli_docx_layout_override(tmp_path):
 
 
 def test_cli_min_confidence_reported(tmp_path):
+    # Uses a purpose-built CSV rather than the shared basic.docx fixture:
+    # basic.docx's one-time "Apple Inc. ... Jan. 2024" / "...2024年1月..."
+    # NUMBER_MISMATCH is now correctly recognized as a false positive (see
+    # test_qa.py's month-name-equivalence tests) and no longer flagged, so
+    # basic.docx no longer has a QA issue to filter on here. This fixture
+    # has a genuine, unambiguous digit mismatch (42 vs 43) that stays a
+    # real mismatch regardless of future equivalence rules.
+    src_csv = tmp_path / 'src.csv'
+    src_csv.write_text(
+        'EN,ZH\n'
+        'We shipped 42 units.,我们发货了43个单位。\n'
+        'Hello there.,你好。\n'
+        'Good morning.,早上好。\n'
+        'See you soon.,回头见。\n',
+        encoding='utf-8')
     out_base = str(tmp_path / 'out')
-    # basic.docx has one unit with a real NUMBER_MISMATCH issue (confidence
-    # 0.75) and three clean ones (confidence 1.0) -- 0.9 filters out just
-    # the one with an issue, not everything, which also exercises a normal
-    # (not edge-case) --min-confidence value end to end.
-    result = _run([fixture_path('basic.docx'), '-o', out_base, '--src', 'en-US', '--tgt', 'zh-CN',
+    # 0.9 filters out just the one unit with a real issue (confidence
+    # 0.75), not everything, which also exercises a normal (not
+    # edge-case) --min-confidence value end to end.
+    result = _run([str(src_csv), '-o', out_base, '--src', 'en-US', '--tgt', 'zh-CN',
                    '--min-confidence', '0.9'])
     assert result.returncode == 0, result.stderr
     assert 'Units=4' in result.stdout
