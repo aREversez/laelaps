@@ -90,8 +90,8 @@ from language_tools.terms.filelock import FileLock, office_lock_marker_exists
 from language_tools.terms.model import STATUSES, TermEntry
 from language_tools.tm import io as tm_io
 from language_tools.writers import csv_writer
-from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
-from toolbox.widgets import make_lang_combo, section
+from toolbox.widgets import CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field
+from toolbox.widgets import lang_combo_code, make_lang_combo, section
 from toolbox.workers import CallableWorker
 
 _GLOSSARY_OPEN_FILTER = 'Glossary files (*.csv *.xlsx)'
@@ -104,7 +104,6 @@ _GLOSSARY_OPEN_FILTER = 'Glossary files (*.csv *.xlsx)'
 # which format the person actually wanted, unless they typed ".xlsx" into
 # the filename themselves.
 _GLOSSARY_SAVE_FILTER = 'CSV (*.csv);;Excel (*.xlsx)'
-_CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 _CSV_FILTER = 'CSV (*.csv)'
 
 
@@ -663,7 +662,7 @@ class TermManagementPage(QWidget):
         return tab
 
     def _browse_check_corpus(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', CORPUS_FILTER)
         if path:
             self.check_corpus_edit.setText(path)
 

@@ -57,10 +57,9 @@ from language_tools import qa as qa_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
-from toolbox.widgets import LOG_COLORS, section
+from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, section
 from toolbox.workers import CallableWorker
 
-_CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 _CSV_FILTER = 'CSV (*.csv)'
 
 # Short tooltip per issue type, for the filter dropdown. The *label* text
@@ -204,7 +203,7 @@ class QaCheckPage(QWidget):
 
     # ------------------------------------------------------------- dialogs
     def _browse_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', CORPUS_FILTER)
         if path:
             self.input_edit.setText(path)
 

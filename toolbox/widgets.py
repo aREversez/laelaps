@@ -33,6 +33,14 @@ sites switched over.
 append-only result log's text color -- five private copies of the same
 three hex codes, well past the "third call site" signal, so promoted
 here now with every call site switched over.
+
+``CORPUS_FILTER`` (the ``'Corpus files (*.tmx *.sdltm)'`` string passed
+to ``QFileDialog.getOpenFileName``/``getOpenFileNames`` whenever a tool
+picks an existing tmx/sdltm) is the same pattern a fourth time:
+``qa_check``, ``term_management``, and ``tm_maintenance`` each had their
+own private ``_CORPUS_FILTER`` copy already -- three, right at the
+promotion line -- and ``tm_editor`` needing the identical string as its
+fourth independent copy is what actually triggered doing it.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QVBoxLayout, QWidget
@@ -42,6 +50,9 @@ from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QVBoxLayout, QWidget
 # batch_convert onward, per-row status text too): gray for a neutral
 # progress note, red for a failure, green for a success.
 LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
+
+# Shared by every tool page's "open an existing tmx/sdltm" file dialog.
+CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 
 
 def section(title, content_widget):

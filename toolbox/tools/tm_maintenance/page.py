@@ -45,10 +45,9 @@ from language_tools.tm import clean as clean_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import merge as merge_module
 from language_tools.tm import stats as stats_module
-from toolbox.widgets import LOG_COLORS, compact_combo, labeled_field, section
+from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, compact_combo, labeled_field, section
 from toolbox.workers import CallableWorker
 
-_CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
 
 _CLEAN_TOOLTIPS = {
@@ -320,7 +319,7 @@ class TmMaintenancePage(QWidget):
 
     # ------------------------------------------------------- file dialogs
     def _browse_clean_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', CORPUS_FILTER)
         if path:
             self.clean_input_edit.setText(path)
 
@@ -330,7 +329,7 @@ class TmMaintenancePage(QWidget):
             self.clean_output_edit.setText(path)
 
     def _browse_merge_inputs(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件（可多选）', '', _CORPUS_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件（可多选）', '', CORPUS_FILTER)
         existing = {self.merge_list.item(i).text() for i in range(self.merge_list.count())}
         for path in paths:
             if path not in existing:
@@ -346,7 +345,7 @@ class TmMaintenancePage(QWidget):
             self.merge_output_edit.setText(path)
 
     def _browse_stats_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', CORPUS_FILTER)
         if path:
             self.stats_input_edit.setText(path)
 
