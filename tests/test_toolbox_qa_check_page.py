@@ -426,6 +426,43 @@ def test_short_row_matches_non_wrap_row_height_exactly(qtbot, tmp_path):
     assert page.results_table.rowHeight(long_row) > non_wrap_height
 
 
+def test_wrap_row_height_is_never_less_than_the_content_actually_needs(qtbot, tmp_path):
+    # Regression guard for a specific, previously-real bug: setting an
+    # early row's wrapped height can itself make the vertical scrollbar
+    # newly appear (total content now taller than the viewport), which
+    # narrows the Stretch-resized columns -- so a height computed
+    # against that row's width *before* the scrollbar appeared could
+    # already be stale/too-short by the time later rows (and therefore
+    # the scrollbar) exist, clipping that row's last line. This exact
+    # geometry (one long multi-line row, one short row, this window
+    # size) was confirmed empirically to flip the scrollbar on right as
+    # the first row's height grows -- columnWidth(1) measured 262 while
+    # sizing row 0, then settled at 255 once row 1 existed too.
+    long_src = (
+        'We shipped 42 units to the warehouse last quarter, well above '
+        'the 43 units originally forecast for the same period, and '
+        'expect volumes to keep rising through year end.')
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u(long_src, '我们发货了43个单位。'), _u('Hi!', '你好！')])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.resize(700, 500)
+    page.show()
+    qtbot.waitExposed(page)
+    page.hide_clean_chk.setChecked(False)  # keep the clean "Hi!" row visible too
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    for row in range(page.results_table.rowCount()):
+        label = page.results_table.cellWidget(row, 1)
+        needed = label.heightForWidth(page.results_table.columnWidth(1))
+        assert page.results_table.rowHeight(row) >= needed, (
+            f'row {row}: height={page.results_table.rowHeight(row)} '
+            f'but content needs {needed}')
+
+
 def test_wrap_row_height_updates_when_window_is_resized(qtbot, tmp_path):
     # A window narrower than before means the Stretch-resized 原文/译文
     # columns get narrower too, so a row that fit on one line at the old

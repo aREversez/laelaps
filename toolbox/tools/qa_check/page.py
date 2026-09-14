@@ -84,20 +84,24 @@ what gets marked (and the label's tooltip carries the untruncated
 original, so the full sentence is still one hover away without switching
 to wrap mode).
 
-Row height in wrap mode is computed explicitly with ``QTextDocument``
-sized to each column's actual current width, rather than relying on
-``QTableWidget.resizeRowsToContents()`` calling the cell widgets'
-``sizeHint()``: a freshly-``setCellWidget``'d ``QLabel`` doesn't reliably
-know its final on-screen width yet when ``sizeHint()`` is queried
-synchronously right after insertion, which made every row -- even a
-three-character one -- grow to some uniform, overly-tall guess. Computing
-the needed height directly from the known column width and the actual
-HTML content sidesteps that timing problem entirely, so short entries
-stay short and only content that genuinely wraps grows -- floored at
-``verticalHeader().defaultSectionSize()`` (the same height a plain,
-non-wrap row already uses) so a one-line wrapped row comes out
-pixel-identical to a non-wrap row instead of measurably taller, which is
-what a naive "measured text height + a fixed padding constant" produced.
+Row height in wrap mode is set explicitly via each label's own
+``heightForWidth(column_width)`` -- not ``QTableWidget.resizeRowsToContents()``
+calling the cell widgets' plain ``sizeHint()`` (a freshly-``setCellWidget``'d
+QLabel doesn't reliably know its final on-screen width yet when bare
+``sizeHint()`` is queried synchronously right after insertion, which made
+every row -- even a three-character one -- grow to some uniform,
+overly-tall guess), and not a hand-rolled ``QTextDocument`` measurement
+either (tried next: it came out shorter than what the real QLabel needed
+at the same width -- a font-metrics/line-height detail between
+QTextDocument's layout and QLabel's own, confirmed empirically -- and
+clipped wrapped content as a result). ``heightForWidth(w)`` sidesteps
+both problems: it takes the width as an explicit argument rather than
+reading the widget's current geometry, so it's accurate even before any
+layout pass, and it's the actual widget's own measurement of itself, so
+there's no second implementation of text layout to keep in sync with
+Qt's. Floored at ``verticalHeader().defaultSectionSize()`` (the same
+height a plain, non-wrap row already uses) so a one-line wrapped row
+comes out pixel-identical to a non-wrap row instead of measurably taller.
 
 A window resize changes the Stretch-resized 原文/译文 columns' width,
 which affects both wrap mode's row heights (more/fewer lines needed) and
@@ -134,7 +138,6 @@ import html
 import os
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget,
@@ -235,30 +238,6 @@ def _highlighted_html(text, spans):
         pos = end
     out.append(html.escape(text[pos:]))
     return ''.join(out)
-
-
-def _wrapped_text_height(rich_text, width, font):
-    """Height (px) ``rich_text`` needs when word-wrapped to ``width`` at
-    ``font`` -- computed directly with a ``QTextDocument`` rather than
-    asking a ``QLabel`` for its ``sizeHint()``, which is unreliable
-    immediately after ``setCellWidget()`` (see module docstring: every
-    row was coming out a uniform, overly-tall guess regardless of actual
-    content). ``width`` capped at a small minimum so a column dragged to
-    near-zero width doesn't hand ``QTextDocument`` a degenerate/negative
-    value. Document margin zeroed out: ``QTextDocument`` adds its own
-    ~4px padding on every side by default, which stacked with the
-    normal single-line row height already used by a plain
-    QTableWidgetItem row and made even a one-line wrapped row measurably
-    taller than an equivalent non-wrap row -- see ``_resize_wrap_row()``
-    for how the two are reconciled to match exactly for single-line
-    content.
-    """
-    doc = QTextDocument()
-    doc.setDocumentMargin(0)
-    doc.setDefaultFont(font)
-    doc.setHtml(rich_text)
-    doc.setTextWidth(max(width, 10))
-    return doc.size().height()
 
 
 class QaCheckPage(QWidget):
@@ -483,6 +462,7 @@ class QaCheckPage(QWidget):
             any(highlightable_types.intersection(issues) for _, _, issues in rows))
 
         self.results_table.setRowCount(len(rows))
+        wrap_labels = []  # (row, src_label, tgt_label), sized in a second pass below
         for row, (i, u, issues) in enumerate(rows):
             conf = u.meta.get('qa_confidence', 1.0)
             issue_text = '、'.join(_issue_label(code) for code in issues) if issues else '-'
@@ -494,12 +474,44 @@ class QaCheckPage(QWidget):
                 self.results_table.setCellWidget(row, 1, src_label)
                 self.results_table.setCellWidget(row, 2, tgt_label)
                 if wrap:
-                    self._resize_wrap_row(row, src_label, tgt_label)
+                    wrap_labels.append((row, src_label, tgt_label))
             else:
                 self.results_table.setItem(row, 1, QTableWidgetItem(u.src_text))
                 self.results_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
             self.results_table.setItem(row, 3, QTableWidgetItem(issue_text))
             self.results_table.setItem(row, 4, QTableWidgetItem('%.2f' % conf))
+        # Row heights are set only after every row's cell widgets exist,
+        # not inline in the loop above: setting an early row's height can
+        # itself make the vertical scrollbar appear (total content now
+        # taller than the viewport), which narrows the Stretch-resized
+        # columns -- so a height computed against that row's width *before*
+        # the scrollbar appeared could already be stale, too short, by the
+        # time the last row is added (confirmed empirically: columnWidth(1)
+        # measured 262 while sizing row 0, then settled at 255 once later
+        # rows pushed the scrollbar into existence -- row 0's height was
+        # quietly wrong, clipping its second line). Waiting until row count
+        # and therefore scrollbar state are both final avoids computing
+        # against a width that's about to change under it.
+        self._apply_wrap_row_heights(wrap_labels)
+
+    def _apply_wrap_row_heights(self, wrap_labels):
+        if not wrap_labels:
+            return
+        width_before = (self.results_table.columnWidth(1), self.results_table.columnWidth(2))
+        for row, src_label, tgt_label in wrap_labels:
+            self._resize_wrap_row(row, src_label, tgt_label)
+        # Applying those heights can itself be what makes the vertical
+        # scrollbar newly appear (or disappear) -- same mechanism as the
+        # comment above, just now possible *within* this pass instead of
+        # only between the widget-creation and height passes. One
+        # recompute against the now-settled width is enough: a scrollbar
+        # can only flip once as a consequence of heights that already
+        # account for its presence, so this converges without needing an
+        # open-ended retry loop.
+        width_after = (self.results_table.columnWidth(1), self.results_table.columnWidth(2))
+        if width_after != width_before:
+            for row, src_label, tgt_label in wrap_labels:
+                self._resize_wrap_row(row, src_label, tgt_label)
 
     def _make_cell_label(self, text, issues, wrap, column):
         label = QLabel()
@@ -532,22 +544,27 @@ class QaCheckPage(QWidget):
         return label
 
     def _resize_wrap_row(self, row, src_label, tgt_label):
-        font = self.results_table.font()
-        src_h = _wrapped_text_height(src_label.text(), self.results_table.columnWidth(1), font)
-        tgt_h = _wrapped_text_height(tgt_label.text(), self.results_table.columnWidth(2), font)
+        # QLabel.heightForWidth(w) asked directly, rather than
+        # reimplementing the measurement with a bare QTextDocument: the
+        # two disagreed (QTextDocument came out shorter than what the
+        # actual QLabel needed at the same width -- confirmed
+        # empirically, a font-metrics/line-height detail between the
+        # two, not a margin/padding issue), and clipped wrapped content
+        # as a result. Asking the real widget that will actually render
+        # the text is the only way to guarantee the measurement matches
+        # what's really needed -- and unlike sizeHint() (unreliable
+        # immediately after setCellWidget(), see module docstring),
+        # heightForWidth(w) takes the width as an explicit parameter
+        # rather than reading the widget's current/cached geometry, so
+        # it's accurate even before the widget has been laid out at all.
+        src_h = src_label.heightForWidth(self.results_table.columnWidth(1))
+        tgt_h = tgt_label.heightForWidth(self.results_table.columnWidth(2))
         # Floor at the table's own normal single-line row height (what a
-        # plain, non-wrap QTableWidgetItem row already uses) rather than
-        # the measured text height plus an arbitrary padding constant:
-        # that arbitrary-padding approach is exactly what made a
-        # one-line wrapped row measurably taller than an equivalent
-        # non-wrap row -- text height measured in isolation doesn't
-        # carry the same cell padding/line-spacing conventions Qt's own
-        # default row sizing already accounts for. A row that only
-        # takes one line ends up pixel-identical to a non-wrap row;
-        # only content that actually needs more than one line grows
-        # past that floor.
+        # plain, non-wrap QTableWidgetItem row already uses), so a
+        # one-line wrapped row comes out pixel-identical to a non-wrap
+        # row instead of the two disagreeing.
         floor = self.results_table.verticalHeader().defaultSectionSize()
-        self.results_table.setRowHeight(row, max(int(max(src_h, tgt_h)), floor))
+        self.results_table.setRowHeight(row, max(src_h, tgt_h, floor))
 
     # ------------------------------------------------------------ export
     def _start_export(self):
