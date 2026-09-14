@@ -32,33 +32,51 @@ a punch list quickly but means a long sentence can't actually be read
 without opening the exported CSV. Checking it switches those two columns
 to word-wrapped, auto-growing rows instead.
 
-For a NUMBER_MISMATCH row specifically, every number-like span
-``qa.find_number_spans()`` finds in 原文/译文 is highlighted (bold,
-danger-red -- the one semantic "problem" color this app's stylesheet
-defines, not a new decorative one) -- independent of the wrap toggle,
-since a reviewer scanning the default single-line view needs exactly as
-much help spotting which numbers to compare as one who expanded a row to
-read it in full; wrap only controls whether the *rest* of the sentence is
-elided or shown in full, not whether the numbers get marked. See
-``_NUMBER_HIGHLIGHT_HINT``: a small caption above the table explains what
-the red digits mean, shown only when the current (filtered) results
-actually contain a NUMBER_MISMATCH row -- no point explaining a color the
-user isn't looking at. The point of the highlighting isn't to mark which
-number is "the" wrong one -- with a set-based comparison there often
-isn't a single answer to that, e.g. one extra number on either side
-shifts every pairing -- it's to make every number in the sentence
-visually findable at a glance, since NUMBER_MISMATCH itself is silent
-about which of possibly several numbers is involved (see qa.py's
-NUMBER_MISMATCH docstring and ``find_number_spans()``'s for the
-detection/highlighting split this relies on).
+For a row with NUMBER_MISMATCH, PLACEHOLDER_MISMATCH, or URL_MISMATCH,
+every relevant span (``qa.find_number_spans()``,
+``find_placeholder_spans()``, ``find_url_spans()`` respectively) in
+原文/译文 is highlighted (bold, danger-red -- the one semantic "problem"
+color this app's stylesheet defines, not a new decorative one) --
+independent of the wrap toggle, since a reviewer scanning the default
+single-line view needs exactly as much help spotting what to compare as
+one who expanded a row to read it in full; wrap only controls whether the
+*rest* of the sentence is elided or shown in full, not whether anything
+gets marked. All three checks share one highlight color rather than each
+getting its own: a row can have more than one of these issues at once
+(see e.g. ``test_table_shows_multiple_issue_labels_joined_for_one_row``),
+and a per-type color palette would mean either learning a legend or the
+colors becoming noise; the "问题类型" column already says *what* kind of
+issue it is, so highlighting's only job is *where* to look, not *which*
+check flagged it. TAG_MISMATCH is deliberately not included: it's
+detected over structured inline-markup nodes, not simple substring
+matches on raw text, so there's no straightforward span to point at (see
+qa.py's ``_tag_type_counts()``); LENGTH_RATIO_OUTLIER, EMPTY_SOURCE/
+_TARGET, and SOURCE_/TARGET_CONFLICT are whole-segment properties with no
+particular substring to blame either. See ``_HIGHLIGHT_HINT``: a small
+caption above the table explains what the red text means, shown only
+when the current (filtered) results actually contain a row with at least
+one of the three highlightable issue types -- no point explaining a
+color the user isn't looking at. The point of highlighting a
+NUMBER_MISMATCH row specifically isn't to mark which number is "the"
+wrong one -- with a set-based comparison there often isn't a single
+answer to that, e.g. one extra number on either side shifts every
+pairing -- it's to make every number in the sentence visually findable
+at a glance, since NUMBER_MISMATCH itself is silent about which of
+possibly several numbers is involved (see qa.py's NUMBER_MISMATCH
+docstring and ``find_number_spans()``'s for the detection/highlighting
+split this relies on). PLACEHOLDER_MISMATCH and URL_MISMATCH don't have
+that same "which one" ambiguity -- they're localized substring
+comparisons already -- but get the same treatment for consistency and
+because it's the same one-line-of-code cost per check once the
+"highlight this span" plumbing exists at all.
 
-Because a NUMBER_MISMATCH row needs rich-text highlighting even in the
+Because a highlightable row needs rich-text highlighting even in the
 default (non-wrap) view, and a plain ``QTableWidgetItem`` can't render
 rich text, 原文/译文 render as ``QLabel`` cell widgets -- not plain items
--- whenever wrap is on OR the row has NUMBER_MISMATCH; every other row in
-the default view keeps the original, cheaper ``QTableWidgetItem`` path
-(Qt's own built-in single-line elide, no custom sizing needed). A
-NUMBER_MISMATCH row in the non-wrap view still needs its own "…" elide,
+-- whenever wrap is on OR the row has a highlightable issue; every other
+row in the default view keeps the original, cheaper ``QTableWidgetItem``
+path (Qt's own built-in single-line elide, no custom sizing needed). A
+highlighted row in the non-wrap view still needs its own "…" elide,
 which a rich-text ``QLabel`` doesn't do automatically: the plain text is
 elided first via ``QFontMetrics.elidedText()`` against the column's
 current width, *then* highlighted, so the visible "…"-truncated text is
@@ -129,13 +147,26 @@ _CSV_FILTER = 'CSV (*.csv)'
 
 # Bold + this app's one "problem" semantic color (see toolbox/resources/
 # style.qss's design-token comment: "danger -- semantic only, not
-# decorative") for number spans in a NUMBER_MISMATCH row -- deliberately
-# not a new background-highlight color, to stay inside that existing,
-# disciplined palette rather than inventing a decorative one for this.
-_NUMBER_HIGHLIGHT_STYLE = 'color:#B23B3B; font-weight:600;'
+# decorative") for a highlighted span -- deliberately not a new
+# background-highlight color, and deliberately the same one color for
+# every highlightable issue type rather than one color per type (see
+# module docstring for why), to stay inside that existing, disciplined
+# palette rather than inventing a decorative one for this.
+_ISSUE_HIGHLIGHT_STYLE = 'color:#B23B3B; font-weight:600;'
 
-_NUMBER_HIGHLIGHT_HINT = (
-    '提示：红色数字为"数字不匹配"检测涉及的数字，请核对原文与译文是否一致')
+_HIGHLIGHT_HINT = (
+    '提示：红色文字为"数字不匹配/占位符不匹配/URL 不匹配"检测涉及的内容，'
+    '请核对原文与译文是否一致')
+
+# Issue types with a well-defined literal substring to point at (see
+# module docstring for why TAG_MISMATCH and the whole-segment checks
+# aren't here), each mapped to the qa.py function that finds those
+# substrings' spans in a given text.
+_SPAN_FINDERS = {
+    'NUMBER_MISMATCH': qa_module.find_number_spans,
+    'PLACEHOLDER_MISMATCH': qa_module.find_placeholder_spans,
+    'URL_MISMATCH': qa_module.find_url_spans,
+}
 
 # Short tooltip per issue type, for the filter dropdown. The *label* text
 # (used both in the dropdown and now in the results table's "问题类型"
@@ -162,20 +193,40 @@ def _issue_label(issue_code):
     return qa_module.ISSUE_LABELS.get(issue_code, issue_code)
 
 
-def _highlighted_html(text):
-    """Escape ``text`` for rich-text display, wrapping every span
-    ``qa.find_number_spans()`` finds in ``_NUMBER_HIGHLIGHT_STYLE``.
+def _relevant_spans(text, issues):
+    """Every span in ``text`` worth highlighting for this row, across
+    all of ``issues`` that have a span finder (see ``_SPAN_FINDERS``) --
+    merged where two checks' spans happen to overlap, so ``_highlighted_
+    html()`` below never has to reason about nested/overlapping ``<b>``
+    tags.
+    """
+    spans = []
+    for code, finder in _SPAN_FINDERS.items():
+        if code in issues:
+            spans.extend(finder(text))
+    spans.sort()
+    merged = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _highlighted_html(text, spans):
+    """Escape ``text`` for rich-text display, wrapping every span in
+    ``spans`` (from ``_relevant_spans()``) in ``_ISSUE_HIGHLIGHT_STYLE``.
     Spans come from the *original* text's character offsets, so slicing
     happens before escaping each piece individually -- escaping the
     whole string first would shift every offset past the first ``&``,
     ``<``, or ``>`` it introduced.
     """
-    spans = qa_module.find_number_spans(text)
     out = []
     pos = 0
     for start, end in spans:
         out.append(html.escape(text[pos:start]))
-        out.append('<b style="%s">%s</b>' % (_NUMBER_HIGHLIGHT_STYLE, html.escape(text[start:end])))
+        out.append('<b style="%s">%s</b>' % (_ISSUE_HIGHLIGHT_STYLE, html.escape(text[start:end])))
         pos = end
     out.append(html.escape(text[pos:]))
     return ''.join(out)
@@ -294,10 +345,10 @@ class QaCheckPage(QWidget):
         filter_layout.addStretch(1)
         results_layout.addWidget(filter_row)
 
-        self.number_hint_label = QLabel(_NUMBER_HIGHLIGHT_HINT)
-        self.number_hint_label.setStyleSheet('color: #6B7280; font-size: 12px;')
-        self.number_hint_label.setVisible(False)
-        results_layout.addWidget(self.number_hint_label)
+        self.highlight_hint_label = QLabel(_HIGHLIGHT_HINT)
+        self.highlight_hint_label.setStyleSheet('color: #6B7280; font-size: 12px;')
+        self.highlight_hint_label.setVisible(False)
+        results_layout.addWidget(self.highlight_hint_label)
 
         self.results_table = QTableWidget(0, 5)
         self.results_table.setHorizontalHeaderLabels(['#', '原文', '译文', '问题类型', '置信度'])
@@ -360,7 +411,7 @@ class QaCheckPage(QWidget):
         self.results_table.setRowCount(0)
         self.summary_label.setText('')
         self.export_btn.setEnabled(False)
-        self.number_hint_label.setVisible(False)
+        self.highlight_hint_label.setVisible(False)
 
         error = self._validate_check()
         if error:
@@ -394,7 +445,7 @@ class QaCheckPage(QWidget):
     def _refresh_table(self):
         self.results_table.setRowCount(0)
         if not self._last_units:
-            self.number_hint_label.setVisible(False)
+            self.highlight_hint_label.setVisible(False)
             return
 
         hide_clean = self.hide_clean_chk.isChecked()
@@ -410,18 +461,19 @@ class QaCheckPage(QWidget):
                 continue
             rows.append((i, u, issues))
 
-        self.number_hint_label.setVisible(
-            any('NUMBER_MISMATCH' in issues for _, _, issues in rows))
+        highlightable_types = set(_SPAN_FINDERS)
+        self.highlight_hint_label.setVisible(
+            any(highlightable_types.intersection(issues) for _, _, issues in rows))
 
         self.results_table.setRowCount(len(rows))
         for row, (i, u, issues) in enumerate(rows):
             conf = u.meta.get('qa_confidence', 1.0)
             issue_text = '、'.join(_issue_label(code) for code in issues) if issues else '-'
             self.results_table.setItem(row, 0, QTableWidgetItem(str(i)))
-            highlight = 'NUMBER_MISMATCH' in issues
+            highlight = bool(highlightable_types.intersection(issues))
             if wrap or highlight:
-                src_label = self._make_cell_label(u.src_text, highlight, wrap, column=1)
-                tgt_label = self._make_cell_label(u.tgt_text, highlight, wrap, column=2)
+                src_label = self._make_cell_label(u.src_text, issues, wrap, column=1)
+                tgt_label = self._make_cell_label(u.tgt_text, issues, wrap, column=2)
                 self.results_table.setCellWidget(row, 1, src_label)
                 self.results_table.setCellWidget(row, 2, tgt_label)
                 if wrap:
@@ -432,7 +484,7 @@ class QaCheckPage(QWidget):
             self.results_table.setItem(row, 3, QTableWidgetItem(issue_text))
             self.results_table.setItem(row, 4, QTableWidgetItem('%.2f' % conf))
 
-    def _make_cell_label(self, text, highlight, wrap, column):
+    def _make_cell_label(self, text, issues, wrap, column):
         label = QLabel()
         label.setTextFormat(Qt.RichText)
         # Stylesheet's blanket "QWidget { background: ... }" rule (see
@@ -442,19 +494,22 @@ class QaCheckPage(QWidget):
         label.setStyleSheet('background: transparent;')
         label.setWordWrap(wrap)
         if wrap:
-            label.setText(_highlighted_html(text) if highlight else html.escape(text))
+            spans = _relevant_spans(text, issues)
+            label.setText(_highlighted_html(text, spans) if spans else html.escape(text))
             return label
-        # Not wrapped: this path is only reached for a NUMBER_MISMATCH
-        # row (see caller), which needs highlighting a plain
-        # QTableWidgetItem can't render -- so it still needs its own "…"
-        # elide, which a rich-text QLabel doesn't do automatically. Elide
-        # the plain text first, then highlight *that* (so what's visible
-        # is what gets marked), and keep the untruncated original one
-        # hover away via the tooltip.
+        # Not wrapped: this path is only reached for a row with a
+        # highlightable issue (see caller), which needs highlighting a
+        # plain QTableWidgetItem can't render -- so it still needs its
+        # own "…" elide, which a rich-text QLabel doesn't do
+        # automatically. Elide the plain text first, then highlight
+        # *that* (spans recomputed against the now-shorter elided
+        # string, so offsets line up with what's actually visible), and
+        # keep the untruncated original one hover away via the tooltip.
         fm = self.results_table.fontMetrics()
         width = max(self.results_table.columnWidth(column) - 12, 10)
         elided = fm.elidedText(text, Qt.ElideRight, width)
-        label.setText(_highlighted_html(elided))
+        spans = _relevant_spans(elided, issues)
+        label.setText(_highlighted_html(elided, spans) if spans else html.escape(elided))
         if elided != text:
             label.setToolTip(text)
         return label

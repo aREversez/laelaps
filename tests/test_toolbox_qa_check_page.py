@@ -15,6 +15,18 @@ def _write_tmx(path, units):
     tmx_writer.write(str(path), units, 'en-US', 'zh-CN')
 
 
+def _show_checked_units(page, units):
+    """Populate the page's results table directly from pre-built units
+    (each already carrying whatever ``meta['qa_issues']`` the test wants)
+    instead of round-tripping through a real tmx file and qa.run() --
+    needed for constructing issue types the tmx writer/reader can't
+    round-trip cleanly (e.g. EMPTY_TARGET: an empty <seg> gets dropped by
+    the writer, so there's no way to get one back out via a real file).
+    """
+    page._last_units = units
+    page._refresh_table()
+
+
 # ------------------------------------------------------------- validation
 
 def test_empty_input_shows_validation_error(qtbot):
@@ -114,21 +126,27 @@ def test_type_filter_reset_to_all_restores_full_flagged_view(qtbot):
     assert page.results_table.rowCount() == 6
 
 
-def test_table_columns_show_src_tgt_and_translated_issue_labels(qtbot, tmp_path):
-    src = tmp_path / 'in.tmx'
-    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])
+def test_table_columns_show_src_tgt_and_translated_issue_labels(qtbot):
+    # EMPTY_TARGET rather than a highlightable issue type (e.g.
+    # PLACEHOLDER_MISMATCH) -- this test is about column content/label
+    # translation, which the plain QTableWidgetItem path (below) covers
+    # regardless of issue type; a highlightable-issue fixture here would
+    # go through the QLabel path instead and item(0, 1) would be None
+    # (see the wrap/highlight section's own tests for that path). Built
+    # directly rather than via a real tmx file: the tmx writer drops an
+    # empty <seg>, so EMPTY_TARGET can't round-trip through a real file.
+    unit = _u('Found results.', '')
+    unit.meta['qa_issues'] = ['EMPTY_TARGET']
     page = QaCheckPage()
     qtbot.addWidget(page)
-    page.input_edit.setText(str(src))
-    page.check_btn.click()
-    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    _show_checked_units(page, [unit])
 
     assert page.results_table.rowCount() == 1
-    assert page.results_table.item(0, 1).text() == 'Found %d results.'
-    assert page.results_table.item(0, 2).text() == '找到了结果。'
-    # Chinese label, not the raw code -- a bare "PLACEHOLDER_MISMATCH"
-    # means nothing to a non-technical reviewer.
-    assert page.results_table.item(0, 3).text() == '占位符不匹配'
+    assert page.results_table.item(0, 1).text() == 'Found results.'
+    assert page.results_table.item(0, 2).text() == ''
+    # Chinese label, not the raw code -- a bare "EMPTY_TARGET" means
+    # nothing to a non-technical reviewer.
+    assert page.results_table.item(0, 3).text() == '译文为空'
 
 
 def test_table_shows_multiple_issue_labels_joined_for_one_row(qtbot):
@@ -263,19 +281,17 @@ def test_toggling_wrap_on_switches_clean_row_to_wrapped_label(qtbot, tmp_path):
     assert page.results_table.item(0, 1) is None
 
 
-def test_toggling_wrap_off_again_restores_plain_items_for_clean_row(qtbot, tmp_path):
-    src = tmp_path / 'in.tmx'
-    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])  # PLACEHOLDER_MISMATCH, not NUMBER_MISMATCH
+def test_toggling_wrap_off_again_restores_plain_items_for_clean_row(qtbot):
+    unit = _u('Found results.', '')
+    unit.meta['qa_issues'] = ['EMPTY_TARGET']  # not a highlightable issue type
     page = QaCheckPage()
     qtbot.addWidget(page)
-    page.input_edit.setText(str(src))
-    page.check_btn.click()
-    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    _show_checked_units(page, [unit])
 
     page.wrap_chk.setChecked(True)
     page.wrap_chk.setChecked(False)
     assert page.results_table.cellWidget(0, 1) is None
-    assert page.results_table.item(0, 1).text() == 'Found %d results.'
+    assert page.results_table.item(0, 1).text() == 'Found results.'
 
 
 def test_number_mismatch_row_uses_label_even_without_wrap(qtbot, tmp_path):
@@ -315,18 +331,60 @@ def test_number_mismatch_highlighting_present_in_both_wrap_states(qtbot, tmp_pat
         assert '<b style="color:#B23B3B; font-weight:600;">43</b>' in tgt_html
 
 
-def test_wrap_on_does_not_highlight_rows_without_number_mismatch(qtbot, tmp_path):
+def test_wrap_on_does_not_highlight_rows_without_a_highlightable_issue(qtbot):
+    unit = _u('Found results.', '')
+    unit.meta['qa_issues'] = ['EMPTY_TARGET']  # not a highlightable issue type
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    _show_checked_units(page, [unit])
+
+    page.wrap_chk.setChecked(True)
+    src_html = page.results_table.cellWidget(0, 1).text()
+    assert '<b' not in src_html
+
+
+def test_placeholder_mismatch_row_highlights_placeholder_tokens(qtbot, tmp_path):
     src = tmp_path / 'in.tmx'
-    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])  # PLACEHOLDER_MISMATCH, not NUMBER_MISMATCH
+    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])  # target dropped the %d
     page = QaCheckPage()
     qtbot.addWidget(page)
     page.input_edit.setText(str(src))
     page.check_btn.click()
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
-    page.wrap_chk.setChecked(True)
+    assert not page.wrap_chk.isChecked()
     src_html = page.results_table.cellWidget(0, 1).text()
-    assert '<b' not in src_html
+    assert '<b style="color:#B23B3B; font-weight:600;">%d</b>' in src_html
+
+
+def test_url_mismatch_row_highlights_the_url(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('See https://example.com/docs for details.', '详情见文档。')])  # URL dropped
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    assert not page.wrap_chk.isChecked()
+    src_html = page.results_table.cellWidget(0, 1).text()
+    assert '<b style="color:#B23B3B; font-weight:600;">https://example.com/docs</b>' in src_html
+
+
+def test_row_with_both_number_and_placeholder_mismatch_highlights_both(qtbot):
+    # A row can carry more than one issue at once (see e.g.
+    # test_table_shows_multiple_issue_labels_joined_for_one_row) --
+    # spans from every applicable check must all show up, not just the
+    # first one found.
+    unit = _u('Found %d results, 42 in total.', '找到了结果，总共43个。')
+    unit.meta['qa_issues'] = ['NUMBER_MISMATCH', 'PLACEHOLDER_MISMATCH']
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    _show_checked_units(page, [unit])
+
+    src_html = page.results_table.cellWidget(0, 1).text()
+    assert '<b style="color:#B23B3B; font-weight:600;">%d</b>' in src_html
+    assert '<b style="color:#B23B3B; font-weight:600;">42</b>' in src_html
 
 
 def test_short_row_matches_non_wrap_row_height_exactly(qtbot, tmp_path):
@@ -400,19 +458,17 @@ def test_wrap_row_height_updates_when_window_is_resized(qtbot, tmp_path):
     assert narrow_height > wide_height
 
 
-def test_number_mismatch_hint_hidden_when_no_mismatch_visible(qtbot, tmp_path):
-    src = tmp_path / 'in.tmx'
-    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])  # PLACEHOLDER_MISMATCH, not NUMBER_MISMATCH
+def test_highlight_hint_hidden_when_nothing_highlightable_visible(qtbot):
+    unit = _u('Found results.', '')
+    unit.meta['qa_issues'] = ['EMPTY_TARGET']  # not a highlightable issue type
     page = QaCheckPage()
     qtbot.addWidget(page)
-    page.input_edit.setText(str(src))
-    page.check_btn.click()
-    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    _show_checked_units(page, [unit])
 
-    assert page.number_hint_label.isHidden()
+    assert page.highlight_hint_label.isHidden()
 
 
-def test_number_mismatch_hint_shown_when_mismatch_visible(qtbot, tmp_path):
+def test_highlight_hint_shown_when_number_mismatch_visible(qtbot, tmp_path):
     src = tmp_path / 'in.tmx'
     _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
     page = QaCheckPage()
@@ -421,25 +477,34 @@ def test_number_mismatch_hint_shown_when_mismatch_visible(qtbot, tmp_path):
     page.check_btn.click()
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
-    assert not page.number_hint_label.isHidden()
-    assert '数字不匹配' in page.number_hint_label.text()
+    assert not page.highlight_hint_label.isHidden()
+    assert '数字不匹配' in page.highlight_hint_label.text()
 
 
-def test_number_mismatch_hint_hides_when_filtered_out(qtbot, tmp_path):
+def test_highlight_hint_shown_when_placeholder_or_url_mismatch_visible(qtbot, tmp_path):
     src = tmp_path / 'in.tmx'
-    _write_tmx(src, [
-        _u('We shipped 42 units.', '我们发货了43个单位。'),
-        _u('Found %d results.', '找到了结果。'),
-    ])
+    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])
     page = QaCheckPage()
     qtbot.addWidget(page)
     page.input_edit.setText(str(src))
     page.check_btn.click()
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
-    assert not page.number_hint_label.isHidden()
 
-    placeholder_index = next(
+    assert not page.highlight_hint_label.isHidden()
+
+
+def test_highlight_hint_hides_when_filtered_to_a_non_highlightable_type(qtbot):
+    number_mismatch_unit = _u('We shipped 42 units.', '我们发货了43个单位。')
+    number_mismatch_unit.meta['qa_issues'] = ['NUMBER_MISMATCH']
+    empty_target_unit = _u('Found results.', '')
+    empty_target_unit.meta['qa_issues'] = ['EMPTY_TARGET']
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    _show_checked_units(page, [number_mismatch_unit, empty_target_unit])
+    assert not page.highlight_hint_label.isHidden()
+
+    empty_target_index = next(
         i for i in range(page.type_filter_combo.count())
-        if page.type_filter_combo.itemData(i) == 'PLACEHOLDER_MISMATCH')
-    page.type_filter_combo.setCurrentIndex(placeholder_index)
-    assert page.number_hint_label.isHidden()
+        if page.type_filter_combo.itemData(i) == 'EMPTY_TARGET')
+    page.type_filter_combo.setCurrentIndex(empty_target_index)
+    assert page.highlight_hint_label.isHidden()
