@@ -233,11 +233,11 @@ def test_results_table_header_is_left_aligned(qtbot):
 
 # --------------------------------------------------------------- wrap/highlight
 
-def test_wrap_off_by_default_uses_plain_items(qtbot):
+def test_wrap_off_by_default_uses_plain_items_for_clean_rows(qtbot):
     page = QaCheckPage()
     qtbot.addWidget(page)
     assert not page.wrap_chk.isChecked()
-    page.input_edit.setText(tmx_path('inline_markup_qa.tmx'))
+    page.input_edit.setText(tmx_path('inline_markup_qa.tmx'))  # no NUMBER_MISMATCH rows
     page.check_btn.click()
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
@@ -245,9 +245,9 @@ def test_wrap_off_by_default_uses_plain_items(qtbot):
     assert page.results_table.cellWidget(0, 1) is None
 
 
-def test_toggling_wrap_on_switches_to_wrapped_labels(qtbot, tmp_path):
+def test_toggling_wrap_on_switches_clean_row_to_wrapped_label(qtbot, tmp_path):
     src = tmp_path / 'in.tmx'
-    _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
+    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])  # PLACEHOLDER_MISMATCH, not NUMBER_MISMATCH
     page = QaCheckPage()
     qtbot.addWidget(page)
     page.input_edit.setText(str(src))
@@ -263,7 +263,24 @@ def test_toggling_wrap_on_switches_to_wrapped_labels(qtbot, tmp_path):
     assert page.results_table.item(0, 1) is None
 
 
-def test_wrap_on_highlights_mismatched_numbers_in_both_columns(qtbot, tmp_path):
+def test_toggling_wrap_off_again_restores_plain_items_for_clean_row(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])  # PLACEHOLDER_MISMATCH, not NUMBER_MISMATCH
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    page.wrap_chk.setChecked(False)
+    assert page.results_table.cellWidget(0, 1) is None
+    assert page.results_table.item(0, 1).text() == 'Found %d results.'
+
+
+def test_number_mismatch_row_uses_label_even_without_wrap(qtbot, tmp_path):
+    # Highlighting must not depend on the wrap toggle -- a NUMBER_MISMATCH
+    # row needs a QLabel (for rich-text highlighting) in both view modes.
     src = tmp_path / 'in.tmx'
     _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
     page = QaCheckPage()
@@ -272,14 +289,30 @@ def test_wrap_on_highlights_mismatched_numbers_in_both_columns(qtbot, tmp_path):
     page.check_btn.click()
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
-    page.wrap_chk.setChecked(True)
-    src_html = page.results_table.cellWidget(0, 1).text()
-    tgt_html = page.results_table.cellWidget(0, 2).text()
-    assert '<b style="color:#B23B3B; font-weight:600;">42</b>' in src_html
-    assert '<b style="color:#B23B3B; font-weight:600;">43</b>' in tgt_html
-    # The rest of the sentence is untouched, plain text.
-    assert 'We shipped' in src_html
-    assert '我们发货了' in tgt_html
+    assert not page.wrap_chk.isChecked()
+    src_label = page.results_table.cellWidget(0, 1)
+    tgt_label = page.results_table.cellWidget(0, 2)
+    assert isinstance(src_label, QLabel)
+    assert not src_label.wordWrap()
+    assert '<b style="color:#B23B3B; font-weight:600;">42</b>' in src_label.text()
+    assert '<b style="color:#B23B3B; font-weight:600;">43</b>' in tgt_label.text()
+
+
+def test_number_mismatch_highlighting_present_in_both_wrap_states(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    for wrapped in (False, True, False):
+        page.wrap_chk.setChecked(wrapped)
+        src_html = page.results_table.cellWidget(0, 1).text()
+        tgt_html = page.results_table.cellWidget(0, 2).text()
+        assert '<b style="color:#B23B3B; font-weight:600;">42</b>' in src_html
+        assert '<b style="color:#B23B3B; font-weight:600;">43</b>' in tgt_html
 
 
 def test_wrap_on_does_not_highlight_rows_without_number_mismatch(qtbot, tmp_path):
@@ -296,7 +329,52 @@ def test_wrap_on_does_not_highlight_rows_without_number_mismatch(qtbot, tmp_path
     assert '<b' not in src_html
 
 
-def test_toggling_wrap_off_again_restores_plain_items(qtbot, tmp_path):
+def test_short_row_does_not_grow_row_height_in_wrap_mode(qtbot, tmp_path):
+    # Regression guard: every row used to grow to some uniform, overly
+    # tall height in wrap mode regardless of actual content -- a
+    # three-character row shouldn't need more height than one line. Needs
+    # a real, shown window: column width (and therefore whether the long
+    # sentence actually needs to wrap at all) is meaningless on an
+    # un-shown widget's default/fallback geometry.
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u(
+            'We shipped 42 units to the warehouse last quarter, well above '
+            'the 43 units originally forecast for the same period.',
+            '我们发货了43个单位。'),
+        _u('Hi!', '你好！'),
+    ])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.resize(700, 500)
+    page.show()
+    qtbot.waitExposed(page)
+    page.hide_clean_chk.setChecked(False)  # keep the clean "Hi!" row visible too
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    short_row = next(r for r in range(page.results_table.rowCount())
+                      if page.results_table.item(r, 0).text() == '2')
+    long_row = next(r for r in range(page.results_table.rowCount())
+                     if page.results_table.item(r, 0).text() == '1')
+    assert page.results_table.rowHeight(short_row) < page.results_table.rowHeight(long_row)
+
+
+def test_number_mismatch_hint_hidden_when_no_mismatch_visible(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Found %d results.', '找到了结果。')])  # PLACEHOLDER_MISMATCH, not NUMBER_MISMATCH
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    assert page.number_hint_label.isHidden()
+
+
+def test_number_mismatch_hint_shown_when_mismatch_visible(qtbot, tmp_path):
     src = tmp_path / 'in.tmx'
     _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
     page = QaCheckPage()
@@ -305,7 +383,25 @@ def test_toggling_wrap_off_again_restores_plain_items(qtbot, tmp_path):
     page.check_btn.click()
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
-    page.wrap_chk.setChecked(True)
-    page.wrap_chk.setChecked(False)
-    assert page.results_table.cellWidget(0, 1) is None
-    assert page.results_table.item(0, 1).text() == 'We shipped 42 units.'
+    assert not page.number_hint_label.isHidden()
+    assert '数字不匹配' in page.number_hint_label.text()
+
+
+def test_number_mismatch_hint_hides_when_filtered_out(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u('We shipped 42 units.', '我们发货了43个单位。'),
+        _u('Found %d results.', '找到了结果。'),
+    ])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    assert not page.number_hint_label.isHidden()
+
+    placeholder_index = next(
+        i for i in range(page.type_filter_combo.count())
+        if page.type_filter_combo.itemData(i) == 'PLACEHOLDER_MISMATCH')
+    page.type_filter_combo.setCurrentIndex(placeholder_index)
+    assert page.number_hint_label.isHidden()

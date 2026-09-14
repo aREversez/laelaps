@@ -30,29 +30,55 @@ one-row-per-item layout for readability: the default single-line view
 elides long 原文/译文 text with "…", which is the right call for scanning
 a punch list quickly but means a long sentence can't actually be read
 without opening the exported CSV. Checking it switches those two columns
-to word-wrapped, auto-growing rows instead. Only *that* toggle -- not the
-row-count filters above -- rebuilds 原文/译文 as ``QLabel`` cell widgets
-rather than plain ``QTableWidgetItem``\\ s: a ``QLabel`` is how word-wrap
-*and* rich-text highlighting (below) both become possible in one widget,
-but it also means giving up ``QTableWidgetItem``'s built-in elide, which
-is exactly why the single-line view stays on the cheap, well-tested plain
-item path and only pays that cost when the user actually asked to see
-full content. ``resizeRowsToContents()`` after populating, and again on
-every ``sectionResized`` while wrap is on (the 原文/译文 columns are
-``Stretch``-resized, so a window resize changes wrap width and therefore
-the height each row needs), keeps rows sized to their wrapped content.
+to word-wrapped, auto-growing rows instead.
 
-For a NUMBER_MISMATCH row specifically, wrap mode also highlights every
-number-like span ``qa.find_number_spans()`` finds in 原文/译文 (bold,
+For a NUMBER_MISMATCH row specifically, every number-like span
+``qa.find_number_spans()`` finds in 原文/译文 is highlighted (bold,
 danger-red -- the one semantic "problem" color this app's stylesheet
-defines, not a new decorative one). The point isn't to mark which number
-is "the" wrong one -- with a set-based comparison there often isn't a
-single answer to that, e.g. one extra number on either side shifts every
-pairing -- it's to make every number in a long sentence visually findable
-at a glance, since NUMBER_MISMATCH itself is silent about which of
-possibly several numbers in the sentence is involved (see qa.py's
+defines, not a new decorative one) -- independent of the wrap toggle,
+since a reviewer scanning the default single-line view needs exactly as
+much help spotting which numbers to compare as one who expanded a row to
+read it in full; wrap only controls whether the *rest* of the sentence is
+elided or shown in full, not whether the numbers get marked. See
+``_NUMBER_HIGHLIGHT_HINT``: a small caption above the table explains what
+the red digits mean, shown only when the current (filtered) results
+actually contain a NUMBER_MISMATCH row -- no point explaining a color the
+user isn't looking at. The point of the highlighting isn't to mark which
+number is "the" wrong one -- with a set-based comparison there often
+isn't a single answer to that, e.g. one extra number on either side
+shifts every pairing -- it's to make every number in the sentence
+visually findable at a glance, since NUMBER_MISMATCH itself is silent
+about which of possibly several numbers is involved (see qa.py's
 NUMBER_MISMATCH docstring and ``find_number_spans()``'s for the
 detection/highlighting split this relies on).
+
+Because a NUMBER_MISMATCH row needs rich-text highlighting even in the
+default (non-wrap) view, and a plain ``QTableWidgetItem`` can't render
+rich text, 原文/译文 render as ``QLabel`` cell widgets -- not plain items
+-- whenever wrap is on OR the row has NUMBER_MISMATCH; every other row in
+the default view keeps the original, cheaper ``QTableWidgetItem`` path
+(Qt's own built-in single-line elide, no custom sizing needed). A
+NUMBER_MISMATCH row in the non-wrap view still needs its own "…" elide,
+which a rich-text ``QLabel`` doesn't do automatically: the plain text is
+elided first via ``QFontMetrics.elidedText()`` against the column's
+current width, *then* highlighted, so the visible "…"-truncated text is
+what gets marked (and the label's tooltip carries the untruncated
+original, so the full sentence is still one hover away without switching
+to wrap mode).
+
+Row height in wrap mode is computed explicitly with ``QTextDocument``
+sized to each column's actual current width, rather than relying on
+``QTableWidget.resizeRowsToContents()`` calling the cell widgets'
+``sizeHint()``: a freshly-``setCellWidget``'d ``QLabel`` doesn't reliably
+know its final on-screen width yet when ``sizeHint()`` is queried
+synchronously right after insertion, which made every row -- even a
+three-character one -- grow to some uniform, overly-tall guess. Computing
+the needed height directly from the known column width and the actual
+HTML content sidesteps that timing problem entirely, so short entries
+stay short and only content that genuinely wraps grows. The same
+computation reruns on every ``sectionResized`` while wrap is on (原文/译文
+are ``Stretch``-resized, so a window resize changes their width and
+therefore the height each row needs) via ``_on_column_resized()``.
 
 Export is deliberately NOT filtered by the current view: "导出 CSV"
 always writes the full corpus (every unit, QA columns included) via the
@@ -76,6 +102,7 @@ import html
 import os
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget,
@@ -93,10 +120,18 @@ _CSV_FILTER = 'CSV (*.csv)'
 
 # Bold + this app's one "problem" semantic color (see toolbox/resources/
 # style.qss's design-token comment: "danger -- semantic only, not
-# decorative") for number spans highlighted in wrap mode -- deliberately
+# decorative") for number spans in a NUMBER_MISMATCH row -- deliberately
 # not a new background-highlight color, to stay inside that existing,
 # disciplined palette rather than inventing a decorative one for this.
 _NUMBER_HIGHLIGHT_STYLE = 'color:#B23B3B; font-weight:600;'
+
+_NUMBER_HIGHLIGHT_HINT = (
+    '提示：红色数字为"数字不匹配"检测涉及的数字，请核对原文与译文是否一致')
+
+# A little slack added to the measured text height below so a line's
+# descenders (g/y/j, or a Chinese character's own vertical metrics)
+# don't get clipped at the row boundary.
+_ROW_HEIGHT_PADDING = 8
 
 # Short tooltip per issue type, for the filter dropdown. The *label* text
 # (used both in the dropdown and now in the results table's "问题类型"
@@ -140,6 +175,23 @@ def _highlighted_html(text):
         pos = end
     out.append(html.escape(text[pos:]))
     return ''.join(out)
+
+
+def _wrapped_text_height(rich_text, width, font):
+    """Height (px) ``rich_text`` needs when word-wrapped to ``width`` at
+    ``font`` -- computed directly with a ``QTextDocument`` rather than
+    asking a ``QLabel`` for its ``sizeHint()``, which is unreliable
+    immediately after ``setCellWidget()`` (see module docstring: every
+    row was coming out a uniform, overly-tall guess regardless of actual
+    content). ``width`` capped at a small minimum so a column dragged to
+    near-zero width doesn't hand ``QTextDocument`` a degenerate/negative
+    value.
+    """
+    doc = QTextDocument()
+    doc.setDefaultFont(font)
+    doc.setHtml(rich_text)
+    doc.setTextWidth(max(width, 10))
+    return doc.size().height()
 
 
 class QaCheckPage(QWidget):
@@ -224,12 +276,16 @@ class QaCheckPage(QWidget):
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.type_filter_combo)
         self.wrap_chk = QCheckBox('自动换行')
-        self.wrap_chk.setToolTip(
-            '显示完整原文/译文（自动换行），并把"数字不匹配"涉及的数字标红')
+        self.wrap_chk.setToolTip('显示完整原文/译文，不再用"…"省略')
         self.wrap_chk.stateChanged.connect(self._refresh_table)
         filter_layout.addWidget(self.wrap_chk)
         filter_layout.addStretch(1)
         results_layout.addWidget(filter_row)
+
+        self.number_hint_label = QLabel(_NUMBER_HIGHLIGHT_HINT)
+        self.number_hint_label.setStyleSheet('color: #6B7280; font-size: 12px;')
+        self.number_hint_label.setVisible(False)
+        results_layout.addWidget(self.number_hint_label)
 
         self.results_table = QTableWidget(0, 5)
         self.results_table.setHorizontalHeaderLabels(['#', '原文', '译文', '问题类型', '置信度'])
@@ -292,6 +348,7 @@ class QaCheckPage(QWidget):
         self.results_table.setRowCount(0)
         self.summary_label.setText('')
         self.export_btn.setEnabled(False)
+        self.number_hint_label.setVisible(False)
 
         error = self._validate_check()
         if error:
@@ -325,6 +382,7 @@ class QaCheckPage(QWidget):
     def _refresh_table(self):
         self.results_table.setRowCount(0)
         if not self._last_units:
+            self.number_hint_label.setVisible(False)
             return
 
         hide_clean = self.hide_clean_chk.isChecked()
@@ -340,38 +398,69 @@ class QaCheckPage(QWidget):
                 continue
             rows.append((i, u, issues))
 
+        self.number_hint_label.setVisible(
+            any('NUMBER_MISMATCH' in issues for _, _, issues in rows))
+
         self.results_table.setRowCount(len(rows))
         for row, (i, u, issues) in enumerate(rows):
             conf = u.meta.get('qa_confidence', 1.0)
             issue_text = '、'.join(_issue_label(code) for code in issues) if issues else '-'
             self.results_table.setItem(row, 0, QTableWidgetItem(str(i)))
-            if wrap:
-                highlight = 'NUMBER_MISMATCH' in issues
-                self.results_table.setCellWidget(row, 1, self._make_wrapped_label(u.src_text, highlight))
-                self.results_table.setCellWidget(row, 2, self._make_wrapped_label(u.tgt_text, highlight))
+            highlight = 'NUMBER_MISMATCH' in issues
+            if wrap or highlight:
+                src_label = self._make_cell_label(u.src_text, highlight, wrap, column=1)
+                tgt_label = self._make_cell_label(u.tgt_text, highlight, wrap, column=2)
+                self.results_table.setCellWidget(row, 1, src_label)
+                self.results_table.setCellWidget(row, 2, tgt_label)
+                if wrap:
+                    self._resize_wrap_row(row, src_label, tgt_label)
             else:
                 self.results_table.setItem(row, 1, QTableWidgetItem(u.src_text))
                 self.results_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
             self.results_table.setItem(row, 3, QTableWidgetItem(issue_text))
             self.results_table.setItem(row, 4, QTableWidgetItem('%.2f' % conf))
-        if wrap:
-            self.results_table.resizeRowsToContents()
 
-    def _make_wrapped_label(self, text, highlight):
+    def _make_cell_label(self, text, highlight, wrap, column):
         label = QLabel()
-        label.setWordWrap(True)
         label.setTextFormat(Qt.RichText)
         # Stylesheet's blanket "QWidget { background: ... }" rule (see
         # style.qss) would otherwise paint every cell a flat, non-
         # alternating color instead of letting the table's own
         # alternating-row background show through this widget.
         label.setStyleSheet('background: transparent;')
-        label.setText(_highlighted_html(text) if highlight else html.escape(text))
+        label.setWordWrap(wrap)
+        if wrap:
+            label.setText(_highlighted_html(text) if highlight else html.escape(text))
+            return label
+        # Not wrapped: this path is only reached for a NUMBER_MISMATCH
+        # row (see caller), which needs highlighting a plain
+        # QTableWidgetItem can't render -- so it still needs its own "…"
+        # elide, which a rich-text QLabel doesn't do automatically. Elide
+        # the plain text first, then highlight *that* (so what's visible
+        # is what gets marked), and keep the untruncated original one
+        # hover away via the tooltip.
+        fm = self.results_table.fontMetrics()
+        width = max(self.results_table.columnWidth(column) - 12, 10)
+        elided = fm.elidedText(text, Qt.ElideRight, width)
+        label.setText(_highlighted_html(elided))
+        if elided != text:
+            label.setToolTip(text)
         return label
 
+    def _resize_wrap_row(self, row, src_label, tgt_label):
+        font = self.results_table.font()
+        src_h = _wrapped_text_height(src_label.text(), self.results_table.columnWidth(1), font)
+        tgt_h = _wrapped_text_height(tgt_label.text(), self.results_table.columnWidth(2), font)
+        self.results_table.setRowHeight(row, int(max(src_h, tgt_h)) + _ROW_HEIGHT_PADDING)
+
     def _on_column_resized(self, *_args):
-        if self.wrap_chk.isChecked():
-            self.results_table.resizeRowsToContents()
+        if not self.wrap_chk.isChecked():
+            return
+        for row in range(self.results_table.rowCount()):
+            src_label = self.results_table.cellWidget(row, 1)
+            tgt_label = self.results_table.cellWidget(row, 2)
+            if src_label is not None and tgt_label is not None:
+                self._resize_wrap_row(row, src_label, tgt_label)
 
     # ------------------------------------------------------------ export
     def _start_export(self):
