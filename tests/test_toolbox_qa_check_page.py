@@ -329,18 +329,22 @@ def test_wrap_on_does_not_highlight_rows_without_number_mismatch(qtbot, tmp_path
     assert '<b' not in src_html
 
 
-def test_short_row_does_not_grow_row_height_in_wrap_mode(qtbot, tmp_path):
+def test_short_row_matches_non_wrap_row_height_exactly(qtbot, tmp_path):
     # Regression guard: every row used to grow to some uniform, overly
     # tall height in wrap mode regardless of actual content -- a
-    # three-character row shouldn't need more height than one line. Needs
-    # a real, shown window: column width (and therefore whether the long
-    # sentence actually needs to wrap at all) is meaningless on an
-    # un-shown widget's default/fallback geometry.
+    # three-character row shouldn't need more height than one line, and
+    # specifically should match a plain non-wrap row's height exactly
+    # (not just "less than a long row's height", which a smaller-but-
+    # still-inflated height would also satisfy). Needs a real, shown
+    # window: column width (and therefore whether the long sentence
+    # actually needs to wrap at all) is meaningless on an un-shown
+    # widget's default/fallback geometry.
     src = tmp_path / 'in.tmx'
     _write_tmx(src, [
         _u(
             'We shipped 42 units to the warehouse last quarter, well above '
-            'the 43 units originally forecast for the same period.',
+            'the 43 units originally forecast for the same period, and '
+            'expect volumes to keep rising through year end.',
             '我们发货了43个单位。'),
         _u('Hi!', '你好！'),
     ])
@@ -353,13 +357,47 @@ def test_short_row_does_not_grow_row_height_in_wrap_mode(qtbot, tmp_path):
     page.input_edit.setText(str(src))
     page.check_btn.click()
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    non_wrap_height = page.results_table.rowHeight(0)
 
     page.wrap_chk.setChecked(True)
     short_row = next(r for r in range(page.results_table.rowCount())
                       if page.results_table.item(r, 0).text() == '2')
     long_row = next(r for r in range(page.results_table.rowCount())
                      if page.results_table.item(r, 0).text() == '1')
-    assert page.results_table.rowHeight(short_row) < page.results_table.rowHeight(long_row)
+    assert page.results_table.rowHeight(short_row) == non_wrap_height
+    assert page.results_table.rowHeight(long_row) > non_wrap_height
+
+
+def test_wrap_row_height_updates_when_window_is_resized(qtbot, tmp_path):
+    # A window narrower than before means the Stretch-resized 原文/译文
+    # columns get narrower too, so a row that fit on one line at the old
+    # width may need to wrap onto more lines at the new one -- the row's
+    # height must grow to match, or the extra lines get visually clipped.
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u(
+            'We shipped 42 units to the warehouse last quarter, well above '
+            'the 43 units originally forecast for the same period, and '
+            'expect volumes to keep rising through year end.',
+            '我们发货了43个单位。'),
+    ])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.resize(700, 500)
+    page.show()
+    qtbot.waitExposed(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    wide_height = page.results_table.rowHeight(0)
+
+    page.resize(420, 500)
+    qtbot.wait(50)  # let the QTimer.singleShot(0, ...) reflow run
+
+    narrow_height = page.results_table.rowHeight(0)
+    assert narrow_height > wide_height
 
 
 def test_number_mismatch_hint_hidden_when_no_mismatch_visible(qtbot, tmp_path):

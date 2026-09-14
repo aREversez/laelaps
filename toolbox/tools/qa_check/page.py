@@ -75,10 +75,19 @@ synchronously right after insertion, which made every row -- even a
 three-character one -- grow to some uniform, overly-tall guess. Computing
 the needed height directly from the known column width and the actual
 HTML content sidesteps that timing problem entirely, so short entries
-stay short and only content that genuinely wraps grows. The same
-computation reruns on every ``sectionResized`` while wrap is on (原文/译文
-are ``Stretch``-resized, so a window resize changes their width and
-therefore the height each row needs) via ``_on_column_resized()``.
+stay short and only content that genuinely wraps grows -- floored at
+``verticalHeader().defaultSectionSize()`` (the same height a plain,
+non-wrap row already uses) so a one-line wrapped row comes out
+pixel-identical to a non-wrap row instead of measurably taller, which is
+what a naive "measured text height + a fixed padding constant" produced.
+The same computation reruns on every ``sectionResized`` while wrap is on
+(原文/译文 are ``Stretch``-resized, so a window resize changes their width
+and therefore the height each row needs), deferred one event-loop tick
+via ``QTimer.singleShot(0, ...)`` in ``_on_column_resized()`` since
+``columnWidth()`` isn't reliably settled to its final value yet at the
+exact moment a live drag-resize's ``sectionResized`` fires -- reading it
+synchronously there intermittently measured against the resize's
+previous width, one tick stale.
 
 Export is deliberately NOT filtered by the current view: "导出 CSV"
 always writes the full corpus (every unit, QA columns included) via the
@@ -101,7 +110,7 @@ and as the filter dropdown's underlying ``currentData()`` values; only the
 import html
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout,
@@ -127,11 +136,6 @@ _NUMBER_HIGHLIGHT_STYLE = 'color:#B23B3B; font-weight:600;'
 
 _NUMBER_HIGHLIGHT_HINT = (
     '提示：红色数字为"数字不匹配"检测涉及的数字，请核对原文与译文是否一致')
-
-# A little slack added to the measured text height below so a line's
-# descenders (g/y/j, or a Chinese character's own vertical metrics)
-# don't get clipped at the row boundary.
-_ROW_HEIGHT_PADDING = 8
 
 # Short tooltip per issue type, for the filter dropdown. The *label* text
 # (used both in the dropdown and now in the results table's "问题类型"
@@ -185,9 +189,16 @@ def _wrapped_text_height(rich_text, width, font):
     row was coming out a uniform, overly-tall guess regardless of actual
     content). ``width`` capped at a small minimum so a column dragged to
     near-zero width doesn't hand ``QTextDocument`` a degenerate/negative
-    value.
+    value. Document margin zeroed out: ``QTextDocument`` adds its own
+    ~4px padding on every side by default, which stacked with the
+    normal single-line row height already used by a plain
+    QTableWidgetItem row and made even a one-line wrapped row measurably
+    taller than an equivalent non-wrap row -- see ``_resize_wrap_row()``
+    for how the two are reconciled to match exactly for single-line
+    content.
     """
     doc = QTextDocument()
+    doc.setDocumentMargin(0)
     doc.setDefaultFont(font)
     doc.setHtml(rich_text)
     doc.setTextWidth(max(width, 10))
@@ -200,6 +211,7 @@ class QaCheckPage(QWidget):
         self._last_units = None
         self._check_worker = None
         self._export_worker = None
+        self._reflow_pending = False
         self._build_ui()
 
     # ---------------------------------------------------------------- UI
@@ -451,11 +463,41 @@ class QaCheckPage(QWidget):
         font = self.results_table.font()
         src_h = _wrapped_text_height(src_label.text(), self.results_table.columnWidth(1), font)
         tgt_h = _wrapped_text_height(tgt_label.text(), self.results_table.columnWidth(2), font)
-        self.results_table.setRowHeight(row, int(max(src_h, tgt_h)) + _ROW_HEIGHT_PADDING)
+        # Floor at the table's own normal single-line row height (what a
+        # plain, non-wrap QTableWidgetItem row already uses) rather than
+        # the measured text height plus an arbitrary padding constant:
+        # that arbitrary-padding approach is exactly what made a
+        # one-line wrapped row measurably taller than an equivalent
+        # non-wrap row -- text height measured in isolation doesn't
+        # carry the same cell padding/line-spacing conventions Qt's own
+        # default row sizing already accounts for. A row that only
+        # takes one line ends up pixel-identical to a non-wrap row;
+        # only content that actually needs more than one line grows
+        # past that floor.
+        floor = self.results_table.verticalHeader().defaultSectionSize()
+        self.results_table.setRowHeight(row, max(int(max(src_h, tgt_h)), floor))
 
     def _on_column_resized(self, *_args):
         if not self.wrap_chk.isChecked():
             return
+        # Deferred rather than recalculated inline: during a live window
+        # drag, Qt can emit sectionResized for a Stretch column before
+        # columnWidth() actually reflects that new size yet -- reading it
+        # synchronously here sometimes measured against the *previous*
+        # width, so a wrapped row's height silently fell out of sync with
+        # its now-narrower column (text visibly clipped). Deferring to
+        # the next event-loop iteration via QTimer.singleShot(0, ...)
+        # lets Qt finish settling the resize first. The pending-flag
+        # guard collapses the burst of sectionResized signals a single
+        # drag fires (one per pixel) into one reflow instead of one per
+        # signal.
+        if self._reflow_pending:
+            return
+        self._reflow_pending = True
+        QTimer.singleShot(0, self._reflow_wrap_rows)
+
+    def _reflow_wrap_rows(self):
+        self._reflow_pending = False
         for row in range(self.results_table.rowCount()):
             src_label = self.results_table.cellWidget(row, 1)
             tgt_label = self.results_table.cellWidget(row, 2)
