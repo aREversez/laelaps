@@ -98,14 +98,19 @@ stay short and only content that genuinely wraps grows -- floored at
 non-wrap row already uses) so a one-line wrapped row comes out
 pixel-identical to a non-wrap row instead of measurably taller, which is
 what a naive "measured text height + a fixed padding constant" produced.
-The same computation reruns on every ``sectionResized`` while wrap is on
-(原文/译文 are ``Stretch``-resized, so a window resize changes their width
-and therefore the height each row needs), deferred one event-loop tick
-via ``QTimer.singleShot(0, ...)`` in ``_on_column_resized()`` since
-``columnWidth()`` isn't reliably settled to its final value yet at the
-exact moment a live drag-resize's ``sectionResized`` fires -- reading it
-synchronously there intermittently measured against the resize's
-previous width, one tick stale.
+
+A window resize changes the Stretch-resized 原文/译文 columns' width,
+which affects both wrap mode's row heights (more/fewer lines needed) and
+non-wrap mode's "…" elide point for a highlighted row (a widened window
+may now fit text that used to need truncating) -- see
+``QaCheckPage.resizeEvent()`` for how both are kept in sync with the
+table's current width via a debounced full ``_refresh_table()`` rather
+than the header's ``sectionResized`` signal: querying ``columnWidth()``
+synchronously inside a ``sectionResized`` handler reads a *stale* value
+until every column's resize signal for that layout pass has been
+processed (confirmed empirically), which is what caused wrapped rows to
+clip and elided rows to stay stuck at their old truncation point even
+after the window was widened back out.
 
 Export is deliberately NOT filtered by the current view: "导出 CSV"
 always writes the full corpus (every unit, QA columns included) via the
@@ -262,8 +267,22 @@ class QaCheckPage(QWidget):
         self._last_units = None
         self._check_worker = None
         self._export_worker = None
-        self._reflow_pending = False
+        # Debounced (not immediate) window-resize handling -- see
+        # resizeEvent() below for why.
+        self._resize_debounce = QTimer(self)
+        self._resize_debounce.setSingleShot(True)
+        self._resize_debounce.setInterval(80)
+        self._resize_debounce.timeout.connect(self._refresh_table)
         self._build_ui()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Debounced full refresh on window resize -- see module docstring
+        # ("A window resize changes...") for why this is a debounced
+        # _refresh_table() rather than an immediate per-event handler or
+        # the header's sectionResized signal.
+        if self._last_units:
+            self._resize_debounce.start()
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
@@ -368,12 +387,10 @@ class QaCheckPage(QWidget):
         self.results_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
-        # 原文/译文 are Stretch-resized, so a window resize changes their
-        # width and, in wrap mode, therefore the height each row needs --
-        # re-flow row heights on every resize while wrap is on. A no-op
-        # (guarded by the wrap check) while wrap is off, since plain
-        # QTableWidgetItem's elide doesn't need per-resize recalculation.
-        header.sectionResized.connect(self._on_column_resized)
+        # Window-resize handling (re-flowing wrap-mode row heights and
+        # re-eliding non-wrap highlighted rows against the table's new
+        # column widths) happens via this page's own resizeEvent(), not
+        # a signal connected here -- see that method for why.
         results_layout.addWidget(self.results_table, 1)
 
         outer.addWidget(section('QA 结果', results_content), 1)
@@ -531,33 +548,6 @@ class QaCheckPage(QWidget):
         # past that floor.
         floor = self.results_table.verticalHeader().defaultSectionSize()
         self.results_table.setRowHeight(row, max(int(max(src_h, tgt_h)), floor))
-
-    def _on_column_resized(self, *_args):
-        if not self.wrap_chk.isChecked():
-            return
-        # Deferred rather than recalculated inline: during a live window
-        # drag, Qt can emit sectionResized for a Stretch column before
-        # columnWidth() actually reflects that new size yet -- reading it
-        # synchronously here sometimes measured against the *previous*
-        # width, so a wrapped row's height silently fell out of sync with
-        # its now-narrower column (text visibly clipped). Deferring to
-        # the next event-loop iteration via QTimer.singleShot(0, ...)
-        # lets Qt finish settling the resize first. The pending-flag
-        # guard collapses the burst of sectionResized signals a single
-        # drag fires (one per pixel) into one reflow instead of one per
-        # signal.
-        if self._reflow_pending:
-            return
-        self._reflow_pending = True
-        QTimer.singleShot(0, self._reflow_wrap_rows)
-
-    def _reflow_wrap_rows(self):
-        self._reflow_pending = False
-        for row in range(self.results_table.rowCount()):
-            src_label = self.results_table.cellWidget(row, 1)
-            tgt_label = self.results_table.cellWidget(row, 2)
-            if src_label is not None and tgt_label is not None:
-                self._resize_wrap_row(row, src_label, tgt_label)
 
     # ------------------------------------------------------------ export
     def _start_export(self):

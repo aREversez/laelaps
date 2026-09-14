@@ -452,10 +452,48 @@ def test_wrap_row_height_updates_when_window_is_resized(qtbot, tmp_path):
     wide_height = page.results_table.rowHeight(0)
 
     page.resize(420, 500)
-    qtbot.wait(50)  # let the QTimer.singleShot(0, ...) reflow run
+    qtbot.wait(150)  # let the debounced resizeEvent -> _refresh_table() run
 
     narrow_height = page.results_table.rowHeight(0)
     assert narrow_height > wide_height
+
+
+def test_non_wrap_highlighted_row_re_elides_when_window_is_widened(qtbot, tmp_path):
+    # A NUMBER_MISMATCH row in the non-wrap view elides at whatever
+    # column width it was built with; if the window (and therefore the
+    # column) later gets wider, the visible "…"-truncated text should
+    # grow to use the extra room, not stay stuck at the old, narrower
+    # truncation point.
+    long_src = (
+        'We shipped 42 units to the warehouse last quarter, well above '
+        'the 43 units originally forecast for the same period, and '
+        'expect volumes to keep rising through year end.')
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u(long_src, '我们发货了43个单位。')])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.resize(420, 500)
+    page.show()
+    qtbot.waitExposed(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    assert not page.wrap_chk.isChecked()
+    narrow_html = page.results_table.cellWidget(0, 1).text()
+    assert '…' in narrow_html
+
+    page.resize(1100, 500)
+    qtbot.wait(150)  # let the debounced resizeEvent -> _refresh_table() run
+
+    wide_html = page.results_table.cellWidget(0, 1).text()
+    # Re-elided against the new, wider column -- strictly more of the
+    # sentence is now visible than at the narrow width (whether or not
+    # this particular window width is wide enough to fit the whole
+    # thing with zero truncation is a font-metrics detail, not what this
+    # regression test is about).
+    assert wide_html != narrow_html
+    assert len(wide_html) > len(narrow_html)
 
 
 def test_highlight_hint_hidden_when_nothing_highlightable_visible(qtbot):
