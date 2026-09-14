@@ -243,6 +243,34 @@ def test_find_number_spans_returns_empty_list_for_no_numbers():
     assert qa.find_number_spans('You may proceed.') == []
 
 
+def test_find_placeholder_spans_returns_original_substrings():
+    text = 'Welcome, {name}! You have %d new messages.'
+    spans = qa.find_placeholder_spans(text)
+    assert [text[s:e] for s, e in spans] == ['{name}', '%d']
+
+
+def test_find_placeholder_spans_returns_empty_list_for_no_placeholders():
+    assert qa.find_placeholder_spans('Plain sentence, nothing here.') == []
+
+
+def test_find_url_spans_returns_original_substrings():
+    text = 'See https://example.com/docs for details.'
+    spans = qa.find_url_spans(text)
+    assert [text[s:e] for s, e in spans] == ['https://example.com/docs']
+
+
+def test_find_url_spans_excludes_trailing_sentence_punctuation():
+    # The comma right after the URL is the sentence's punctuation, not
+    # part of the link -- the span must not include it.
+    text = 'See https://example.com/docs, for details.'
+    spans = qa.find_url_spans(text)
+    assert text[spans[0][0]:spans[0][1]] == 'https://example.com/docs'
+
+
+def test_find_url_spans_returns_empty_list_for_no_urls():
+    assert qa.find_url_spans('No links in this sentence.') == []
+
+
 def test_flags_length_ratio_outlier():
     # length_ratio says target should be roughly src_len/1.0; a target
     # 1/10th the expected length should trip the outlier check.

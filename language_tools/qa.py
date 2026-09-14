@@ -296,6 +296,37 @@ def find_number_spans(text):
     return spans
 
 
+def find_placeholder_spans(text):
+    """Return a sorted list of (start, end) character spans in ``text``
+    for every placeholder token ``_extract_placeholders()`` would find
+    (see that function and PLACEHOLDER_MISMATCH's docstring above) --
+    for a caller (GUI highlighting) that needs to point at the literal
+    substrings rather than just the set of tokens found. Unlike
+    ``find_number_spans()``, no text transformation happens before
+    ``_PLACEHOLDER_RE`` runs, so this is a direct ``finditer()`` over
+    the original text -- there's no risk of the offsets referring to a
+    transformed string that don't line up with what's on screen.
+    """
+    return sorted(m.span() for m in _PLACEHOLDER_RE.finditer(text))
+
+
+def find_url_spans(text):
+    """Return a sorted list of (start, end) character spans in ``text``
+    for every URL ``_extract_urls()`` would find, trimmed the same way
+    that function trims trailing sentence punctuation (a period right
+    after a URL is the sentence's punctuation, not part of the URL) so
+    a caller highlighting the span doesn't mark that trailing character
+    as if it were part of the link.
+    """
+    spans = []
+    for m in _URL_RE.finditer(text):
+        start, end = m.span()
+        trimmed = m.group().rstrip(_URL_TRAILING_PUNCT)
+        spans.append((start, start + len(trimmed)))
+    spans.sort()
+    return spans
+
+
 def _extract_placeholders(text):
     return set(_PLACEHOLDER_RE.findall(text))
 
