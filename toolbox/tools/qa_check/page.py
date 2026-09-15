@@ -84,37 +84,35 @@ what gets marked (and the label's tooltip carries the untruncated
 original, so the full sentence is still one hover away without switching
 to wrap mode).
 
-Row height in wrap mode is set explicitly via each label's own
-``heightForWidth(column_width)`` -- not ``QTableWidget.resizeRowsToContents()``
-calling the cell widgets' plain ``sizeHint()`` (a freshly-``setCellWidget``'d
-QLabel doesn't reliably know its final on-screen width yet when bare
-``sizeHint()`` is queried synchronously right after insertion, which made
-every row -- even a three-character one -- grow to some uniform,
-overly-tall guess), and not a hand-rolled ``QTextDocument`` measurement
-either (tried next: it came out shorter than what the real QLabel needed
-at the same width -- a font-metrics/line-height detail between
-QTextDocument's layout and QLabel's own, confirmed empirically -- and
-clipped wrapped content as a result). ``heightForWidth(w)`` sidesteps
-both problems: it takes the width as an explicit argument rather than
-reading the widget's current geometry, so it's accurate even before any
-layout pass, and it's the actual widget's own measurement of itself, so
-there's no second implementation of text layout to keep in sync with
-Qt's. Floored at ``verticalHeader().defaultSectionSize()`` (the same
-height a plain, non-wrap row already uses) so a one-line wrapped row
-comes out pixel-identical to a non-wrap row instead of measurably taller.
+Row height in wrap mode is kept correct by ``_WrapLabel`` (see its own
+docstring for the full history of three earlier approaches that each
+computed a height from somewhere other than this exact widget's real,
+just-assigned geometry -- a hand-rolled ``QTextDocument`` layout, then
+``QLabel.heightForWidth()`` fed a width read from the table, then plain
+``resizeRowsToContents()`` -- and each was found, on a real machine, to
+disagree with what was actually painted). Every wrap-mode 原文/译文 cell
+is a ``_WrapLabel``, which grows its own row via its own
+``resizeEvent()`` using its own ``self.width()`` -- Qt's own
+authoritative, just-assigned value for this exact widget -- so there's
+nothing read from elsewhere that could be stale or platform-dependent.
 
 A window resize changes the Stretch-resized 原文/译文 columns' width,
-which affects both wrap mode's row heights (more/fewer lines needed) and
-non-wrap mode's "…" elide point for a highlighted row (a widened window
-may now fit text that used to need truncating) -- see
-``QaCheckPage.resizeEvent()`` for how both are kept in sync with the
+which affects non-wrap mode's "…" elide point for a highlighted row (a
+widened window may now fit text that used to need truncating) -- see
+``QaCheckPage.resizeEvent()`` for how that's kept in sync with the
 table's current width via a debounced full ``_refresh_table()`` rather
 than the header's ``sectionResized`` signal: querying ``columnWidth()``
 synchronously inside a ``sectionResized`` handler reads a *stale* value
 until every column's resize signal for that layout pass has been
-processed (confirmed empirically), which is what caused wrapped rows to
-clip and elided rows to stay stuck at their old truncation point even
-after the window was widened back out.
+processed (confirmed empirically), which is what caused elided rows to
+stay stuck at their old truncation point even after the window was
+widened back out. Wrap-mode row heights don't strictly need this
+debounced refresh -- each ``_WrapLabel`` already re-fires its own
+``resizeEvent()`` as Qt re-stretches its column -- but the full refresh
+runs regardless since the same window resize needs it anyway for the
+elide case, and rebuilding wrap rows from a clean slate (rather than
+leaving a stale, too-tall row height around from a since-widened window)
+is simpler to reason about than trying to carve out an exception.
 
 Export is deliberately NOT filtered by the current view: "导出 CSV"
 always writes the full corpus (every unit, QA columns included) via the
@@ -238,6 +236,99 @@ def _highlighted_html(text, spans):
         pos = end
     out.append(html.escape(text[pos:]))
     return ''.join(out)
+
+
+class _WrapLabel(QLabel):
+    """QLabel used for a wrapped 原文/译文 cell. Keeps its own table row
+    tall enough for its content by reacting to its OWN ``resizeEvent`` --
+    Qt's own, authoritative notification of the width it was just
+    actually assigned -- rather than a separate, externally-read or
+    -computed width.
+
+    This is the fourth approach tried for this exact problem, and each
+    of the previous three read or computed "how tall does this need to
+    be" from somewhere other than this exact widget's own real,
+    just-assigned geometry, and each was found -- on a real machine, not
+    this offscreen test environment's fallback fonts/DPI -- to
+    disagree with what was actually painted:
+
+    1. A hand-rolled ``QTextDocument`` layout: its line-height/font
+       metrics simply didn't match ``QLabel``'s own.
+    2. ``heightForWidth(self.results_table.columnWidth(column))``: an
+       accurate calculation, but fed a width read from the table at a
+       moment (immediately after populating a row, mid-loop) that could
+       still be stale -- e.g. a later row's height pushing the vertical
+       scrollbar into existence narrows every column out from under an
+       earlier row's already-computed height.
+    3. ``QTableWidget.resizeRowsToContents()``: delegates to Qt's own
+       code, which sounds like it should be authoritative, but for a
+       word-wrapped rich-text ``QLabel`` its underlying ``sizeHint()``
+       does **not** track the widget's actual current width at all --
+       confirmed empirically (a label 455px wide reported a ``sizeHint``
+       of width 228, unrelated to its real width) -- so this wasn't
+       "the same code Qt uses to paint" for this widget type the way it
+       is for a plain item.
+
+    Reacting inside this label's own ``resizeEvent`` removes the gap
+    that broke all three: ``self.width()`` here *is* Qt's own
+    just-assigned width for this exact widget, in whatever coordinate
+    system it's about to paint in -- there's nothing left to read from
+    somewhere else that could be stale, wrong, or unrelated to the real
+    width.
+
+    The one wrinkle: "just-assigned" doesn't mean "final". Qt's own
+    layout negotiation fires this label's ``resizeEvent`` several times
+    in a row with different *intermediate* widths -- sometimes across
+    more than one event-loop iteration, not just one synchronous burst
+    -- before settling on the real final one (confirmed empirically: a
+    label whose true final column width was 455px passed through an
+    intermediate resizeEvent at 228px first, and a bare "defer to the
+    next tick" wasn't always enough to skip past that). ``_settle_timer``
+    -- a restarting single-shot timer, same 80ms interval as the
+    page-level window-resize debounce -- waits out that whole
+    multi-round process: every resizeEvent restarts it, so the actual
+    height computation only runs once resizing has been quiet for a
+    beat, by which point ``self.width()`` is the real, settled value.
+
+    Only grows the row (never shrinks it) -- needed so this row ends up
+    tall enough for whichever of its 原文/译文 columns needs more room,
+    since each label only knows its own required height, not its
+    sibling's. Shrinking back down when content no longer needs the
+    room happens by ``_refresh_table()`` rebuilding the row from scratch
+    (a fresh default height, then this same mechanism grows it again
+    only as much as the new content actually needs).
+    """
+    def __init__(self, table, row):
+        super().__init__()
+        self._table = table
+        self._row = row
+        # Debounced (restarting single-shot timer), not a bare
+        # QTimer.singleShot(0, ...): Qt's own layout negotiation doesn't
+        # settle in one synchronous burst here -- confirmed empirically,
+        # a bare next-tick deferral still sometimes fired while an
+        # *earlier* transient width's deferred check was still pending,
+        # so it computed against that transient width too, and the
+        # "only grow" rule (needed for correctly combining this row's
+        # src/tgt columns -- see below) then let that wrong, too-tall
+        # value stick even once a later, correct pass reported the real
+        # (shorter) height needed. Restarting a short timer on every
+        # resizeEvent and only acting once resizing has been quiet for a
+        # beat waits out that whole multi-round settling process, the
+        # same technique (same 80ms) already used for the page-level
+        # window-resize debounce.
+        self._settle_timer = QTimer(self)
+        self._settle_timer.setSingleShot(True)
+        self._settle_timer.setInterval(80)
+        self._settle_timer.timeout.connect(self._apply_height_for_current_width)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._settle_timer.start()
+
+    def _apply_height_for_current_width(self):
+        needed = self.heightForWidth(self.width())
+        if needed > self._table.rowHeight(self._row):
+            self._table.setRowHeight(self._row, needed)
 
 
 class QaCheckPage(QWidget):
@@ -462,59 +553,29 @@ class QaCheckPage(QWidget):
             any(highlightable_types.intersection(issues) for _, _, issues in rows))
 
         self.results_table.setRowCount(len(rows))
-        wrap_labels = []  # (row, src_label, tgt_label), sized in a second pass below
         for row, (i, u, issues) in enumerate(rows):
             conf = u.meta.get('qa_confidence', 1.0)
             issue_text = '、'.join(_issue_label(code) for code in issues) if issues else '-'
             self.results_table.setItem(row, 0, QTableWidgetItem(str(i)))
             highlight = bool(highlightable_types.intersection(issues))
             if wrap or highlight:
-                src_label = self._make_cell_label(u.src_text, issues, wrap, column=1)
-                tgt_label = self._make_cell_label(u.tgt_text, issues, wrap, column=2)
+                src_label = self._make_cell_label(u.src_text, issues, wrap, column=1, row=row)
+                tgt_label = self._make_cell_label(u.tgt_text, issues, wrap, column=2, row=row)
                 self.results_table.setCellWidget(row, 1, src_label)
                 self.results_table.setCellWidget(row, 2, tgt_label)
-                if wrap:
-                    wrap_labels.append((row, src_label, tgt_label))
             else:
                 self.results_table.setItem(row, 1, QTableWidgetItem(u.src_text))
                 self.results_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
             self.results_table.setItem(row, 3, QTableWidgetItem(issue_text))
             self.results_table.setItem(row, 4, QTableWidgetItem('%.2f' % conf))
-        # Row heights are set only after every row's cell widgets exist,
-        # not inline in the loop above: setting an early row's height can
-        # itself make the vertical scrollbar appear (total content now
-        # taller than the viewport), which narrows the Stretch-resized
-        # columns -- so a height computed against that row's width *before*
-        # the scrollbar appeared could already be stale, too short, by the
-        # time the last row is added (confirmed empirically: columnWidth(1)
-        # measured 262 while sizing row 0, then settled at 255 once later
-        # rows pushed the scrollbar into existence -- row 0's height was
-        # quietly wrong, clipping its second line). Waiting until row count
-        # and therefore scrollbar state are both final avoids computing
-        # against a width that's about to change under it.
-        self._apply_wrap_row_heights(wrap_labels)
+        # No explicit row-height pass needed here: in wrap mode, each
+        # _WrapLabel grows its own row via its own resizeEvent as it's
+        # laid out above (see that class's docstring for why this,
+        # rather than any measurement done from out here, is what
+        # actually stays correct across machines).
 
-    def _apply_wrap_row_heights(self, wrap_labels):
-        if not wrap_labels:
-            return
-        width_before = (self.results_table.columnWidth(1), self.results_table.columnWidth(2))
-        for row, src_label, tgt_label in wrap_labels:
-            self._resize_wrap_row(row, src_label, tgt_label)
-        # Applying those heights can itself be what makes the vertical
-        # scrollbar newly appear (or disappear) -- same mechanism as the
-        # comment above, just now possible *within* this pass instead of
-        # only between the widget-creation and height passes. One
-        # recompute against the now-settled width is enough: a scrollbar
-        # can only flip once as a consequence of heights that already
-        # account for its presence, so this converges without needing an
-        # open-ended retry loop.
-        width_after = (self.results_table.columnWidth(1), self.results_table.columnWidth(2))
-        if width_after != width_before:
-            for row, src_label, tgt_label in wrap_labels:
-                self._resize_wrap_row(row, src_label, tgt_label)
-
-    def _make_cell_label(self, text, issues, wrap, column):
-        label = QLabel()
+    def _make_cell_label(self, text, issues, wrap, column, row=None):
+        label = _WrapLabel(self.results_table, row) if wrap else QLabel()
         label.setTextFormat(Qt.RichText)
         # Stylesheet's blanket "QWidget { background: ... }" rule (see
         # style.qss) would otherwise paint every cell a flat, non-
@@ -542,29 +603,6 @@ class QaCheckPage(QWidget):
         if elided != text:
             label.setToolTip(text)
         return label
-
-    def _resize_wrap_row(self, row, src_label, tgt_label):
-        # QLabel.heightForWidth(w) asked directly, rather than
-        # reimplementing the measurement with a bare QTextDocument: the
-        # two disagreed (QTextDocument came out shorter than what the
-        # actual QLabel needed at the same width -- confirmed
-        # empirically, a font-metrics/line-height detail between the
-        # two, not a margin/padding issue), and clipped wrapped content
-        # as a result. Asking the real widget that will actually render
-        # the text is the only way to guarantee the measurement matches
-        # what's really needed -- and unlike sizeHint() (unreliable
-        # immediately after setCellWidget(), see module docstring),
-        # heightForWidth(w) takes the width as an explicit parameter
-        # rather than reading the widget's current/cached geometry, so
-        # it's accurate even before the widget has been laid out at all.
-        src_h = src_label.heightForWidth(self.results_table.columnWidth(1))
-        tgt_h = tgt_label.heightForWidth(self.results_table.columnWidth(2))
-        # Floor at the table's own normal single-line row height (what a
-        # plain, non-wrap QTableWidgetItem row already uses), so a
-        # one-line wrapped row comes out pixel-identical to a non-wrap
-        # row instead of the two disagreeing.
-        floor = self.results_table.verticalHeader().defaultSectionSize()
-        self.results_table.setRowHeight(row, max(src_h, tgt_h, floor))
 
     # ------------------------------------------------------------ export
     def _start_export(self):

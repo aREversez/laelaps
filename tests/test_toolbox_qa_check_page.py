@@ -418,6 +418,7 @@ def test_short_row_matches_non_wrap_row_height_exactly(qtbot, tmp_path):
     non_wrap_height = page.results_table.rowHeight(0)
 
     page.wrap_chk.setChecked(True)
+    qtbot.wait(200)  # let each _WrapLabel's settle timer fire
     short_row = next(r for r in range(page.results_table.rowCount())
                       if page.results_table.item(r, 0).text() == '2')
     long_row = next(r for r in range(page.results_table.rowCount())
@@ -455,6 +456,7 @@ def test_wrap_row_height_is_never_less_than_the_content_actually_needs(qtbot, tm
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
     page.wrap_chk.setChecked(True)
+    qtbot.wait(200)  # let each _WrapLabel's settle timer fire
     for row in range(page.results_table.rowCount()):
         label = page.results_table.cellWidget(row, 1)
         needed = label.heightForWidth(page.results_table.columnWidth(1))
@@ -489,7 +491,7 @@ def test_wrap_row_height_updates_when_window_is_resized(qtbot, tmp_path):
     wide_height = page.results_table.rowHeight(0)
 
     page.resize(420, 500)
-    qtbot.wait(150)  # let the debounced resizeEvent -> _refresh_table() run
+    qtbot.wait(300)  # let the page debounce AND the per-label _WrapLabel settle timer both run
 
     narrow_height = page.results_table.rowHeight(0)
     assert narrow_height > wide_height
@@ -521,7 +523,7 @@ def test_non_wrap_highlighted_row_re_elides_when_window_is_widened(qtbot, tmp_pa
     assert '…' in narrow_html
 
     page.resize(1100, 500)
-    qtbot.wait(150)  # let the debounced resizeEvent -> _refresh_table() run
+    qtbot.wait(300)  # let the page debounce AND the per-label _WrapLabel settle timer both run
 
     wide_html = page.results_table.cellWidget(0, 1).text()
     # Re-elided against the new, wider column -- strictly more of the
