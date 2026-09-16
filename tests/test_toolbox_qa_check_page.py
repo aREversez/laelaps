@@ -1,10 +1,10 @@
 from conftest import tmx_path
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QStyleOptionViewItem
 
 from language_tools.model import TranslationUnit
 from language_tools.writers import tmx_writer
-from toolbox.tools.qa_check.page import QaCheckPage
+from toolbox.tools.qa_check.page import QaCheckPage, _WRAP_HTML_ROLE
 
 
 def _u(src, tgt, **kw):
@@ -273,12 +273,11 @@ def test_toggling_wrap_on_switches_clean_row_to_wrapped_label(qtbot, tmp_path):
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
     page.wrap_chk.setChecked(True)
-    label = page.results_table.cellWidget(0, 1)
-    assert isinstance(label, QLabel)
-    assert label.wordWrap()
-    # item(row, col) is only meaningful for the plain-item path; wrap mode
-    # renders through a cell widget instead, so the item slot is unused.
-    assert page.results_table.item(0, 1) is None
+    item = page.results_table.item(0, 1)
+    assert item is not None
+    assert page.results_table.cellWidget(0, 1) is None
+    assert item.text() == 'Found %d results.'
+    assert '<b' in item.data(_WRAP_HTML_ROLE)
 
 
 def test_toggling_wrap_off_again_restores_plain_items_for_clean_row(qtbot):
@@ -325,8 +324,14 @@ def test_number_mismatch_highlighting_present_in_both_wrap_states(qtbot, tmp_pat
 
     for wrapped in (False, True, False):
         page.wrap_chk.setChecked(wrapped)
-        src_html = page.results_table.cellWidget(0, 1).text()
-        tgt_html = page.results_table.cellWidget(0, 2).text()
+        src_item = page.results_table.item(0, 1)
+        tgt_item = page.results_table.item(0, 2)
+        if wrapped:
+            src_html = src_item.data(_WRAP_HTML_ROLE)
+            tgt_html = tgt_item.data(_WRAP_HTML_ROLE)
+        else:
+            src_html = page.results_table.cellWidget(0, 1).text()
+            tgt_html = page.results_table.cellWidget(0, 2).text()
         assert '<b style="color:#B23B3B; font-weight:600;">42</b>' in src_html
         assert '<b style="color:#B23B3B; font-weight:600;">43</b>' in tgt_html
 
@@ -339,7 +344,7 @@ def test_wrap_on_does_not_highlight_rows_without_a_highlightable_issue(qtbot):
     _show_checked_units(page, [unit])
 
     page.wrap_chk.setChecked(True)
-    src_html = page.results_table.cellWidget(0, 1).text()
+    src_html = page.results_table.item(0, 1).data(_WRAP_HTML_ROLE)
     assert '<b' not in src_html
 
 
@@ -418,7 +423,7 @@ def test_short_row_matches_non_wrap_row_height_exactly(qtbot, tmp_path):
     non_wrap_height = page.results_table.rowHeight(0)
 
     page.wrap_chk.setChecked(True)
-    qtbot.wait(200)  # let each _WrapLabel's settle timer fire
+    qtbot.wait(200)  # let the delegate reflow debounce run
     short_row = next(r for r in range(page.results_table.rowCount())
                       if page.results_table.item(r, 0).text() == '2')
     long_row = next(r for r in range(page.results_table.rowCount())
@@ -456,10 +461,13 @@ def test_wrap_row_height_is_never_less_than_the_content_actually_needs(qtbot, tm
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
     page.wrap_chk.setChecked(True)
-    qtbot.wait(200)  # let each _WrapLabel's settle timer fire
+    qtbot.wait(200)  # let the delegate reflow debounce run
     for row in range(page.results_table.rowCount()):
-        label = page.results_table.cellWidget(row, 1)
-        needed = label.heightForWidth(page.results_table.columnWidth(1))
+        item = page.results_table.item(row, 1)
+        option = QStyleOptionViewItem()
+        option.rect.setWidth(page.results_table.columnWidth(1))
+        index = page.results_table.model().index(row, 1)
+        needed = page.results_table.itemDelegate().sizeHint(option, index).height()
         assert page.results_table.rowHeight(row) >= needed, (
             f'row {row}: height={page.results_table.rowHeight(row)} '
             f'but content needs {needed}')
@@ -491,10 +499,53 @@ def test_wrap_row_height_updates_when_window_is_resized(qtbot, tmp_path):
     wide_height = page.results_table.rowHeight(0)
 
     page.resize(420, 500)
-    qtbot.wait(300)  # let the page debounce AND the per-label _WrapLabel settle timer both run
+    qtbot.wait(300)  # let the page debounce AND the delegate reflow debounce both run
 
     narrow_height = page.results_table.rowHeight(0)
     assert narrow_height > wide_height
+
+
+def test_wrap_row_height_shrinks_back_down_when_window_is_widened_again(qtbot, tmp_path):
+    # The row height must track the column width in both directions --
+    # not just grow when the window narrows, but shrink back down once
+    # it's widened again and fewer lines are needed. A widget-based
+    # approach tried earlier could only ever grow a row (each cell
+    # widget only knew how to ask for more room, never to give it back),
+    # leaving rows stuck too tall after a widen; the delegate approach
+    # recomputes fresh from the real current width every time, so it has
+    # no "too tall" state to get stuck in.
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u(
+            'We shipped 42 units to the warehouse last quarter, well above '
+            'the 43 units originally forecast for the same period, and '
+            'expect volumes to keep rising through year end as demand from '
+            'overseas distributors continues to climb.',
+            '我们发货了43个单位。'),
+    ])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.resize(1100, 500)
+    page.show()
+    qtbot.waitExposed(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    qtbot.wait(300)
+    wide_height = page.results_table.rowHeight(0)
+
+    page.resize(420, 500)
+    qtbot.wait(300)
+    narrow_height = page.results_table.rowHeight(0)
+    assert narrow_height > wide_height
+
+    page.resize(1100, 500)
+    qtbot.wait(300)
+    wide_again_height = page.results_table.rowHeight(0)
+    assert wide_again_height == wide_height
+    assert wide_again_height < narrow_height
 
 
 def test_non_wrap_highlighted_row_re_elides_when_window_is_widened(qtbot, tmp_path):
@@ -523,7 +574,7 @@ def test_non_wrap_highlighted_row_re_elides_when_window_is_widened(qtbot, tmp_pa
     assert '…' in narrow_html
 
     page.resize(1100, 500)
-    qtbot.wait(300)  # let the page debounce AND the per-label _WrapLabel settle timer both run
+    qtbot.wait(300)  # let the page debounce AND the delegate reflow debounce both run
 
     wide_html = page.results_table.cellWidget(0, 1).text()
     # Re-elided against the new, wider column -- strictly more of the

@@ -71,30 +71,53 @@ because it's the same one-line-of-code cost per check once the
 "highlight this span" plumbing exists at all.
 
 Because a highlightable row needs rich-text highlighting even in the
-default (non-wrap) view, and a plain ``QTableWidgetItem`` can't render
-rich text, 原文/译文 render as ``QLabel`` cell widgets -- not plain items
--- whenever wrap is on OR the row has a highlightable issue; every other
-row in the default view keeps the original, cheaper ``QTableWidgetItem``
-path (Qt's own built-in single-line elide, no custom sizing needed). A
-highlighted row in the non-wrap view still needs its own "…" elide,
-which a rich-text ``QLabel`` doesn't do automatically: the plain text is
-elided first via ``QFontMetrics.elidedText()`` against the column's
-current width, *then* highlighted, so the visible "…"-truncated text is
-what gets marked (and the label's tooltip carries the untruncated
-original, so the full sentence is still one hover away without switching
-to wrap mode).
+default (non-wrap) view, that path still uses a QLabel cell widget
+(``_make_cell_label()``, unchanged since it works fine there -- a
+single-line label's height doesn't depend on its width, so none of the
+problems below apply to it). Wrap mode is the case that actually needs a
+content-driven, width-dependent row height, and that's where a cell
+widget turns out to be the wrong tool:
 
-Row height in wrap mode is kept correct by ``_WrapLabel`` (see its own
-docstring for the full history of three earlier approaches that each
-computed a height from somewhere other than this exact widget's real,
-just-assigned geometry -- a hand-rolled ``QTextDocument`` layout, then
-``QLabel.heightForWidth()`` fed a width read from the table, then plain
-``resizeRowsToContents()`` -- and each was found, on a real machine, to
-disagree with what was actually painted). Every wrap-mode 原文/译文 cell
-is a ``_WrapLabel``, which grows its own row via its own
-``resizeEvent()`` using its own ``self.width()`` -- Qt's own
-authoritative, just-assigned value for this exact widget -- so there's
-nothing read from elsewhere that could be stale or platform-dependent.
+``QTableWidget.setCellWidget()`` places a real child widget into a cell,
+but a *cell widget's* size is not part of the table view's native
+painting/sizing path the way a plain item's is -- the widget's own
+``sizeHint()``/``heightForWidth()`` and the table's row-height
+computation are two separate systems that have to be kept in sync by
+hand, and getting that synchronization right for a wrapped, rich-text
+label turned out to fail in more ways than expected: a bare
+``QTextDocument`` re-implementation of text layout that didn't match
+what ``QLabel`` actually rendered; ``QLabel.heightForWidth()`` fed a
+column width read at a moment that could be stale (a later row's height
+pushing the vertical scrollbar into existence narrows every column
+out from under an earlier row's already-computed height);
+``QTableWidget.resizeRowsToContents()``, whose ``sizeHint()`` call
+doesn't track a word-wrapped rich-text ``QLabel``'s actual assigned
+width at all (confirmed empirically: a label 455px wide reported a
+``sizeHint`` of width 228); and finally reacting to the widget's own
+``resizeEvent()`` with a settling timer, which worked but could only
+grow a row, never shrink it back down once a since-widened window no
+longer needed the extra height.
+
+The fix was to stop using a cell widget for this at all. In wrap mode,
+原文/译文 stay as ordinary ``QTableWidgetItem``s (so ``item(row, col)``
+still works, e.g. for tests) with their escaped/highlighted HTML stashed
+in a private data role (``_WRAP_HTML_ROLE``) instead of ``DisplayRole``.
+``_QaTextDelegate`` -- the table's ``QStyledItemDelegate`` -- paints that
+HTML and, critically, its ``sizeHint(option, index)`` is *called by the
+view itself* with ``option.rect`` already set to that cell's real,
+current width, every time the view needs to know a row's height. There's
+no separate widget with its own out-of-band geometry to keep in sync --
+the width sizeHint() is asked about *is* the width the view is about to
+paint at, by construction, because it's the same object handing out both
+answers. That's what every widget-based attempt above was missing.
+
+``_reflow_wrapped_rows()`` still needs to prompt the view to re-ask the
+delegate (``resizeRowsToContents()`` isn't automatic), and still needs
+to guard against re-laying-out rows changing the vertical scrollbar's
+presence and therefore the column width every row was just measured
+against -- same mechanism as above, just now resolved by re-checking
+column width after each pass and stopping once it's stable, rather than
+by a widget's own settling timer.
 
 A window resize changes the Stretch-resized 原文/译文 columns' width,
 which affects non-wrap mode's "…" elide point for a highlighted row (a
@@ -106,13 +129,11 @@ synchronously inside a ``sectionResized`` handler reads a *stale* value
 until every column's resize signal for that layout pass has been
 processed (confirmed empirically), which is what caused elided rows to
 stay stuck at their old truncation point even after the window was
-widened back out. Wrap-mode row heights don't strictly need this
-debounced refresh -- each ``_WrapLabel`` already re-fires its own
-``resizeEvent()`` as Qt re-stretches its column -- but the full refresh
-runs regardless since the same window resize needs it anyway for the
-elide case, and rebuilding wrap rows from a clean slate (rather than
-leaving a stale, too-tall row height around from a since-widened window)
-is simpler to reason about than trying to carve out an exception.
+widened back out. The same debounced refresh also starts
+``_wrap_reflow`` (another debounce, not called inline: several resize
+events can fire in a burst, and there's no reason to re-lay-out the
+whole table once per event when only the final, settled width matters)
+to recompute wrapped row heights once the Stretch columns settle.
 
 Export is deliberately NOT filtered by the current view: "导出 CSV"
 always writes the full corpus (every unit, QA columns included) via the
@@ -136,10 +157,12 @@ import html
 import os
 
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import (
-    QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget,
-    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QStyle,
+    QStyledItemDelegate, QTableWidget, QTableWidgetItem, QTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from language_tools import qa as qa_module
@@ -150,6 +173,10 @@ from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, section
 from toolbox.workers import CallableWorker
 
 _CSV_FILTER = 'CSV (*.csv)'
+_WRAP_HTML_ROLE = Qt.UserRole + 1
+_CELL_HORIZONTAL_PADDING = 20
+_CELL_VERTICAL_PADDING = 12
+_DEFAULT_ROW_HEIGHT = 30
 
 # Bold + this app's one "problem" semantic color (see toolbox/resources/
 # style.qss's design-token comment: "danger -- semantic only, not
@@ -164,24 +191,12 @@ _HIGHLIGHT_HINT = (
     '提示：红色文字为"数字不匹配/占位符不匹配/URL 不匹配"检测涉及的内容，'
     '请核对原文与译文是否一致')
 
-# Issue types with a well-defined literal substring to point at (see
-# module docstring for why TAG_MISMATCH and the whole-segment checks
-# aren't here), each mapped to the qa.py function that finds those
-# substrings' spans in a given text.
 _SPAN_FINDERS = {
     'NUMBER_MISMATCH': qa_module.find_number_spans,
     'PLACEHOLDER_MISMATCH': qa_module.find_placeholder_spans,
     'URL_MISMATCH': qa_module.find_url_spans,
 }
 
-# Short tooltip per issue type, for the filter dropdown. The *label* text
-# (used both in the dropdown and now in the results table's "问题类型"
-# column -- that's the bug this comment is here to prevent recurring)
-# comes from ``qa.ISSUE_LABELS``, not a second copy here: two independent
-# label dicts is exactly how "标签不匹配" in the dropdown and a raw
-# "TAG_MISMATCH" in the table ended up saying different things for the
-# same code. Tooltips stay local since they're GUI-only extra detail with
-# no equivalent need to match the CSV export.
 _ISSUE_TOOLTIPS = {
     'EMPTY_SOURCE': '这一条的原文是空的',
     'EMPTY_TARGET': '这一条还没有翻译',
@@ -200,12 +215,7 @@ def _issue_label(issue_code):
 
 
 def _relevant_spans(text, issues):
-    """Every span in ``text`` worth highlighting for this row, across
-    all of ``issues`` that have a span finder (see ``_SPAN_FINDERS``) --
-    merged where two checks' spans happen to overlap, so ``_highlighted_
-    html()`` below never has to reason about nested/overlapping ``<b>``
-    tags.
-    """
+    """Return merged highlight spans for the row's applicable checks."""
     spans = []
     for code, finder in _SPAN_FINDERS.items():
         if code in issues:
@@ -221,13 +231,7 @@ def _relevant_spans(text, issues):
 
 
 def _highlighted_html(text, spans):
-    """Escape ``text`` for rich-text display, wrapping every span in
-    ``spans`` (from ``_relevant_spans()``) in ``_ISSUE_HIGHLIGHT_STYLE``.
-    Spans come from the *original* text's character offsets, so slicing
-    happens before escaping each piece individually -- escaping the
-    whole string first would shift every offset past the first ``&``,
-    ``<``, or ``>`` it introduced.
-    """
+    """Escape text and wrap the selected source spans in rich text."""
     out = []
     pos = 0
     for start, end in spans:
@@ -238,97 +242,63 @@ def _highlighted_html(text, spans):
     return ''.join(out)
 
 
-class _WrapLabel(QLabel):
-    """QLabel used for a wrapped 原文/译文 cell. Keeps its own table row
-    tall enough for its content by reacting to its OWN ``resizeEvent`` --
-    Qt's own, authoritative notification of the width it was just
-    actually assigned -- rather than a separate, externally-read or
-    -computed width.
-
-    This is the fourth approach tried for this exact problem, and each
-    of the previous three read or computed "how tall does this need to
-    be" from somewhere other than this exact widget's own real,
-    just-assigned geometry, and each was found -- on a real machine, not
-    this offscreen test environment's fallback fonts/DPI -- to
-    disagree with what was actually painted:
-
-    1. A hand-rolled ``QTextDocument`` layout: its line-height/font
-       metrics simply didn't match ``QLabel``'s own.
-    2. ``heightForWidth(self.results_table.columnWidth(column))``: an
-       accurate calculation, but fed a width read from the table at a
-       moment (immediately after populating a row, mid-loop) that could
-       still be stale -- e.g. a later row's height pushing the vertical
-       scrollbar into existence narrows every column out from under an
-       earlier row's already-computed height.
-    3. ``QTableWidget.resizeRowsToContents()``: delegates to Qt's own
-       code, which sounds like it should be authoritative, but for a
-       word-wrapped rich-text ``QLabel`` its underlying ``sizeHint()``
-       does **not** track the widget's actual current width at all --
-       confirmed empirically (a label 455px wide reported a ``sizeHint``
-       of width 228, unrelated to its real width) -- so this wasn't
-       "the same code Qt uses to paint" for this widget type the way it
-       is for a plain item.
-
-    Reacting inside this label's own ``resizeEvent`` removes the gap
-    that broke all three: ``self.width()`` here *is* Qt's own
-    just-assigned width for this exact widget, in whatever coordinate
-    system it's about to paint in -- there's nothing left to read from
-    somewhere else that could be stale, wrong, or unrelated to the real
-    width.
-
-    The one wrinkle: "just-assigned" doesn't mean "final". Qt's own
-    layout negotiation fires this label's ``resizeEvent`` several times
-    in a row with different *intermediate* widths -- sometimes across
-    more than one event-loop iteration, not just one synchronous burst
-    -- before settling on the real final one (confirmed empirically: a
-    label whose true final column width was 455px passed through an
-    intermediate resizeEvent at 228px first, and a bare "defer to the
-    next tick" wasn't always enough to skip past that). ``_settle_timer``
-    -- a restarting single-shot timer, same 80ms interval as the
-    page-level window-resize debounce -- waits out that whole
-    multi-round process: every resizeEvent restarts it, so the actual
-    height computation only runs once resizing has been quiet for a
-    beat, by which point ``self.width()`` is the real, settled value.
-
-    Only grows the row (never shrinks it) -- needed so this row ends up
-    tall enough for whichever of its 原文/译文 columns needs more room,
-    since each label only knows its own required height, not its
-    sibling's. Shrinking back down when content no longer needs the
-    room happens by ``_refresh_table()`` rebuilding the row from scratch
-    (a fresh default height, then this same mechanism grows it again
-    only as much as the new content actually needs).
+class _QaTextDelegate(QStyledItemDelegate):
+    """Item delegate for the QA results table's 原文/译文 columns in wrap
+    mode. Paints the rich-text HTML stashed in ``_WRAP_HTML_ROLE`` (see
+    module docstring for why this replaced a QLabel cell widget) and
+    reports a content-driven ``sizeHint()`` using the real column width
+    the table view passes in via ``option.rect`` -- the piece every
+    earlier cell-widget-based attempt was missing.
     """
-    def __init__(self, table, row):
-        super().__init__()
-        self._table = table
-        self._row = row
-        # Debounced (restarting single-shot timer), not a bare
-        # QTimer.singleShot(0, ...): Qt's own layout negotiation doesn't
-        # settle in one synchronous burst here -- confirmed empirically,
-        # a bare next-tick deferral still sometimes fired while an
-        # *earlier* transient width's deferred check was still pending,
-        # so it computed against that transient width too, and the
-        # "only grow" rule (needed for correctly combining this row's
-        # src/tgt columns -- see below) then let that wrong, too-tall
-        # value stick even once a later, correct pass reported the real
-        # (shorter) height needed. Restarting a short timer on every
-        # resizeEvent and only acting once resizing has been quiet for a
-        # beat waits out that whole multi-round settling process, the
-        # same technique (same 80ms) already used for the page-level
-        # window-resize debounce.
-        self._settle_timer = QTimer(self)
-        self._settle_timer.setSingleShot(True)
-        self._settle_timer.setInterval(80)
-        self._settle_timer.timeout.connect(self._apply_height_for_current_width)
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._settle_timer.start()
+    def _document(self, index, width):
+        """QTextDocument laid out at ``width``, shared by paint() and
+        sizeHint() below -- one implementation of "how is this HTML laid
+        out", not two that could drift apart from each other.
+        """
+        document = QTextDocument()
+        document.setDefaultFont(index.data(Qt.FontRole) or self.parent().font())
+        document.setDocumentMargin(0)
+        document.setHtml(index.data(_WRAP_HTML_ROLE) or '')
+        document.setTextWidth(max(width - _CELL_HORIZONTAL_PADDING, 1))
+        return document
 
-    def _apply_height_for_current_width(self):
-        needed = self.heightForWidth(self.width())
-        if needed > self._table.rowHeight(self._row):
-            self._table.setRowHeight(self._row, needed)
+    def paint(self, painter, option, index):
+        html_text = index.data(_WRAP_HTML_ROLE)
+        if not html_text:
+            super().paint(painter, option, index)
+            return
+        # drawControl(CE_ItemViewItem, ...) paints this cell's background,
+        # selection, and focus chrome -- not its text, since option.text
+        # is never populated here (this delegate never calls
+        # initStyleOption(), the only thing that would set it -- verified
+        # empirically: drawControl alone renders zero text pixels for
+        # this cell, confirming there's no double-painted text sitting
+        # underneath the rich-text document drawn below).
+        QApplication.style().drawControl(
+            QStyle.CE_ItemViewItem, option, painter, option.widget)
+
+        painter.save()
+        painter.setClipRect(option.rect)
+        document = self._document(index, option.rect.width())
+        painter.translate(option.rect.left() + 10, option.rect.top() + 6)
+        document.drawContents(painter)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        html_text = index.data(_WRAP_HTML_ROLE)
+        if not html_text:
+            return super().sizeHint(option, index)
+        # option.rect.width() here is the table view's own, real,
+        # current width for this cell -- not a value read from somewhere
+        # else that could be stale or unrelated to what's about to be
+        # painted (see module docstring for the history of widget-based
+        # approaches that got exactly this wrong).
+        document = self._document(index, option.rect.width())
+        size = document.size().toSize()
+        size.setWidth(option.rect.width())
+        size.setHeight(max(_DEFAULT_ROW_HEIGHT, size.height() + _CELL_VERTICAL_PADDING))
+        return size
 
 
 class QaCheckPage(QWidget):
@@ -343,6 +313,10 @@ class QaCheckPage(QWidget):
         self._resize_debounce.setSingleShot(True)
         self._resize_debounce.setInterval(80)
         self._resize_debounce.timeout.connect(self._refresh_table)
+        self._wrap_reflow = QTimer(self)
+        self._wrap_reflow.setSingleShot(True)
+        self._wrap_reflow.setInterval(80)
+        self._wrap_reflow.timeout.connect(self._reflow_wrapped_rows)
         self._build_ui()
 
     def resizeEvent(self, event):
@@ -457,6 +431,7 @@ class QaCheckPage(QWidget):
         self.results_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
+        self.results_table.setItemDelegate(_QaTextDelegate(self.results_table))
         # Window-resize handling (re-flowing wrap-mode row heights and
         # re-eliding non-wrap highlighted rows against the table's new
         # column widths) happens via this page's own resizeEvent(), not
@@ -558,9 +533,12 @@ class QaCheckPage(QWidget):
             issue_text = '、'.join(_issue_label(code) for code in issues) if issues else '-'
             self.results_table.setItem(row, 0, QTableWidgetItem(str(i)))
             highlight = bool(highlightable_types.intersection(issues))
-            if wrap or highlight:
-                src_label = self._make_cell_label(u.src_text, issues, wrap, column=1, row=row)
-                tgt_label = self._make_cell_label(u.tgt_text, issues, wrap, column=2, row=row)
+            if wrap:
+                self._set_wrapped_item(row, 1, u.src_text, issues)
+                self._set_wrapped_item(row, 2, u.tgt_text, issues)
+            elif highlight:
+                src_label = self._make_cell_label(u.src_text, issues, column=1)
+                tgt_label = self._make_cell_label(u.tgt_text, issues, column=2)
                 self.results_table.setCellWidget(row, 1, src_label)
                 self.results_table.setCellWidget(row, 2, tgt_label)
             else:
@@ -568,25 +546,48 @@ class QaCheckPage(QWidget):
                 self.results_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
             self.results_table.setItem(row, 3, QTableWidgetItem(issue_text))
             self.results_table.setItem(row, 4, QTableWidgetItem('%.2f' % conf))
-        # No explicit row-height pass needed here: in wrap mode, each
-        # _WrapLabel grows its own row via its own resizeEvent as it's
-        # laid out above (see that class's docstring for why this,
-        # rather than any measurement done from out here, is what
-        # actually stays correct across machines).
+        if wrap:
+            # Let the delegate measure each item after Qt has settled the
+            # Stretch columns.
+            self._wrap_reflow.start()
 
-    def _make_cell_label(self, text, issues, wrap, column, row=None):
-        label = _WrapLabel(self.results_table, row) if wrap else QLabel()
+    def _reflow_wrapped_rows(self):
+        if not self.wrap_chk.isChecked() or not self.results_table.rowCount():
+            return
+        table = self.results_table
+        # Re-laying-out rows can itself make the vertical scrollbar
+        # newly appear or disappear (taller rows -> more total content ->
+        # scrollbar needed), which narrows/widens the Stretch-resized
+        # columns out from under the row heights just computed against
+        # the old width -- same mechanism documented in earlier commits'
+        # history of this exact bug. Re-checking column width after each
+        # pass and stopping once it's stable (rather than a fixed count)
+        # does only as many passes as this row set actually needs; the
+        # cap is a safety net against pathological back-and-forth, not
+        # the normal case (typically converges in one pass).
+        width_before = (table.columnWidth(1), table.columnWidth(2))
+        for _ in range(5):
+            table.doItemsLayout()
+            table.resizeRowsToContents()
+            width_after = (table.columnWidth(1), table.columnWidth(2))
+            if width_after == width_before:
+                break
+            width_before = width_after
+
+    def _set_wrapped_item(self, row, column, text, issues):
+        item = QTableWidgetItem(text)
+        spans = _relevant_spans(text, issues)
+        item.setData(_WRAP_HTML_ROLE, _highlighted_html(text, spans) if spans else html.escape(text))
+        self.results_table.setItem(row, column, item)
+
+    def _make_cell_label(self, text, issues, column):
+        label = QLabel()
         label.setTextFormat(Qt.RichText)
         # Stylesheet's blanket "QWidget { background: ... }" rule (see
         # style.qss) would otherwise paint every cell a flat, non-
         # alternating color instead of letting the table's own
         # alternating-row background show through this widget.
         label.setStyleSheet('background: transparent;')
-        label.setWordWrap(wrap)
-        if wrap:
-            spans = _relevant_spans(text, issues)
-            label.setText(_highlighted_html(text, spans) if spans else html.escape(text))
-            return label
         # Not wrapped: this path is only reached for a row with a
         # highlightable issue (see caller), which needs highlighting a
         # plain QTableWidgetItem can't render -- so it still needs its
