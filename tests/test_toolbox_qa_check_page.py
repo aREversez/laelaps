@@ -1,9 +1,12 @@
+import os
+
 from conftest import tmx_path
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QStyleOptionViewItem
+from PySide6.QtWidgets import QApplication, QLabel, QStyleOptionViewItem
 
 from language_tools.model import TranslationUnit
 from language_tools.writers import tmx_writer
+from toolbox.paths import RESOURCES_DIR
 from toolbox.tools.qa_check.page import QaCheckPage, _WRAP_HTML_ROLE
 
 
@@ -430,6 +433,47 @@ def test_short_row_matches_non_wrap_row_height_exactly(qtbot, tmp_path):
                      if page.results_table.item(r, 0).text() == '1')
     assert page.results_table.rowHeight(short_row) == non_wrap_height
     assert page.results_table.rowHeight(long_row) > non_wrap_height
+
+
+def test_short_row_matches_non_wrap_row_height_with_real_stylesheet(qtbot, tmp_path):
+    # Regression guard for a bug that this test file's other row-height
+    # tests did NOT catch: this app's real font (Microsoft YaHei UI, from
+    # style.qss) has a taller natural single-line height than whatever
+    # fallback font this test environment substitutes when no stylesheet
+    # is loaded, so a one-line row could come out taller in wrap mode
+    # than in the default view on the real font while every other test
+    # here -- never loading the real stylesheet -- still passed. Loading
+    # the actual app stylesheet to reproduce it is the only way for this
+    # suite to have caught it. Real reset in a try/finally: QApplication
+    # is a session-wide singleton (pytest-qt's own qapp fixture), so a
+    # stylesheet set here would otherwise leak into every later test.
+    app = QApplication.instance()
+    style_path = os.path.join(RESOURCES_DIR, 'style.qss')
+    with open(style_path, encoding='utf-8') as f:
+        stylesheet = f.read()
+    original_stylesheet = app.styleSheet()
+    app.setStyleSheet(stylesheet)
+    try:
+        src = tmp_path / 'in.tmx'
+        # Long enough that it's a real sentence, not a trivial "Hi!" --
+        # the bug this guards against needed real single-line content,
+        # not just a near-empty one, to actually manifest.
+        _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
+        page = QaCheckPage()
+        qtbot.addWidget(page)
+        page.resize(1400, 500)  # wide enough the content stays on one line
+        page.show()
+        qtbot.waitExposed(page)
+        page.input_edit.setText(str(src))
+        page.check_btn.click()
+        qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+        non_wrap_height = page.results_table.rowHeight(0)
+
+        page.wrap_chk.setChecked(True)
+        qtbot.wait(200)  # let the delegate reflow debounce run
+        assert page.results_table.rowHeight(0) == non_wrap_height
+    finally:
+        app.setStyleSheet(original_stylesheet)
 
 
 def test_wrap_row_height_is_never_less_than_the_content_actually_needs(qtbot, tmp_path):

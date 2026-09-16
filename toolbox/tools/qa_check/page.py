@@ -161,8 +161,8 @@ from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QStyle,
-    QStyledItemDelegate, QTableWidget, QTableWidgetItem, QTextEdit,
-    QVBoxLayout, QWidget,
+    QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
+    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from language_tools import qa as qa_module
@@ -175,8 +175,6 @@ from toolbox.workers import CallableWorker
 _CSV_FILTER = 'CSV (*.csv)'
 _WRAP_HTML_ROLE = Qt.UserRole + 1
 _CELL_HORIZONTAL_PADDING = 20
-_CELL_VERTICAL_PADDING = 12
-_DEFAULT_ROW_HEIGHT = 30
 
 # Bold + this app's one "problem" semantic color (see toolbox/resources/
 # style.qss's design-token comment: "danger -- semantic only, not
@@ -287,8 +285,24 @@ class _QaTextDelegate(QStyledItemDelegate):
 
     def sizeHint(self, option, index):
         html_text = index.data(_WRAP_HTML_ROLE)
+        floor = self.parent().verticalHeader().defaultSectionSize()
         if not html_text:
-            return super().sizeHint(option, index)
+            # Also floored, not just returned as-is: row height for these
+            # columns (#, 问题类型, 置信度) is set directly by
+            # _reflow_wrapped_rows() from the floor alone, without
+            # querying this branch at all -- but sizeHint() can still be
+            # called for them through other Qt-internal paths (e.g. the
+            # view's own layout/scroll bookkeeping), and Qt's own default
+            # delegate's sizeHint() for these columns' content can exceed
+            # the floor on this app's real font (confirmed empirically:
+            # 28-29px vs a 30px floor is close, but not guaranteed to
+            # stay that way for longer 问题类型 label text). Keeping this
+            # capped means any such call stays consistent with "these
+            # columns never make a row taller than its default", which
+            # was true before any of this wrap-mode work existed.
+            size = super().sizeHint(option, index)
+            size.setHeight(min(size.height(), floor))
+            return size
         # option.rect.width() here is the table view's own, real,
         # current width for this cell -- not a value read from somewhere
         # else that could be stale or unrelated to what's about to be
@@ -297,7 +311,21 @@ class _QaTextDelegate(QStyledItemDelegate):
         document = self._document(index, option.rect.width())
         size = document.size().toSize()
         size.setWidth(option.rect.width())
-        size.setHeight(max(_DEFAULT_ROW_HEIGHT, size.height() + _CELL_VERTICAL_PADDING))
+        # Floored at the table's own normal single-line row height (what
+        # a plain, non-wrap row already uses), NOT the document's own
+        # height plus a fixed padding constant: that fixed-padding
+        # approach (tried first) added the same few pixels regardless of
+        # font, so a row whose content already fit on one line -- no
+        # wrapping needed at all -- still came out taller in wrap mode
+        # than in the default view, on a font where a single line's
+        # natural height plus that padding exceeded the floor (confirmed
+        # empirically: 30px non-wrap vs 35px wrap-mode for identical
+        # one-line content, with this app's real font). A row that
+        # genuinely needs multiple lines already gets a taller natural
+        # document height on its own; this floor only ever affects
+        # single-line content, bringing it back down to match.
+        floor = self.parent().verticalHeader().defaultSectionSize()
+        size.setHeight(max(floor, size.height()))
         return size
 
 
@@ -555,6 +583,27 @@ class QaCheckPage(QWidget):
         if not self.wrap_chk.isChecked() or not self.results_table.rowCount():
             return
         table = self.results_table
+        delegate = table.itemDelegate()
+        floor = table.verticalHeader().defaultSectionSize()
+        # Row heights are set directly from the delegate's own sizeHint()
+        # for just the wrap-HTML columns, NOT via
+        # QTableWidget.resizeRowsToContents(): that call was tried first
+        # (it's the "obvious" Qt API for this), and its own internal
+        # row-height aggregation adds a margin on top of every column's
+        # sizeHint() that isn't reflected in any sizeHint() call itself --
+        # confirmed empirically: every column's sizeHint() for a row
+        # topped out at 30px (matching the floor), yet
+        # resizeRowsToContents() still set that row to 35px. That gap is
+        # internal to Qt's own aggregation, not something the delegate
+        # controls, so it can't be fixed by changing what sizeHint()
+        # returns -- only by not going through resizeRowsToContents() at
+        # all. #/问题类型/置信度 aren't queried here: their content is
+        # always short, fixed-format text that's never needed more than
+        # the floor in practice, so floor already covers them exactly as
+        # they behaved before any of this wrap-mode work existed (their
+        # sizeHint() was simply never queried, and rows sat at the
+        # passive default height).
+        #
         # Re-laying-out rows can itself make the vertical scrollbar
         # newly appear or disappear (taller rows -> more total content ->
         # scrollbar needed), which narrows/widens the Stretch-resized
@@ -568,7 +617,14 @@ class QaCheckPage(QWidget):
         width_before = (table.columnWidth(1), table.columnWidth(2))
         for _ in range(5):
             table.doItemsLayout()
-            table.resizeRowsToContents()
+            for row in range(table.rowCount()):
+                needed = floor
+                for column in (1, 2):
+                    option = QStyleOptionViewItem()
+                    option.rect.setWidth(table.columnWidth(column))
+                    index = table.model().index(row, column)
+                    needed = max(needed, delegate.sizeHint(option, index).height())
+                table.setRowHeight(row, needed)
             width_after = (table.columnWidth(1), table.columnWidth(2))
             if width_after == width_before:
                 break
