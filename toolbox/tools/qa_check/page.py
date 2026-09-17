@@ -276,8 +276,15 @@ class _QaTextDelegate(QStyledItemDelegate):
         document = QTextDocument()
         document.setDefaultFont(index.data(Qt.FontRole) or self.parent().font())
         document.setDocumentMargin(0)
-        document.setHtml(index.data(_WRAP_HTML_ROLE) or '')
-        document.setTextWidth(max(width - _CELL_HORIZONTAL_PADDING, 1))
+        html_text = index.data(_WRAP_HTML_ROLE) or ''
+        document.setHtml(html_text)
+        text_width = max(width - _CELL_HORIZONTAL_PADDING, 1)
+        document.setTextWidth(text_width)
+        if _DEBUG:
+            _debug_log(f'_document: row={index.row()} col={index.column()} '
+                       f'requested_width={width} text_width={text_width} '
+                       f'raw_doc_size={document.size()} '
+                       f'html={html_text[:80]!r}{"..." if len(html_text) > 80 else ""}')
         return document
 
     def paint(self, painter, option, index):
@@ -343,7 +350,6 @@ class _QaTextDelegate(QStyledItemDelegate):
         # genuinely needs multiple lines already gets a taller natural
         # document height on its own; this floor only ever affects
         # single-line content, bringing it back down to match.
-        floor = self.parent().verticalHeader().defaultSectionSize()
         size.setHeight(max(floor, size.height()))
         return size
 
