@@ -155,6 +155,7 @@ and as the filter dropdown's underlying ``currentData()`` values; only the
 """
 import html
 import os
+import sys
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextDocument
@@ -173,6 +174,24 @@ from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, section
 from toolbox.workers import CallableWorker
 
 _CSV_FILTER = 'CSV (*.csv)'
+
+# Opt-in diagnostic logging for the wrap-mode row-height/resize path,
+# which has been the subject of several rounds of "fixed here, still
+# broken on the user's real machine" -- reproducing what's actually
+# happening on a specific real machine (a specific font, DPI, and
+# resize-event timing this sandbox's offscreen platform can't match) has
+# repeatedly turned out to be more useful than another guess made
+# without seeing real data from it. Set QA_CHECK_DEBUG=1 before launching
+# the app (from a terminal, so stderr is visible) to print each resize/
+# reflow step -- when it fires, what column widths and row heights it
+# computes -- as it happens; off (the default) has zero runtime cost
+# beyond the one environment-variable read below.
+_DEBUG = os.environ.get('QA_CHECK_DEBUG') == '1'
+
+
+def _debug_log(message):
+    if _DEBUG:
+        print(f'[qa_check debug] {message}', file=sys.stderr, flush=True)
 _WRAP_HTML_ROLE = Qt.UserRole + 1
 _CELL_HORIZONTAL_PADDING = 20
 
@@ -354,6 +373,8 @@ class QaCheckPage(QWidget):
         # _refresh_table() rather than an immediate per-event handler or
         # the header's sectionResized signal.
         if self._last_units:
+            _debug_log(f'resizeEvent: new size={event.size().width()}x{event.size().height()}, '
+                       f'(re)starting _resize_debounce')
             self._resize_debounce.start()
 
     # ---------------------------------------------------------------- UI
@@ -533,6 +554,8 @@ class QaCheckPage(QWidget):
 
     # ----------------------------------------------------------- filtering
     def _refresh_table(self):
+        _debug_log(f'_refresh_table: called (wrap_chk={self.wrap_chk.isChecked()}, '
+                   f'has_units={bool(self._last_units)})')
         self.results_table.setRowCount(0)
         if not self._last_units:
             self.highlight_hint_label.setVisible(False)
@@ -577,14 +600,22 @@ class QaCheckPage(QWidget):
         if wrap:
             # Let the delegate measure each item after Qt has settled the
             # Stretch columns.
+            _debug_log(f'_refresh_table: wrap on, {len(rows)} rows built, '
+                       f'starting _wrap_reflow (columnWidth now: '
+                       f'{self.results_table.columnWidth(1)}, '
+                       f'{self.results_table.columnWidth(2)})')
             self._wrap_reflow.start()
 
     def _reflow_wrapped_rows(self):
         if not self.wrap_chk.isChecked() or not self.results_table.rowCount():
+            _debug_log('_reflow_wrapped_rows: skipped (wrap off or no rows)')
             return
         table = self.results_table
         delegate = table.itemDelegate()
         floor = table.verticalHeader().defaultSectionSize()
+        _debug_log(f'_reflow_wrapped_rows: starting, {table.rowCount()} rows, '
+                   f'columnWidth=({table.columnWidth(1)}, {table.columnWidth(2)}), '
+                   f'floor={floor}')
         # Row heights are set directly from the delegate's own sizeHint()
         # for just the wrap-HTML columns, NOT via
         # QTableWidget.resizeRowsToContents(): that call was tried first
@@ -615,7 +646,7 @@ class QaCheckPage(QWidget):
         # cap is a safety net against pathological back-and-forth, not
         # the normal case (typically converges in one pass).
         width_before = (table.columnWidth(1), table.columnWidth(2))
-        for _ in range(5):
+        for pass_num in range(5):
             table.doItemsLayout()
             for row in range(table.rowCount()):
                 needed = floor
@@ -626,9 +657,15 @@ class QaCheckPage(QWidget):
                     needed = max(needed, delegate.sizeHint(option, index).height())
                 table.setRowHeight(row, needed)
             width_after = (table.columnWidth(1), table.columnWidth(2))
+            _debug_log(f'_reflow_wrapped_rows: pass {pass_num}, '
+                       f'width {width_before} -> {width_after}, '
+                       f'row heights now: {[table.rowHeight(r) for r in range(table.rowCount())]}')
             if width_after == width_before:
                 break
             width_before = width_after
+        else:
+            _debug_log('_reflow_wrapped_rows: hit the 5-pass cap without '
+                       'column width settling -- see the per-pass log above')
 
     def _set_wrapped_item(self, row, column, text, issues):
         item = QTableWidgetItem(text)

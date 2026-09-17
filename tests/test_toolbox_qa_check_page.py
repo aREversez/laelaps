@@ -680,3 +680,57 @@ def test_highlight_hint_hides_when_filtered_to_a_non_highlightable_type(qtbot):
         if page.type_filter_combo.itemData(i) == 'EMPTY_TARGET')
     page.type_filter_combo.setCurrentIndex(empty_target_index)
     assert page.highlight_hint_label.isHidden()
+
+
+# ------------------------------------------------------------- debug logging
+
+def test_debug_logging_is_silent_by_default(qtbot, tmp_path, capsys, monkeypatch):
+    # QA_CHECK_DEBUG defaults to unset -- normal operation (including the
+    # rest of this test suite) must produce no diagnostic output.
+    monkeypatch.delenv('QA_CHECK_DEBUG', raising=False)
+    import importlib
+    from toolbox.tools.qa_check import page as page_module
+    importlib.reload(page_module)
+
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
+    page = page_module.QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    page.wrap_chk.setChecked(True)
+    qtbot.wait(200)
+
+    assert '[qa_check debug]' not in capsys.readouterr().err
+
+
+def test_debug_logging_traces_the_resize_reflow_chain_when_enabled(qtbot, tmp_path, capsys, monkeypatch):
+    # QA_CHECK_DEBUG=1 is the diagnostic the user can turn on (from a
+    # terminal, so stderr is visible) to capture what's actually
+    # happening on their own machine when the wrap/resize row-height
+    # mechanism is suspected of misbehaving -- this is read once at
+    # import time, so the module needs reloading after the env var
+    # changes for a test to see it take effect.
+    monkeypatch.setenv('QA_CHECK_DEBUG', '1')
+    import importlib
+    from toolbox.tools.qa_check import page as page_module
+    importlib.reload(page_module)
+    try:
+        src = tmp_path / 'in.tmx'
+        _write_tmx(src, [_u('We shipped 42 units.', '我们发货了43个单位。')])
+        page = page_module.QaCheckPage()
+        qtbot.addWidget(page)
+        page.input_edit.setText(str(src))
+        page.check_btn.click()
+        qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+        page.wrap_chk.setChecked(True)
+        qtbot.wait(200)
+
+        err = capsys.readouterr().err
+        assert '_refresh_table: called' in err
+        assert '_reflow_wrapped_rows: starting' in err
+        assert '_reflow_wrapped_rows: pass 0' in err
+    finally:
+        monkeypatch.delenv('QA_CHECK_DEBUG', raising=False)
+        importlib.reload(page_module)
