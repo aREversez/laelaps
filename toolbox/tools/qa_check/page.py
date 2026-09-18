@@ -281,10 +281,14 @@ class _QaTextDelegate(QStyledItemDelegate):
         text_width = max(width - _CELL_HORIZONTAL_PADDING, 1)
         document.setTextWidth(text_width)
         if _DEBUG:
+            # Untruncated html (a previous version cut this to 80 chars,
+            # which -- for at least one real report -- hid the exact
+            # point where two seemingly-similar-length sentences started
+            # behaving differently, so there was nothing left to compare
+            # them on).
             _debug_log(f'_document: row={index.row()} col={index.column()} '
                        f'requested_width={width} text_width={text_width} '
-                       f'raw_doc_size={document.size()} '
-                       f'html={html_text[:80]!r}{"..." if len(html_text) > 80 else ""}')
+                       f'raw_doc_size={document.size()} html={html_text!r}')
         return document
 
     def paint(self, painter, option, index):
