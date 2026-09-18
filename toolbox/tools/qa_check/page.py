@@ -194,6 +194,16 @@ def _debug_log(message):
         print(f'[qa_check debug] {message}', file=sys.stderr, flush=True)
 _WRAP_HTML_ROLE = Qt.UserRole + 1
 _CELL_HORIZONTAL_PADDING = 20
+# The vertical offset paint() translates by before drawing (below) --
+# not a separate, hand-typed "6" in sizeHint()'s own height computation.
+# A second, independently-typed copy of this number is exactly the kind
+# of thing that drifts: paint() used 6px, sizeHint() used 0, and the
+# 6px gap between them was clipping the bottom of every row whose
+# content actually grew past the single-line floor (short/single-line
+# rows never showed it: the floor already had more slack than 6px to
+# absorb it). One constant, read by both, means there's no second copy
+# to drift out of sync with this one again.
+_CELL_TOP_PADDING = 6
 
 # Bold + this app's one "problem" semantic color (see toolbox/resources/
 # style.qss's design-token comment: "danger -- semantic only, not
@@ -309,7 +319,8 @@ class _QaTextDelegate(QStyledItemDelegate):
         painter.save()
         painter.setClipRect(option.rect)
         document = self._document(index, option.rect.width())
-        painter.translate(option.rect.left() + 10, option.rect.top() + 6)
+        painter.translate(option.rect.left() + _CELL_HORIZONTAL_PADDING // 2,
+                           option.rect.top() + _CELL_TOP_PADDING)
         document.drawContents(painter)
         painter.restore()
 
@@ -342,19 +353,24 @@ class _QaTextDelegate(QStyledItemDelegate):
         size = document.size().toSize()
         size.setWidth(option.rect.width())
         # Floored at the table's own normal single-line row height (what
-        # a plain, non-wrap row already uses), NOT the document's own
-        # height plus a fixed padding constant: that fixed-padding
-        # approach (tried first) added the same few pixels regardless of
-        # font, so a row whose content already fit on one line -- no
-        # wrapping needed at all -- still came out taller in wrap mode
-        # than in the default view, on a font where a single line's
-        # natural height plus that padding exceeded the floor (confirmed
-        # empirically: 30px non-wrap vs 35px wrap-mode for identical
-        # one-line content, with this app's real font). A row that
-        # genuinely needs multiple lines already gets a taller natural
-        # document height on its own; this floor only ever affects
-        # single-line content, bringing it back down to match.
-        size.setHeight(max(floor, size.height()))
+        # a plain, non-wrap row already uses). Not a blind revival of the
+        # fixed +12px padding removed earlier (that one was an arbitrary
+        # guess, tall enough to push even single-line content over the
+        # floor on this app's real font -- confirmed empirically: 30px
+        # non-wrap vs 35px wrap-mode for identical one-line content).
+        # _CELL_TOP_PADDING is different: it's not a guess, it's the
+        # exact vertical offset paint() actually draws at (see that
+        # method), so adding it here is correcting a real shortfall
+        # (paint() was pushing every row's content down 6px that
+        # sizeHint() never accounted for, clipping the bottom of any row
+        # whose content grew past the floor -- e.g. a genuinely two-line
+        # row correctly measured at 34px still needed 40px once that 6px
+        # offset was included), not re-adding the earlier bug: 6px is
+        # small enough that single-line content (this app's real font:
+        # ~17px) plus it (~23px) still comfortably sits under the floor,
+        # so the single-line case stays fixed while the multi-line
+        # clipping is now actually corrected instead of only relocated.
+        size.setHeight(max(floor, size.height() + _CELL_TOP_PADDING))
         return size
 
 

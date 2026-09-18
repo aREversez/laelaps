@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QApplication, QLabel, QStyleOptionViewItem
 from language_tools.model import TranslationUnit
 from language_tools.writers import tmx_writer
 from toolbox.paths import RESOURCES_DIR
-from toolbox.tools.qa_check.page import QaCheckPage, _WRAP_HTML_ROLE
+from toolbox.tools.qa_check.page import QaCheckPage, _CELL_TOP_PADDING, _WRAP_HTML_ROLE
 
 
 def _u(src, tgt, **kw):
@@ -515,6 +515,52 @@ def test_wrap_row_height_is_never_less_than_the_content_actually_needs(qtbot, tm
         assert page.results_table.rowHeight(row) >= needed, (
             f'row {row}: height={page.results_table.rowHeight(row)} '
             f'but content needs {needed}')
+
+
+def test_sizeHint_accounts_for_the_same_vertical_offset_paint_uses(qtbot, tmp_path):
+    # Regression guard for a specific, previously-real bug that the test
+    # above can NOT catch: rowHeight() is set FROM sizeHint()'s own
+    # return value, so comparing one against the other is tautological --
+    # it stays true even if sizeHint() itself is wrong. paint() draws
+    # this cell's content starting _CELL_TOP_PADDING px down from the
+    # cell's top; sizeHint() has to add that same offset to the raw
+    # document height it measures, or a row sized to exactly the
+    # document's own height has no room for the offset paint() pushes
+    # it down by, clipping the bottom _CELL_TOP_PADDING px of the last
+    # line. This checks sizeHint()'s output against the raw document
+    # measurement directly, independent of sizeHint() itself, which is
+    # what actually would have caught it.
+    long_src = (
+        'We shipped 42 units to the warehouse last quarter, well above '
+        'the 43 units originally forecast for the same period, and '
+        'expect volumes to keep rising through year end.')
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u(long_src, '我们发货了43个单位。')])
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.resize(500, 500)
+    page.show()
+    qtbot.waitExposed(page)
+    page.input_edit.setText(str(src))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page.wrap_chk.setChecked(True)
+    qtbot.wait(200)
+
+    delegate = page.results_table.itemDelegate()
+    index = page.results_table.model().index(0, 1)
+    column_width = page.results_table.columnWidth(1)
+    raw_document_height = delegate._document(index, column_width).size().height()
+    # This content, at this width, must genuinely need more than one
+    # line -- otherwise the floor alone would mask the bug this test is
+    # for, and the assertion below would pass for the wrong reason.
+    assert raw_document_height > 20, 'fixture no longer wraps to multiple lines at this width'
+
+    option = QStyleOptionViewItem()
+    option.rect.setWidth(column_width)
+    reported = delegate.sizeHint(option, index).height()
+    assert reported >= raw_document_height + _CELL_TOP_PADDING
 
 
 def test_wrap_row_height_updates_when_window_is_resized(qtbot, tmp_path):
