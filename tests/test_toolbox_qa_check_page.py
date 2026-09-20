@@ -2,6 +2,7 @@ import os
 
 from conftest import tmx_path
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import QApplication, QLabel, QStyleOptionViewItem
 
 from language_tools.model import TranslationUnit
@@ -780,3 +781,62 @@ def test_debug_logging_traces_the_resize_reflow_chain_when_enabled(qtbot, tmp_pa
     finally:
         monkeypatch.delenv('QA_CHECK_DEBUG', raising=False)
         importlib.reload(page_module)
+
+
+
+def test_wrapped_plain_text_honors_the_option_palette_text_color(qtbot, tmp_path):
+    # Regression guard for a specific, previously-real bug: a wrap-mode
+    # cell with no highlight spans (e.g. a TAG_MISMATCH row -- TAG_MISMATCH
+    # has no span finder, see _SPAN_FINDERS) has nothing but plain,
+    # unstyled text in its HTML, and document.drawContents(painter) alone
+    # ignored option.palette entirely, always painting in black regardless
+    # of what color the table actually uses -- confirmed empirically (see
+    # the kill-test this regression guard is built to catch): black,
+    # every time, independent of the option passed in. On at least one
+    # real machine that made text pale/unreadable against the
+    # alternating-row background on some rows. Comparing the rendered
+    # output against the app's own subtle dark gray was tried first and
+    # discarded: anti-aliasing at normal font sizes means barely any
+    # pixel is an exact match for either the right color or the wrong
+    # one, so an exact-equality check on "the darkest pixel" passed
+    # whether or not the fix was present. Injecting a deliberately
+    # extreme, unmistakable palette color (pure green) and checking it
+    # actually got used sidesteps that: anti-aliased or not, a genuinely
+    # green-tinted pixel cannot be confused with the app's grayscale text,
+    # so this discriminates reliably regardless of font rendering
+    # specifics.
+    unit = _u('Please save your work.', '请保存你的工作。')
+    unit.meta['qa_issues'] = ['TAG_MISMATCH']  # not in _SPAN_FINDERS -- no highlight spans
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.resize(700, 500)
+    page.show()
+    qtbot.waitExposed(page)
+    _show_checked_units(page, [unit])
+    page.wrap_chk.setChecked(True)
+    qtbot.wait(200)
+
+    delegate = page.results_table.itemDelegate()
+    index = page.results_table.model().index(0, 1)
+    option = QStyleOptionViewItem()
+    option.rect.setWidth(page.results_table.columnWidth(1))
+    option.rect.setHeight(page.results_table.rowHeight(0))
+    option.widget = page.results_table.viewport()
+    palette = QPalette(option.palette)
+    palette.setColor(QPalette.Text, QColor('#00ff00'))
+    option.palette = palette
+
+    pixmap = QPixmap(option.rect.width(), option.rect.height())
+    pixmap.fill(QColor('white'))
+    painter = QPainter(pixmap)
+    delegate.paint(painter, option, index)
+    painter.end()
+
+    image = pixmap.toImage()
+    # A genuinely green-tinted dark pixel: green channel clearly dominant
+    # over red/blue, however anti-aliased -- not just "not white".
+    found_green_text = any(
+        image.pixelColor(x, y).green() > image.pixelColor(x, y).red() + 40
+        and image.pixelColor(x, y).green() > image.pixelColor(x, y).blue() + 40
+        for y in range(image.height()) for x in range(image.width()))
+    assert found_green_text, 'expected option.palette\'s Text color to be used for unstyled text'

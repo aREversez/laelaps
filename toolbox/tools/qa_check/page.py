@@ -158,7 +158,7 @@ import os
 import sys
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QTextDocument
+from PySide6.QtGui import QAbstractTextDocumentLayout, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QStyle,
@@ -321,7 +321,21 @@ class _QaTextDelegate(QStyledItemDelegate):
         document = self._document(index, option.rect.width())
         painter.translate(option.rect.left() + _CELL_HORIZONTAL_PADDING // 2,
                            option.rect.top() + _CELL_TOP_PADDING)
-        document.drawContents(painter)
+        # document.drawContents(painter) alone leaves this cell's
+        # unstyled text color to whatever QTextDocument falls back to
+        # implicitly, which is not necessarily this table's actual text
+        # color (option.palette, which already reflects this app's real
+        # QSS-resolved palette, the same one a plain QTableWidgetItem's
+        # text is drawn with) -- an implicit default is exactly the kind
+        # of thing that can differ across a Qt version/theme/platform
+        # without this code changing at all. Passing an explicit
+        # PaintContext built from option.palette pins unstyled text to
+        # the same color every other cell already uses, rather than
+        # leaving it to an assumption about what QTextDocument defaults
+        # to matching that.
+        context = QAbstractTextDocumentLayout.PaintContext()
+        context.palette = option.palette
+        document.documentLayout().draw(painter, context)
         painter.restore()
 
     def sizeHint(self, option, index):
