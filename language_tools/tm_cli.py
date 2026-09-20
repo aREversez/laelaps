@@ -1,5 +1,5 @@
 """``tmtool`` -- CLI for corpus-level TM maintenance (clean/merge/stats/qa/
-term-check) and bilingual-source alignment checking (align).
+leverage/term-check) and bilingual-source alignment checking (align).
 
 Kept as a separate entry point from ``biconvert`` (see DESIGN.md section
 12 for why ``biconvert`` itself stays a thin wrapper with no pipeline
@@ -41,6 +41,7 @@ from language_tools.terms import check as term_check_module
 from language_tools.terms import glossary as glossary_module
 from language_tools.tm import clean as clean_module
 from language_tools.tm import io as tm_io
+from language_tools.tm import leverage as leverage_module
 from language_tools.tm import merge as merge_module
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.tm import stats as stats_module
@@ -103,6 +104,24 @@ def _cmd_qa(args):
     if args.export:
         src_lang, tgt_lang = tm_io.infer_langs(units)
         csv_writer.write(args.export, units, src_lang or 'SRC', tgt_lang or 'TGT', include_qa=True)
+        print('Wrote %s' % args.export)
+    return 0
+
+
+def _cmd_leverage(args):
+    tm_units = tm_io.read_corpus(args.tm)
+    candidate_units = tm_io.read_corpus(args.input)
+    leverage_module.analyze(tm_units, candidate_units, fuzzy_floor=args.fuzzy_floor)
+    s = leverage_module.summarize(candidate_units)
+    print('Total=%d Words=%d' % (s['total'], s['total_words']))
+    for band in leverage_module.BANDS:
+        b = s['bands'][band]
+        if b['count']:
+            print('  %s: %d segments, %d words' % (band, b['count'], b['words']))
+    if args.export:
+        src_lang, tgt_lang = tm_io.infer_langs(candidate_units)
+        csv_writer.write(args.export, candidate_units, src_lang or 'SRC', tgt_lang or 'TGT',
+                          include_leverage=True)
         print('Wrote %s' % args.export)
     return 0
 
@@ -186,6 +205,20 @@ def build_parser():
                        help='write a full CSV report (all units, with confidence/status/issues '
                             'columns) to PATH')
     qa_p.set_defaults(func=_cmd_qa)
+
+    leverage_p = sub.add_parser(
+        'leverage', help='analyze how much of a corpus can be leveraged from an existing TM '
+                          '(Exact/Fuzzy/Repetition/No Match word-count breakdown)')
+    leverage_p.add_argument('input', help='candidate .tmx or .sdltm file to analyze')
+    leverage_p.add_argument('--tm', required=True,
+                             help='reference .tmx or .sdltm file to match candidates against')
+    leverage_p.add_argument('--fuzzy-floor', type=float, default=0.50,
+                             help='lowest match ratio (0-1) still counted as a match; below it '
+                                  'a segment is No Match (default: 0.50)')
+    leverage_p.add_argument('--export', metavar='PATH',
+                             help='write a full CSV report (all candidate units, with '
+                                  'leverage_band/match_pct columns) to PATH')
+    leverage_p.set_defaults(func=_cmd_leverage)
 
     term_check_p = sub.add_parser(
         'term-check', help='check a corpus file against a glossary for forbidden translations')

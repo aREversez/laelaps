@@ -50,6 +50,13 @@ code to look up a label for -- each hit names its own glossary entry --
 so the cell is rendered directly as "<src_term> -> <tgt_term>" pairs
 (semicolon-joined for multiple hits on one row), with the entry's note
 appended in parentheses when present.
+
+``include_leverage=True`` appends leverage_band/match_pct columns from
+``tm.leverage.analyze()``'s ``meta['leverage_band']``/
+``meta['leverage_match_pct']``. No Chinese-label lookup here (unlike
+``issues``/``align_move``) -- the band names ('exact', '95-99',
+'repetition', ...) are already the whole vocabulary a PM/translator
+needs, not internal codes standing in for something more readable.
 """
 import csv
 
@@ -73,7 +80,7 @@ def _format_term_hit(hit):
 
 
 def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include_align=False,
-          include_terms=False):
+          include_terms=False, include_leverage=False):
     with open(path, 'w', encoding='utf-8-sig', newline='') as f:
         w = csv.writer(f)
         header = ['No', src_label, tgt_label]
@@ -83,6 +90,8 @@ def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include
             header += ['confidence', 'status', 'issues']
         if include_terms:
             header += ['term_issues']
+        if include_leverage:
+            header += ['leverage_band', 'match_pct']
         w.writerow(header)
         for i, u in enumerate(units, 1):
             row = [i, u.src_text.strip(), u.tgt_text.strip()]
@@ -96,4 +105,6 @@ def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include
             if include_terms:
                 hits = u.meta.get('term_issues', [])
                 row += [';'.join(_format_term_hit(h) for h in hits)]
+            if include_leverage:
+                row += [u.meta.get('leverage_band', ''), u.meta.get('leverage_match_pct', '')]
             w.writerow(row)

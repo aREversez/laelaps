@@ -279,3 +279,40 @@ def test_align_unsupported_format_errors_cleanly(tmp_path):
     result = _run(['align', str(bad), '--src', 'en-US', '--tgt', 'zh-CN'])
     assert result.returncode != 0
     assert 'unsupported bilingual source format' in result.stderr
+
+
+def test_leverage_reports_exact_and_no_match_word_counts(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。')])
+    candidate = tmp_path / 'in.tmx'
+    _write_tmx(candidate, [
+        _u('Click OK to continue.', '点击确定继续。'),
+        _u('Totally unrelated content here.', '这里是完全无关的内容。'),
+    ])
+    result = _run(['leverage', str(candidate), '--tm', str(tm)])
+    assert result.returncode == 0, result.stderr
+    assert 'Total=2 Words=8' in result.stdout
+    assert 'exact: 1 segments, 4 words' in result.stdout
+    assert 'no_match: 1 segments, 4 words' in result.stdout
+
+
+def test_leverage_export_writes_full_csv_with_leverage_columns(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。')])
+    candidate = tmp_path / 'in.tmx'
+    _write_tmx(candidate, [_u('Click OK to continue.', '点击确定继续。')])
+    out = tmp_path / 'report.csv'
+    result = _run(['leverage', str(candidate), '--tm', str(tm), '--export', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'leverage_band' in content
+    assert 'exact' in content
+
+
+def test_leverage_requires_tm_argument(tmp_path):
+    candidate = tmp_path / 'in.tmx'
+    _write_tmx(candidate, [_u('Hello', '你好')])
+    result = _run(['leverage', str(candidate)])
+    assert result.returncode != 0
+    assert 'required' in result.stderr.lower()
