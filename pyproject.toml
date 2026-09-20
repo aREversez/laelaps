@@ -6,8 +6,9 @@ requires-python = ">=3.10"
 dependencies = ["openpyxl>=3.1"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-qt>=4"]
+dev = ["pytest>=8", "pytest-qt>=4", "reportlab>=4"]
 gui = ["PySide6>=6.5"]
+reports = ["reportlab>=4"]
 
 [project.scripts]
 biconvert = "language_tools.cli:main"

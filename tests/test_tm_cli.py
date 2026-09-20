@@ -2,6 +2,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 from language_tools.corpus_readers import tmx_reader
 from language_tools.model import TranslationUnit
 from language_tools.writers import tmx_writer
@@ -369,3 +371,61 @@ def test_compare_requires_at_least_two_inputs(tmp_path):
     result = _run(['compare', str(a)])
     assert result.returncode != 0
     assert 'at least 2' in result.stderr
+
+
+def test_qa_report_writes_html(tmp_path):
+    input_ = tmp_path / 'in.tmx'
+    _write_tmx(input_, [_u('Hello', ''), _u('Bye', '再见')])
+    out = tmp_path / 'report.html'
+    result = _run(['qa', str(input_), '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    content = out.read_text(encoding='utf-8')
+    assert '<title>QA Report</title>' in content
+
+
+def test_leverage_report_writes_html(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])
+    candidate = tmp_path / 'in.tmx'
+    _write_tmx(candidate, [_u('Click OK to continue.', '')])
+    out = tmp_path / 'report.html'
+    result = _run(['leverage', str(candidate), '--tm', str(tm), '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Leverage Analysis</title>' in content
+    assert 'exact' in content
+
+
+def test_compare_report_writes_html(tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Hello', '您好')])
+    out = tmp_path / 'report.html'
+    result = _run(['compare', str(a), str(b), '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    content = out.read_text(encoding='utf-8')
+    assert '<title>TM Comparison</title>' in content
+
+
+def test_report_unsupported_extension_fails_cleanly(tmp_path):
+    input_ = tmp_path / 'in.tmx'
+    _write_tmx(input_, [_u('Hello', '你好')])
+    out = tmp_path / 'report.txt'
+    result = _run(['qa', str(input_), '--report', str(out)])
+    assert result.returncode != 0
+    assert 'unsupported extension' in result.stderr
+    assert not out.exists()
+
+
+def test_report_pdf_produces_valid_pdf(tmp_path):
+    pytest.importorskip('reportlab')
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Hello', '您好')])
+    out = tmp_path / 'report.pdf'
+    result = _run(['compare', str(a), str(b), '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert out.read_bytes().startswith(b'%PDF')

@@ -38,6 +38,8 @@ import sys
 
 from language_tools import align_report
 from language_tools.cli import _build_reader_opts
+from language_tools.reports import adapters as report_adapters
+from language_tools.reports import render as report_render
 from language_tools.terms import check as term_check_module
 from language_tools.terms import glossary as glossary_module
 from language_tools.tm import clean as clean_module
@@ -50,6 +52,21 @@ from language_tools.tm import stats as stats_module
 from language_tools.writers import csv_writer
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
+
+
+def _write_report(path, report):
+    """Shared ``--report PATH`` handler for qa/leverage/compare: validates
+    the extension up front (so the error names the flag, not a stack trace
+    from inside ``report_render.write``) and prints the same "Wrote ..."
+    line the existing ``--export`` handling already uses.
+    """
+    ext = path.rsplit('.', 1)[-1].lower() if '.' in path else ''
+    if ext not in ('html', 'htm', 'pdf'):
+        print('--report: unsupported extension %r (expected .html or .pdf)' % ext, file=sys.stderr)
+        return 1
+    report_render.write(path, report)
+    print('Wrote %s' % path)
+    return 0
 
 
 def _cmd_clean(args):
@@ -93,6 +110,10 @@ def _cmd_compare(args):
     if args.export:
         compare_module.write_conflicts_csv(args.export, report)
         print('Wrote %s' % args.export)
+    if args.report:
+        rc = _write_report(args.report, report_adapters.from_compare_report(report))
+        if rc:
+            return rc
     if args.fail_on_conflicts and report['conflicts']:
         return 2
     return 0
@@ -123,6 +144,10 @@ def _cmd_qa(args):
         src_lang, tgt_lang = tm_io.infer_langs(units)
         csv_writer.write(args.export, units, src_lang or 'SRC', tgt_lang or 'TGT', include_qa=True)
         print('Wrote %s' % args.export)
+    if args.report:
+        rc = _write_report(args.report, report_adapters.from_qa_summary(s))
+        if rc:
+            return rc
     return 0
 
 
@@ -141,6 +166,10 @@ def _cmd_leverage(args):
         csv_writer.write(args.export, candidate_units, src_lang or 'SRC', tgt_lang or 'TGT',
                           include_leverage=True)
         print('Wrote %s' % args.export)
+    if args.report:
+        rc = _write_report(args.report, report_adapters.from_leverage_summary(s))
+        if rc:
+            return rc
     return 0
 
 
@@ -225,6 +254,9 @@ def build_parser():
                             help='exit with status 2 if any conflicting segment was found -- '
                                  'same convention as the other tmtool subcommands\' '
                                  '--fail-on-issues')
+    compare_p.add_argument('--report', metavar='PATH',
+                            help='write a summary report (inputs/unique/shared/conflicts, plus '
+                                 'a conflicts table) to PATH as HTML or PDF, by extension')
     compare_p.set_defaults(func=_cmd_compare)
 
     stats_p = sub.add_parser('stats', help='print corpus statistics')
@@ -236,6 +268,9 @@ def build_parser():
     qa_p.add_argument('--export', metavar='PATH',
                        help='write a full CSV report (all units, with confidence/status/issues '
                             'columns) to PATH')
+    qa_p.add_argument('--report', metavar='PATH',
+                       help='write a summary report (totals plus a by-issue-type breakdown) to '
+                            'PATH as HTML or PDF, by extension')
     qa_p.set_defaults(func=_cmd_qa)
 
     leverage_p = sub.add_parser(
@@ -250,6 +285,9 @@ def build_parser():
     leverage_p.add_argument('--export', metavar='PATH',
                              help='write a full CSV report (all candidate units, with '
                                   'leverage_band/match_pct columns) to PATH')
+    leverage_p.add_argument('--report', metavar='PATH',
+                             help='write a summary report (totals plus a per-band breakdown) to '
+                                  'PATH as HTML or PDF, by extension')
     leverage_p.set_defaults(func=_cmd_leverage)
 
     term_check_p = sub.add_parser(
