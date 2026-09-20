@@ -316,3 +316,56 @@ def test_leverage_requires_tm_argument(tmp_path):
     result = _run(['leverage', str(candidate)])
     assert result.returncode != 0
     assert 'required' in result.stderr.lower()
+
+
+def test_compare_reports_unique_shared_and_conflicts(tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好'), _u('Only in a', '只在a')])
+    _write_tmx(b, [_u('Hello', '您好')])
+    result = _run(['compare', str(a), str(b)])
+    assert result.returncode == 0, result.stderr
+    assert 'Inputs=2' in result.stdout
+    assert 'a.tmx: 2 segments, 1 unique to this TM' in result.stdout
+    assert 'b.tmx: 1 segments, 0 unique to this TM' in result.stdout
+    assert 'Shared=0 Conflicts=1' in result.stdout
+
+
+def test_compare_export_writes_conflicts_csv(tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Hello', '您好')])
+    out = tmp_path / 'conflicts.csv'
+    result = _run(['compare', str(a), str(b), '--export', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'source,a.tmx,b.tmx' in content
+    assert '你好' in content and '您好' in content
+
+
+def test_compare_fail_on_conflicts_exits_nonzero(tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Hello', '您好')])
+    result = _run(['compare', str(a), str(b), '--fail-on-conflicts'])
+    assert result.returncode == 2
+
+
+def test_compare_no_conflicts_does_not_fail_even_with_flag(tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Hello', '你好')])
+    result = _run(['compare', str(a), str(b), '--fail-on-conflicts'])
+    assert result.returncode == 0, result.stderr
+
+
+def test_compare_requires_at_least_two_inputs(tmp_path):
+    a = tmp_path / 'a.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    result = _run(['compare', str(a)])
+    assert result.returncode != 0
+    assert 'at least 2' in result.stderr

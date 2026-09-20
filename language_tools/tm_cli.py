@@ -1,5 +1,6 @@
-"""``tmtool`` -- CLI for corpus-level TM maintenance (clean/merge/stats/qa/
-leverage/term-check) and bilingual-source alignment checking (align).
+"""``tmtool`` -- CLI for corpus-level TM maintenance (clean/merge/compare/
+stats/qa/leverage/term-check) and bilingual-source alignment checking
+(align).
 
 Kept as a separate entry point from ``biconvert`` (see DESIGN.md section
 12 for why ``biconvert`` itself stays a thin wrapper with no pipeline
@@ -40,6 +41,7 @@ from language_tools.cli import _build_reader_opts
 from language_tools.terms import check as term_check_module
 from language_tools.terms import glossary as glossary_module
 from language_tools.tm import clean as clean_module
+from language_tools.tm import compare as compare_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import leverage as leverage_module
 from language_tools.tm import merge as merge_module
@@ -77,6 +79,22 @@ def _cmd_merge(args):
     print('Input=%d Output=%d ConflictsResolved=%d Strategy=%s' % (
         report['input'], report['output'], report['conflicts_resolved'], args.strategy))
     print('Wrote %s' % args.output)
+    return 0
+
+
+def _cmd_compare(args):
+    named = [(os.path.basename(p), tm_io.read_corpus(p)) for p in args.inputs]
+    report = compare_module.compare(named)
+    print('Inputs=%d' % len(named))
+    for label in report['labels']:
+        print('  %s: %d segments, %d unique to this TM' % (
+            label, report['totals'][label], report['unique_segments'][label]))
+    print('Shared=%d Conflicts=%d' % (report['shared_segments'], len(report['conflicts'])))
+    if args.export:
+        compare_module.write_conflicts_csv(args.export, report)
+        print('Wrote %s' % args.export)
+    if args.fail_on_conflicts and report['conflicts']:
+        return 2
     return 0
 
 
@@ -194,6 +212,20 @@ def build_parser():
     merge_p.add_argument('--strategy', choices=['keep-all', 'prefer-first', 'prefer-last', 'prefer-newer'],
                           default='keep-all', help='conflict resolution strategy (default: keep-all)')
     merge_p.set_defaults(func=_cmd_merge)
+
+    compare_p = sub.add_parser(
+        'compare', help='compare 2+ corpus files and report which source segments are unique, '
+                         'shared, or conflicting (different target) across them -- run this '
+                         'before merge to see what a merge strategy would be resolving')
+    compare_p.add_argument('inputs', nargs='+', help='2 or more .tmx/.sdltm files to compare')
+    compare_p.add_argument('--export', metavar='PATH',
+                            help='write a CSV of conflicting segments (one column per input) '
+                                 'to PATH')
+    compare_p.add_argument('--fail-on-conflicts', action='store_true',
+                            help='exit with status 2 if any conflicting segment was found -- '
+                                 'same convention as the other tmtool subcommands\' '
+                                 '--fail-on-issues')
+    compare_p.set_defaults(func=_cmd_compare)
 
     stats_p = sub.add_parser('stats', help='print corpus statistics')
     stats_p.add_argument('input', help='input .tmx or .sdltm file')
