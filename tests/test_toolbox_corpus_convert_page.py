@@ -262,6 +262,57 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert fresh._last_dir == '/some/folder'
 
 
+def test_auto_suppressed_format_checkbox_is_not_saved_as_the_preference(qtbot):
+    """Loading a .tmx input auto-unchecks+disables chk_tmx
+    (_sync_format_checkboxes) -- that must not get persisted as "the user
+    doesn't want tmx output"; saving/restoring settings while that file is
+    still loaded should remember tmx as still wanted.
+    """
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(fixture_path('tmx/inline_markup_qa.tmx'))
+    assert page.chk_tmx.isChecked() is False
+    assert page.chk_tmx.isEnabled() is False
+    page.save_settings()
+
+    fresh = CorpusConvertPage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert fresh.chk_tmx.isChecked() is True
+
+
+def test_manually_unchecked_format_checkbox_is_still_saved_as_the_preference(qtbot):
+    """A checkbox the user unchecked themselves (while it was enabled, no
+    conflicting file loaded) is a real preference and must round-trip as
+    unchecked -- the fix for the above must not swallow genuine user intent.
+    """
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.chk_tmx.setChecked(False)
+    page.save_settings()
+
+    fresh = CorpusConvertPage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert fresh.chk_tmx.isChecked() is False
+
+
+def test_reloading_a_non_conflicting_file_restores_manual_preference_not_default_true(qtbot):
+    """Regression for the previous unconditional ``setChecked(True)`` on
+    re-enable: if the user had manually unchecked tmx, then loads a .docx
+    (no conflict, tmx re-enabled), tmx must come back unchecked -- not
+    silently reset to the checkbox's construction-time default.
+    """
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.chk_tmx.setChecked(False)
+    page.input_edit.setText(fixture_path('tmx/inline_markup_qa.tmx'))  # auto-disables tmx
+    assert page.chk_tmx.isEnabled() is False
+    page.input_edit.setText(fixture_path('basic.docx'))  # no conflict -- tmx re-enabled
+    assert page.chk_tmx.isEnabled() is True
+    assert page.chk_tmx.isChecked() is False
+
+
 def test_browse_input_uses_and_updates_last_dir(qtbot, tmp_path, monkeypatch):
     src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
     page = CorpusConvertPage()

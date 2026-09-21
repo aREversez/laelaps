@@ -52,7 +52,13 @@ Settings persistence (2026-09-13): implements the optional
 checks for (see that module's docstring) -- 语言/排版方式/生成格式/QA
 checkbox and the file dialog's last-used directory all round-trip across
 launches via ``toolbox/settings.py``, under the ``corpus_convert/`` key
-prefix.
+prefix. 生成格式 specifically persists ``_fmt_manual_state``, not the
+checkboxes' own ``isChecked()`` -- ``_sync_format_checkboxes()`` forces
+one checkbox unchecked+disabled whenever the loaded input file is that
+same format, and that's a fact about the current file, not the user's
+standing preference; saving the checkbox's live (possibly auto-forced)
+state would have meant loading a .tmx file, then closing the app, silently
+turned "generate tmx output" off for every future launch.
 """
 import html
 import os
@@ -105,6 +111,11 @@ class CorpusConvertPage(QWidget):
         super().__init__(parent)
         self._worker = None
         self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
+        # The user's actual 生成格式 preference, independent of whatever
+        # _sync_format_checkboxes() is currently forcing a checkbox to for
+        # the loaded input file -- see that method's docstring. Defaults
+        # match the checkboxes' own default (all checked).
+        self._fmt_manual_state = {'sdltm': True, 'tmx': True, 'csv': True}
         self._build_ui()
 
     # ---------------------------------------------------------------- UI
@@ -171,6 +182,7 @@ class CorpusConvertPage(QWidget):
         for cb, key in ((self.chk_sdltm, 'sdltm'), (self.chk_tmx, 'tmx'), (self.chk_csv, 'csv')):
             cb.setChecked(True)
             cb.setToolTip(_FORMAT_TOOLTIPS[key])
+            cb.toggled.connect(lambda checked, k=key: self._on_format_toggled(k, checked))
             fmt_row.addWidget(cb)
         fmt_row.addStretch(1)
         outer.addWidget(_section('生成格式', fmt_widget))
@@ -215,9 +227,14 @@ class CorpusConvertPage(QWidget):
         settings.set_value(_SETTINGS_PREFIX + 'srcLang', lang_combo_code(self.src_edit))
         settings.set_value(_SETTINGS_PREFIX + 'tgtLang', lang_combo_code(self.tgt_edit))
         settings.set_value(_SETTINGS_PREFIX + 'layout', self.layout_combo.currentData())
-        settings.set_value(_SETTINGS_PREFIX + 'fmtSdltm', self.chk_sdltm.isChecked())
-        settings.set_value(_SETTINGS_PREFIX + 'fmtTmx', self.chk_tmx.isChecked())
-        settings.set_value(_SETTINGS_PREFIX + 'fmtCsv', self.chk_csv.isChecked())
+        # Not cb.isChecked(): while the loaded input file's own format is
+        # auto-suppressing one checkbox (_sync_format_checkboxes()), that
+        # checkbox reads unchecked/disabled -- a fact about *this file*,
+        # not the user's standing 生成格式 preference. _fmt_manual_state
+        # is what the checkbox would show if nothing were suppressing it.
+        settings.set_value(_SETTINGS_PREFIX + 'fmtSdltm', self._fmt_manual_state['sdltm'])
+        settings.set_value(_SETTINGS_PREFIX + 'fmtTmx', self._fmt_manual_state['tmx'])
+        settings.set_value(_SETTINGS_PREFIX + 'fmtCsv', self._fmt_manual_state['csv'])
         settings.set_value(_SETTINGS_PREFIX + 'qa', self.chk_qa.isChecked())
         settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
@@ -239,23 +256,44 @@ class CorpusConvertPage(QWidget):
         as the two corpus formats rather than being treated as a special
         case. .docx/.xlsx/.tsv have no such conflict (none of them is
         also an output choice), so every checkbox stays enabled for them.
+
+        The ``setChecked()`` calls here are signal-blocked: this is the
+        input file forcing a checkbox's *displayed* state, not the user
+        expressing a 生成格式 preference, so it must not touch
+        ``_fmt_manual_state`` (``_on_format_toggled()`` is what updates
+        that, and only for changes the user actually made) -- otherwise
+        loading a file that happens to auto-uncheck tmx would get
+        remembered as "the user doesn't want tmx output" and restored
+        that way on next launch, even though nothing about their actual
+        preference changed.
         """
         ext = os.path.splitext(input_path)[1].lower()
         same_format_checkbox = {
             '.tmx': self.chk_tmx, '.sdltm': self.chk_sdltm, '.csv': self.chk_csv,
         }.get(ext)
-        for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv):
+        for cb, key in ((self.chk_sdltm, 'sdltm'), (self.chk_tmx, 'tmx'), (self.chk_csv, 'csv')):
             was_auto_disabled = not cb.isEnabled()
             is_same_format = cb is same_format_checkbox
             cb.setEnabled(not is_same_format)
             if is_same_format:
+                cb.blockSignals(True)
                 cb.setChecked(False)
+                cb.blockSignals(False)
             elif was_auto_disabled:
                 # re-enabled after a previous input auto-disabled it --
-                # restore the default checked state now that it's a valid
-                # choice again (don't touch it if the user, not this
-                # method, was the one who last unchecked it).
-                cb.setChecked(True)
+                # restore it to the user's actual preference (which
+                # _fmt_manual_state held onto the whole time, unaffected
+                # by the auto-disable), not unconditionally back to True.
+                cb.blockSignals(True)
+                cb.setChecked(self._fmt_manual_state[key])
+                cb.blockSignals(False)
+
+    def _on_format_toggled(self, key, checked):
+        """Only fires for a real user click (see ``_sync_format_checkboxes``'s
+        docstring for why its own ``setChecked()`` calls are signal-blocked
+        instead of reaching this).
+        """
+        self._fmt_manual_state[key] = checked
 
     def _validate(self):
         """Returns an error string, or None if the form is valid."""

@@ -1,43 +1,54 @@
-"""The TM-maintenance tool's page: three tabs (clean/merge/stats), each a
-thin form wrapping ``language_tools.tm.*`` directly -- same "no HTTP
-layer, just import and call the library" shape as
-``corpus_convert/page.py``, and the same ``QThread`` pattern
+"""The TM-maintenance tool's page: five tabs (clean/merge/leverage/
+compare/stats), each a thin form wrapping ``language_tools.tm.*``
+directly -- same "no HTTP layer, just import and call the library" shape
+as ``corpus_convert/page.py``, and the same ``QThread`` pattern
 (``toolbox.workers.CallableWorker``) so a large TM doesn't freeze the UI
 while it's being processed.
 
 Unlike ``ConvertWorker`` (specific to ``api.convert()``'s kwargs shape),
 ``CallableWorker`` is a generic "run this zero-arg callable off the UI
-thread" wrapper -- shared across all three tabs, since none of
-clean/merge/stats needs a specialized ``run()`` body, just a function call
-that shouldn't block. Each tab wires its own callable (``_clean_job``/
-``_merge_job``/``_stats_job``, module-level so they're callable/testable
-without a QWidget) plus its own start/success/error handlers.
+thread" wrapper -- shared across all five tabs, since none of
+clean/merge/leverage/compare/stats needs a specialized ``run()`` body,
+just a function call that shouldn't block. Each tab wires its own
+callable (``_clean_job``/``_merge_job``/``_leverage_job``/
+``_compare_job``/``_stats_job``, module-level so they're callable/
+testable without a QWidget) plus its own start/success/error handlers.
 
 Copy and layout conventions follow ``corpus_convert/page.py`` (see that
 file's docstring for the reasoning): short section titles, explanation in
 tooltips, ``section()`` (from ``toolbox.widgets``) for headers,
 ``objectName('primaryButton')`` for the action button,
-``objectName('logConsole')`` for output -- shared here across all three
+``objectName('logConsole')`` for output -- shared here across all five
 tabs rather than one log per tab, so the user has a single place to look
 regardless of which action they just ran.
 
-The stats tab is the one exception to "results go in the log": stats
-produces several distinct numbers at once (total, dedup rate, empty
-counts, per-language-pair breakdown), which reads as a wall of text in a
-scrolling console and is hard to scan back to after the fact -- so it
-gets its own ``QTableWidget`` instead, populated fresh on every run
-(``_set_stats_table_rows``). Clean/merge stay log-based: each produces
-one outcome (how many were removed/merged), which a single log line
-already states clearly.
+The stats/leverage/compare tabs are the exceptions to "results go in the
+log": each produces several distinct numbers/rows at once, which reads as
+a wall of text in a scrolling console and is hard to scan back to after
+the fact -- so each gets its own ``QTableWidget`` instead, populated
+fresh on every run. leverage's table is fixed-shape (one row per
+``leverage.BANDS`` entry); compare's is genuinely variable-width (one
+column per input being compared, via ``_set_dynamic_table_rows()``) since
+the whole point of comparing N files is that N isn't fixed. Clean/merge
+stay log-based: each produces one outcome (how many were removed/merged/
+resolved), which a single log line already states clearly.
+
+leverage/compare/qa_check are the three ``tmtool`` subcommands with a
+``--report`` (HTML/PDF summary export, see ``language_tools/reports/``) --
+here that's a second export button next to the existing CSV one,
+``_export_report()`` shared by both tabs (only the adapter call and the
+source data differ) rather than one copy per tab.
 
 Settings persistence: implements the optional ``restore_settings()``/
 ``save_settings()`` hooks ``main_window.py`` checks for (see
 ``corpus_convert/page.py``'s docstring for the full reasoning) -- 清理
 选项四个复选框、合并的冲突处理策略、and the last-used directory shared
-across every browse dialog on all three tabs round-trip across launches
+across every browse dialog on all five tabs round-trip across launches
 via ``toolbox/settings.py``, under the ``tm_maintenance/`` key prefix.
-Stats has nothing of its own to persist beyond the shared last-used
-directory -- it's a single file picker with no options.
+Stats/leverage/compare have nothing of their own to persist beyond the
+shared last-used directory -- file pickers (plus, for leverage, a fixed
+default fuzzy-match floor not exposed as a control here) with no other
+options.
 """
 import html
 import os
@@ -50,8 +61,12 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from language_tools.reports import adapters as report_adapters
+from language_tools.reports import render as report_render
 from language_tools.tm import clean as clean_module
+from language_tools.tm import compare as compare_module
 from language_tools.tm import io as tm_io
+from language_tools.tm import leverage as leverage_module
 from language_tools.tm import merge as merge_module
 from language_tools.tm import stats as stats_module
 from toolbox import settings
@@ -59,6 +74,7 @@ from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, compact_combo, labeled_fi
 from toolbox.workers import CallableWorker
 
 _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
+_REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
 _SETTINGS_PREFIX = 'tm_maintenance/'
 
 _CLEAN_TOOLTIPS = {
