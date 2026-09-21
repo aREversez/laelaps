@@ -62,6 +62,16 @@ review: it hid 开始检查 behind a scroll instead of freeing up real space):
   first thing inside that section (filter row, then the table), not a
   section of their own above it. One fewer section title/hairline pair
   for two controls that are conceptually part of the results view anyway.
+
+Settings persistence: implements the optional ``restore_settings()``/
+``save_settings()`` hooks ``main_window.py`` checks for (see that
+module's docstring and ``corpus_convert/page.py``'s, which this follows
+exactly) -- 原文语言/译文语言/文档排版方式 and the file dialog's
+last-used directory round-trip across launches via ``toolbox/settings.py``,
+under the ``alignment_check/`` key prefix. 只显示有问题的条目/对齐方式
+筛选 aren't persisted: the move-type dropdown's options are derived from
+whatever document was just checked, so there's nothing stable to restore
+before a check has even run.
 """
 import html
 import os
@@ -76,12 +86,14 @@ from PySide6.QtWidgets import (
 from language_tools import align_report
 from language_tools import qa as qa_module
 from language_tools.writers import csv_writer
+from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
-from toolbox.widgets import make_lang_combo, make_layout_combo, section
+from toolbox.widgets import make_lang_combo, make_layout_combo, section, set_lang_combo_code
 from toolbox.workers import CallableWorker
 
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
 _CSV_FILTER = 'CSV (*.csv)'
+_SETTINGS_PREFIX = 'alignment_check/'
 
 _MOVE_TOOLTIPS = {
     '1:1': '一句对一句，最常见的情况',
@@ -98,6 +110,7 @@ class AlignmentCheckPage(QWidget):
         self._last_units = None
         self._check_worker = None
         self._export_worker = None
+        self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         self._build_ui()
 
     # ---------------------------------------------------------------- UI
@@ -232,9 +245,25 @@ class AlignmentCheckPage(QWidget):
 
     # ------------------------------------------------------------- dialogs
     def _browse_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _BILINGUAL_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, _BILINGUAL_FILTER)
         if path:
             self.input_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
+
+    # ---------------------------------------------------------- settings
+    def restore_settings(self):
+        set_lang_combo_code(self.src_edit, settings.get_str(_SETTINGS_PREFIX + 'srcLang', 'en-US'))
+        set_lang_combo_code(self.tgt_edit, settings.get_str(_SETTINGS_PREFIX + 'tgtLang', 'zh-CN'))
+        idx = self.layout_combo.findData(settings.get_str(_SETTINGS_PREFIX + 'layout', 'auto'))
+        if idx >= 0:
+            self.layout_combo.setCurrentIndex(idx)
+        self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
+
+    def save_settings(self):
+        settings.set_value(_SETTINGS_PREFIX + 'srcLang', lang_combo_code(self.src_edit))
+        settings.set_value(_SETTINGS_PREFIX + 'tgtLang', lang_combo_code(self.tgt_edit))
+        settings.set_value(_SETTINGS_PREFIX + 'layout', self.layout_combo.currentData())
+        settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
@@ -363,11 +392,12 @@ class AlignmentCheckPage(QWidget):
         # silent guard against a future caller invoking this directly.
         if not self._last_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', '', _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', self._last_dir, _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
             path += '.csv'
+        self._last_dir = os.path.dirname(path)
 
         units = self._last_units
         src_lang = lang_combo_code(self.src_edit) or 'SRC'

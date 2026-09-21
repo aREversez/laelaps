@@ -840,3 +840,30 @@ def test_wrapped_plain_text_honors_the_option_palette_text_color(qtbot, tmp_path
         and image.pixelColor(x, y).green() > image.pixelColor(x, y).blue() + 40
         for y in range(image.height()) for x in range(image.width()))
     assert found_green_text, 'expected option.palette\'s Text color to be used for unstyled text'
+
+
+# ------------------------------------------------------------- settings
+
+def test_restore_settings_defaults_when_nothing_saved_yet(qtbot):
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.restore_settings()
+    assert page.hide_clean_chk.isChecked() is True
+    assert page.wrap_chk.isChecked() is False
+    assert page._last_dir == ''
+
+
+def test_save_then_restore_settings_round_trips(qtbot):
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.hide_clean_chk.setChecked(False)
+    page.wrap_chk.setChecked(True)
+    page._last_dir = '/some/folder'
+    page.save_settings()
+
+    fresh = QaCheckPage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert fresh.hide_clean_chk.isChecked() is False
+    assert fresh.wrap_chk.isChecked() is True
+    assert fresh._last_dir == '/some/folder'

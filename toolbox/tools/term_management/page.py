@@ -72,6 +72,17 @@ Same conventions as the other three tools: ``section()``/``CallableWorker``
 ``labeled_field()`` for the inline language-pair row (``toolbox.widgets``,
 promoted there once a third tool -- this one -- needed them; see that
 module's docstring), ``objectName('primaryButton')``/``objectName('logConsole')``.
+
+Settings persistence: implements the optional ``restore_settings()``/
+``save_settings()`` hooks ``main_window.py`` checks for (see
+``corpus_convert/page.py``'s docstring for the full reasoning) -- 术语库
+语言对（原文/译文）、一致性检查的"只显示有问题的条目"、and the shared
+file dialogs' last-used directory round-trip across launches via
+``toolbox/settings.py``, under the ``term_management/`` key prefix. Note
+this is separate from the glossary *file* itself (``_glossary_path``):
+the last-opened glossary isn't reopened automatically on launch, same as
+``corpus_convert``/``tm_editor`` don't reload a last-used input file either
+-- only the form inputs around it are remembered.
 """
 import html
 import os
@@ -90,11 +101,13 @@ from language_tools.terms.filelock import FileLock, office_lock_marker_exists
 from language_tools.terms.model import STATUSES, TermEntry
 from language_tools.tm import io as tm_io
 from language_tools.writers import csv_writer
+from toolbox import settings
 from toolbox.widgets import CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field
-from toolbox.widgets import lang_combo_code, make_lang_combo, section
+from toolbox.widgets import lang_combo_code, make_lang_combo, section, set_lang_combo_code
 from toolbox.workers import CallableWorker
 
 _GLOSSARY_OPEN_FILTER = 'Glossary files (*.csv *.xlsx)'
+_SETTINGS_PREFIX = 'term_management/'
 # Save needs the csv/xlsx choice split into separate named filters (not
 # one combined "Glossary files (*.csv *.xlsx)" entry) so picking a format
 # from the dialog's format dropdown actually determines which extension
@@ -199,6 +212,7 @@ class TermManagementPage(QWidget):
         self._last_units = None      # last consistency-check result
         self._check_worker = None
         self._export_worker = None
+        self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         self._build_ui()
 
     # ---------------------------------------------------------------- UI
@@ -389,9 +403,10 @@ class TermManagementPage(QWidget):
             self._file_lock = None
 
     def _open_glossary(self):
-        path, _ = QFileDialog.getOpenFileName(self, '打开术语库', '', _GLOSSARY_OPEN_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '打开术语库', self._last_dir, _GLOSSARY_OPEN_FILTER)
         if not path:
             return
+        self._last_dir = os.path.dirname(path)
 
         # Opening another file (or re-opening the current file to reload
         # it) replaces the in-memory glossary. Give the person the same
@@ -493,9 +508,10 @@ class TermManagementPage(QWidget):
 
     def _save_glossary_as(self):
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '另存为', '', _GLOSSARY_SAVE_FILTER)
+            self, '另存为', self._last_dir, _GLOSSARY_SAVE_FILTER)
         if not path:
             return
+        self._last_dir = os.path.dirname(path)
         self._write_glossary(_pick_save_extension(path, selected_filter))
 
     def _write_glossary(self, path):
@@ -573,6 +589,22 @@ class TermManagementPage(QWidget):
         tool itself has stopped running.
         """
         self._release_file_lock()
+
+    # ---------------------------------------------------------- settings
+    def restore_settings(self):
+        set_lang_combo_code(self.glossary_src_lang,
+                             settings.get_str(_SETTINGS_PREFIX + 'srcLang', 'en-US'))
+        set_lang_combo_code(self.glossary_tgt_lang,
+                             settings.get_str(_SETTINGS_PREFIX + 'tgtLang', 'zh-CN'))
+        self.check_hide_clean_chk.setChecked(
+            settings.get_bool(_SETTINGS_PREFIX + 'checkHideClean', True))
+        self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
+
+    def save_settings(self):
+        settings.set_value(_SETTINGS_PREFIX + 'srcLang', lang_combo_code(self.glossary_src_lang))
+        settings.set_value(_SETTINGS_PREFIX + 'tgtLang', lang_combo_code(self.glossary_tgt_lang))
+        settings.set_value(_SETTINGS_PREFIX + 'checkHideClean', self.check_hide_clean_chk.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
     # --------------------------------------------------------- check tab
     def _build_check_tab(self):
@@ -662,14 +694,16 @@ class TermManagementPage(QWidget):
         return tab
 
     def _browse_check_corpus(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, CORPUS_FILTER)
         if path:
             self.check_corpus_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
 
     def _browse_check_glossary(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', _GLOSSARY_OPEN_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, _GLOSSARY_OPEN_FILTER)
         if path:
             self.check_glossary_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
 
     def _validate_check(self):
         corpus_path = self.check_corpus_edit.text().strip()
@@ -742,11 +776,12 @@ class TermManagementPage(QWidget):
     def _start_export(self):
         if not self._last_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', '', _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', self._last_dir, _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
             path += '.csv'
+        self._last_dir = os.path.dirname(path)
 
         units = self._last_units
         src_lang, tgt_lang = tm_io.infer_langs(units)

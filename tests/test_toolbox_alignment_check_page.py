@@ -350,3 +350,36 @@ def test_check_button_is_a_direct_descendant_not_behind_any_container(qtbot):
         assert not isinstance(ancestor, (QScrollArea, QSplitter))
         ancestor = ancestor.parentWidget()
         depth += 1
+
+
+# ------------------------------------------------------------- settings
+
+def test_restore_settings_defaults_when_nothing_saved_yet(qtbot):
+    from toolbox.widgets import lang_combo_code
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    page.restore_settings()
+    assert lang_combo_code(page.src_edit) == 'en-US'
+    assert lang_combo_code(page.tgt_edit) == 'zh-CN'
+    assert page.layout_combo.currentData() == 'auto'
+    assert page._last_dir == ''
+
+
+def test_save_then_restore_settings_round_trips(qtbot):
+    from toolbox.widgets import lang_combo_code
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    page.src_edit.setEditText('ja-JP')
+    page.tgt_edit.setEditText('ko-KR')
+    idx = page.layout_combo.findData('table')
+    page.layout_combo.setCurrentIndex(idx)
+    page._last_dir = '/some/folder'
+    page.save_settings()
+
+    fresh = AlignmentCheckPage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert lang_combo_code(fresh.src_edit) == 'ja-JP'
+    assert lang_combo_code(fresh.tgt_edit) == 'ko-KR'
+    assert fresh.layout_combo.currentData() == 'table'
+    assert fresh._last_dir == '/some/folder'

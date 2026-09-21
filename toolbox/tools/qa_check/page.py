@@ -152,6 +152,14 @@ to a translator/reviewer who isn't the one who wrote the QA checks. The
 codes themselves stay untouched as ``self._last_units[i].meta['qa_issues']``
 and as the filter dropdown's underlying ``currentData()`` values; only the
 *rendered* text changes.
+
+Settings persistence: implements the optional ``restore_settings()``/
+``save_settings()`` hooks ``main_window.py`` checks for (see
+``corpus_convert/page.py``'s docstring for the full reasoning) --
+只显示有问题的条目/自动换行 and the file dialog's last-used directory
+round-trip across launches via ``toolbox/settings.py``, under the
+``qa_check/`` key prefix. 问题类型 filter selection isn't persisted:
+it's chosen against whatever check just ran, not a standing preference.
 """
 import html
 import os
@@ -170,10 +178,12 @@ from language_tools import qa as qa_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
+from toolbox import settings
 from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, section
 from toolbox.workers import CallableWorker
 
 _CSV_FILTER = 'CSV (*.csv)'
+_SETTINGS_PREFIX = 'qa_check/'
 
 # Opt-in diagnostic logging for the wrap-mode row-height/resize path,
 # which has been the subject of several rounds of "fixed here, still
@@ -394,6 +404,7 @@ class QaCheckPage(QWidget):
         self._last_units = None
         self._check_worker = None
         self._export_worker = None
+        self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         # Debounced (not immediate) window-resize handling -- see
         # resizeEvent() below for why.
         self._resize_debounce = QTimer(self)
@@ -539,9 +550,21 @@ class QaCheckPage(QWidget):
 
     # ------------------------------------------------------------- dialogs
     def _browse_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, CORPUS_FILTER)
         if path:
             self.input_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
+
+    # ---------------------------------------------------------- settings
+    def restore_settings(self):
+        self.hide_clean_chk.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'hideClean', True))
+        self.wrap_chk.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'wrap', False))
+        self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
+
+    def save_settings(self):
+        settings.set_value(_SETTINGS_PREFIX + 'hideClean', self.hide_clean_chk.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'wrap', self.wrap_chk.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
@@ -747,11 +770,12 @@ class QaCheckPage(QWidget):
         # results exist yet, rather than crashing on an empty CSV write.
         if not self._last_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', '', _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', self._last_dir, _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
             path += '.csv'
+        self._last_dir = os.path.dirname(path)
 
         units = self._last_units
         src_lang, tgt_lang = tm_io.infer_langs(units)

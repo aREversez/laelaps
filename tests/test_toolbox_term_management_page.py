@@ -991,3 +991,35 @@ def test_save_as_uses_xlsx_extension_when_that_filter_is_selected(qtbot, monkeyp
 
     assert (tmp_path / 'glossary.xlsx').exists()
     page.cleanup()
+
+
+# ------------------------------------------------------------- settings
+
+def test_restore_settings_defaults_when_nothing_saved_yet(qtbot):
+    from toolbox.widgets import lang_combo_code
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.restore_settings()
+    assert lang_combo_code(page.glossary_src_lang) == 'en-US'
+    assert lang_combo_code(page.glossary_tgt_lang) == 'zh-CN'
+    assert page.check_hide_clean_chk.isChecked() is True
+    assert page._last_dir == ''
+
+
+def test_save_then_restore_settings_round_trips(qtbot):
+    from toolbox.widgets import lang_combo_code
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.glossary_src_lang.setEditText('ja-JP')
+    page.glossary_tgt_lang.setEditText('ko-KR')
+    page.check_hide_clean_chk.setChecked(False)
+    page._last_dir = '/some/folder'
+    page.save_settings()
+
+    fresh = TermManagementPage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert lang_combo_code(fresh.glossary_src_lang) == 'ja-JP'
+    assert lang_combo_code(fresh.glossary_tgt_lang) == 'ko-KR'
+    assert fresh.check_hide_clean_chk.isChecked() is False
+    assert fresh._last_dir == '/some/folder'

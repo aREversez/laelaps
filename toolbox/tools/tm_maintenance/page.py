@@ -29,6 +29,15 @@ gets its own ``QTableWidget`` instead, populated fresh on every run
 (``_set_stats_table_rows``). Clean/merge stay log-based: each produces
 one outcome (how many were removed/merged), which a single log line
 already states clearly.
+
+Settings persistence: implements the optional ``restore_settings()``/
+``save_settings()`` hooks ``main_window.py`` checks for (see
+``corpus_convert/page.py``'s docstring for the full reasoning) -- 清理
+选项四个复选框、合并的冲突处理策略、and the last-used directory shared
+across every browse dialog on all three tabs round-trip across launches
+via ``toolbox/settings.py``, under the ``tm_maintenance/`` key prefix.
+Stats has nothing of its own to persist beyond the shared last-used
+directory -- it's a single file picker with no options.
 """
 import html
 import os
@@ -45,10 +54,12 @@ from language_tools.tm import clean as clean_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import merge as merge_module
 from language_tools.tm import stats as stats_module
+from toolbox import settings
 from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, compact_combo, labeled_field, section
 from toolbox.workers import CallableWorker
 
 _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
+_SETTINGS_PREFIX = 'tm_maintenance/'
 
 _CLEAN_TOOLTIPS = {
     'normalize': 'Unicode/空白标准化，让格式不同但内容相同的条目能被正确识别为重复',
@@ -100,6 +111,7 @@ class TmMaintenancePage(QWidget):
         self._clean_worker = None
         self._merge_worker = None
         self._stats_worker = None
+        self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         self._build_ui()
 
     # ---------------------------------------------------------------- UI
@@ -319,35 +331,67 @@ class TmMaintenancePage(QWidget):
 
     # ------------------------------------------------------- file dialogs
     def _browse_clean_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, CORPUS_FILTER)
         if path:
             self.clean_input_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
 
     def _browse_clean_output(self):
-        path, _ = QFileDialog.getSaveFileName(self, '另存为', '', _SAVE_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '另存为', self._last_dir, _SAVE_FILTER)
         if path:
             self.clean_output_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
 
     def _browse_merge_inputs(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件（可多选）', '', CORPUS_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件（可多选）', self._last_dir, CORPUS_FILTER)
         existing = {self.merge_list.item(i).text() for i in range(self.merge_list.count())}
         for path in paths:
             if path not in existing:
                 self.merge_list.addItem(path)
+        if paths:
+            self._last_dir = os.path.dirname(paths[-1])
 
     def _remove_selected_merge_inputs(self):
         for item in self.merge_list.selectedItems():
             self.merge_list.takeItem(self.merge_list.row(item))
 
     def _browse_merge_output(self):
-        path, _ = QFileDialog.getSaveFileName(self, '另存为', '', _SAVE_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '另存为', self._last_dir, _SAVE_FILTER)
         if path:
             self.merge_output_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
 
     def _browse_stats_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', '', CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, CORPUS_FILTER)
         if path:
             self.stats_input_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
+
+    # ---------------------------------------------------------- settings
+    def restore_settings(self):
+        self.clean_chk_normalize.setChecked(
+            settings.get_bool(_SETTINGS_PREFIX + 'cleanNormalize', True))
+        self.clean_chk_dedupe.setChecked(
+            settings.get_bool(_SETTINGS_PREFIX + 'cleanDedupe', True))
+        self.clean_chk_remove_empty.setChecked(
+            settings.get_bool(_SETTINGS_PREFIX + 'cleanRemoveEmpty', True))
+        self.clean_chk_remove_identical.setChecked(
+            settings.get_bool(_SETTINGS_PREFIX + 'cleanRemoveIdentical', False))
+        idx = self.merge_strategy_combo.findData(
+            settings.get_str(_SETTINGS_PREFIX + 'mergeStrategy', 'keep-all'))
+        if idx >= 0:
+            self.merge_strategy_combo.setCurrentIndex(idx)
+        self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
+
+    def save_settings(self):
+        settings.set_value(_SETTINGS_PREFIX + 'cleanNormalize', self.clean_chk_normalize.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'cleanDedupe', self.clean_chk_dedupe.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'cleanRemoveEmpty',
+                            self.clean_chk_remove_empty.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'cleanRemoveIdentical',
+                            self.clean_chk_remove_identical.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'mergeStrategy', self.merge_strategy_combo.currentData())
+        settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
     # ----------------------------------------------------------- clean
     def _validate_clean(self):

@@ -258,3 +258,37 @@ def test_tabs_present_for_all_three_actions(qtbot):
     qtbot.addWidget(page)
     titles = [page.tabs.tabText(i) for i in range(page.tabs.count())]
     assert titles == ['清理', '合并', '统计']
+
+
+# ------------------------------------------------------------- settings
+
+def test_restore_settings_defaults_when_nothing_saved_yet(qtbot):
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.restore_settings()
+    assert page.clean_chk_normalize.isChecked() is True
+    assert page.clean_chk_dedupe.isChecked() is True
+    assert page.clean_chk_remove_empty.isChecked() is True
+    assert page.clean_chk_remove_identical.isChecked() is False
+    assert page.merge_strategy_combo.currentData() == 'keep-all'
+    assert page._last_dir == ''
+
+
+def test_save_then_restore_settings_round_trips(qtbot):
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.clean_chk_normalize.setChecked(False)
+    page.clean_chk_remove_identical.setChecked(True)
+    idx = page.merge_strategy_combo.findData('prefer-last')
+    page.merge_strategy_combo.setCurrentIndex(idx)
+    page._last_dir = '/some/folder'
+    page.save_settings()
+
+    fresh = TmMaintenancePage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert fresh.clean_chk_normalize.isChecked() is False
+    assert fresh.clean_chk_dedupe.isChecked() is True
+    assert fresh.clean_chk_remove_identical.isChecked() is True
+    assert fresh.merge_strategy_combo.currentData() == 'prefer-last'
+    assert fresh._last_dir == '/some/folder'
