@@ -1,3 +1,4 @@
+from language_tools import align_report
 from language_tools import qa as qa_module
 from language_tools.model import TranslationUnit
 from language_tools.reports import adapters
@@ -54,4 +55,52 @@ def test_from_compare_report_no_conflicts_has_no_table():
     b = [_u('Hello', '你好')]
     cmp_report = compare_module.compare([('a', a), ('b', b)])
     report = adapters.from_compare_report(cmp_report)
+    assert report.table is None
+
+
+def _align_u(src, tgt, align_move='1:1', align_gap=False):
+    return TranslationUnit(
+        src_lang='en-US', tgt_lang='zh-CN', src_text=src, tgt_text=tgt,
+        meta={'align_move': align_move, 'align_gap': align_gap})
+
+
+def test_from_align_summary_totals_and_labeled_move_table():
+    units = [
+        _align_u('Hello', '你好'),
+        _align_u('Bye', '再见', align_move='2:1'),
+        _align_u('Dangling', '', align_move='1:0', align_gap=True),
+    ]
+    report = adapters.from_align_summary(align_report.summarize(units))
+    assert report.title == 'Alignment Check'
+    assert any('Total segments: 3' in line for line in report.summary_lines)
+    assert any('Gaps (no corresponding sentence): 1' in line for line in report.summary_lines)
+    # Move codes are labeled via move_label(), not left as raw codes.
+    row_labels = [row[0] for row in report.table.rows]
+    assert any('2:1' in label and '合并' in label for label in row_labels)
+
+
+def _term_u(src, tgt, hits=()):
+    return TranslationUnit(
+        src_lang='en-US', tgt_lang='zh-CN', src_text=src, tgt_text=tgt,
+        meta={'term_issues': [{'src_term': s, 'tgt_term': t, 'note': ''} for s, t in hits]})
+
+
+def test_from_term_summary_aggregates_hits_per_term_pair():
+    units = [
+        _term_u('big data rules.', '大资料规则。', hits=[('big data', '大资料')]),
+        _term_u('big data and AI.', '大资料和人工智慧。',
+                hits=[('big data', '大资料'), ('AI', '人工智慧')]),
+        _term_u('clean.', '干净。'),
+    ]
+    summary = {'total': 3, 'flagged': 2}
+    report = adapters.from_term_summary(summary, units)
+    assert report.title == 'Term-Consistency Check'
+    assert any('Flagged: 2 (66.7%)' in line for line in report.summary_lines)
+    # Sorted by hit count desc: 'big data' fired twice, 'AI' once.
+    assert report.table.rows == [['big data', '大资料', '2'], ['AI', '人工智慧', '1']]
+
+
+def test_from_term_summary_no_hits_has_no_table():
+    units = [_term_u('clean.', '干净。')]
+    report = adapters.from_term_summary({'total': 1, 'flagged': 0}, units)
     assert report.table is None

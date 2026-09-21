@@ -55,7 +55,7 @@ _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 
 
 def _write_report(path, report):
-    """Shared ``--report PATH`` handler for qa/leverage/compare: validates
+    """Shared ``--report PATH`` handler for qa/leverage/compare/align/term-check: validates
     the extension up front (so the error names the flag, not a stack trace
     from inside ``report_render.write``) and prints the same "Wrote ..."
     line the existing ``--export`` handling already uses.
@@ -64,7 +64,15 @@ def _write_report(path, report):
     if ext not in ('html', 'htm', 'pdf'):
         print('--report: unsupported extension %r (expected .html or .pdf)' % ext, file=sys.stderr)
         return 1
-    report_render.write(path, report)
+    try:
+        report_render.write(path, report)
+    except ImportError as e:
+        # .pdf needs the optional reportlab extra; write_pdf() re-raises
+        # it as an actionable install hint. main() only catches
+        # ValueError/FileNotFoundError, so surface it here the same way
+        # the extension check above does rather than as a stack trace.
+        print('--report: %s' % e, file=sys.stderr)
+        return 1
     print('Wrote %s' % path)
     return 0
 
@@ -184,6 +192,10 @@ def _cmd_term_check(args):
     if args.export:
         csv_writer.write(args.export, units, src_lang or 'SRC', tgt_lang or 'TGT', include_terms=True)
         print('Wrote %s' % args.export)
+    if args.report:
+        rc = _write_report(args.report, report_adapters.from_term_summary(s, units))
+        if rc:
+            return rc
     if args.fail_on_issues and s['flagged']:
         return 2
     return 0
@@ -210,6 +222,11 @@ def _cmd_align(args):
     if args.export:
         csv_writer.write(args.export, units, args.src, args.tgt, include_qa=True, include_align=True)
         print('Wrote %s' % args.export)
+
+    if args.report:
+        rc = _write_report(args.report, report_adapters.from_align_summary(s))
+        if rc:
+            return rc
 
     if args.fail_on_issues and (s['gap_count'] or s['qa_flagged']):
         return 2
@@ -302,6 +319,9 @@ def build_parser():
                                help='exit with status 2 if any forbidden-term hit was found -- '
                                     'same convention as `align --fail-on-issues`, for scripting '
                                     'a batch check over many corpus files')
+    term_check_p.add_argument('--report', metavar='PATH',
+                              help='write a summary report (totals plus a by-term hit '
+                                   'breakdown) to PATH as HTML or PDF, by extension')
     term_check_p.set_defaults(func=_cmd_term_check)
 
     align_p = sub.add_parser(
@@ -338,6 +358,9 @@ def build_parser():
                                'marks which ones need a look, e.g.: '
                                'for f in *.docx; do tmtool align "$f" --src en-US --tgt zh-CN '
                                '--fail-on-issues || echo "check: $f"; done')
+    align_p.add_argument('--report', metavar='PATH',
+                         help='write a summary report (totals plus a per-move-type breakdown) '
+                              'to PATH as HTML or PDF, by extension')
     align_p.set_defaults(func=_cmd_align)
 
     return p

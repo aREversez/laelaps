@@ -240,6 +240,63 @@ def test_export_cancelled_dialog_does_not_error(qtbot, monkeypatch):
     assert '导出失败' not in page.log.toPlainText()
 
 
+# -------------------------------------------------------------- report export
+
+def test_export_report_button_disabled_until_check_succeeds(qtbot):
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    assert not page.export_report_btn.isEnabled()
+    page.input_edit.setText(_DOCX)
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    assert page.export_report_btn.isEnabled()
+
+
+def test_export_report_before_any_check_is_a_silent_noop(qtbot):
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    page._start_export_report()
+    assert page.log.toPlainText() == ''
+
+
+def test_export_report_writes_html_summary(qtbot, monkeypatch, tmp_path):
+    units = [_u('A', 'a'), _u('B', '', align_move='1:0', align_gap=True)]
+    monkeypatch.setattr('toolbox.tools.alignment_check.page.align_report.run', _fake_run(units))
+    out = tmp_path / 'report.html'
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(_DOCX)
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.alignment_check.page.QFileDialog.getSaveFileName',
+        lambda *a, **k: (str(out), 'HTML (*.html)'))
+    page.export_report_btn.click()
+
+    assert '已导出报告到' in page.log.toPlainText()
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Alignment Check</title>' in content
+    assert 'Gaps (no corresponding sentence): 1' in content
+
+
+def test_export_report_cancelled_dialog_does_not_error(qtbot, monkeypatch):
+    monkeypatch.setattr(
+        'toolbox.tools.alignment_check.page.align_report.run', _fake_run([_u('A', 'a')]))
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(_DOCX)
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.alignment_check.page.QFileDialog.getSaveFileName',
+        lambda *a, **k: ('', ''))
+    page.export_report_btn.click()
+    assert '出错了' not in page.log.toPlainText()
+    assert '已导出报告到' not in page.log.toPlainText()
+
+
 # ------------------------------------------------------------------- layout
 
 def test_results_section_title_is_对齐结果_exactly_once(qtbot):

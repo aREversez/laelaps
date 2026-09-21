@@ -621,6 +621,40 @@ def test_check_export_writes_csv_with_term_issues_column(qtbot, monkeypatch, tmp
     assert '已导出到' in page.log.toPlainText()
 
 
+def test_check_export_report_writes_html_with_hit_table(qtbot, monkeypatch, tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('This is about big data.', '这是关于大资料的。'),
+                      _u('Clean sentence.', '干净的句子。')])
+    glossary_module.write(str(gloss), [_entry('big data', '大资料', status='forbidden')])
+    out = tmp_path / 'report.html'
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert not page.check_export_report_btn.isEnabled()
+    page.check_corpus_edit.setText(str(src))
+    page.check_glossary_edit.setText(str(gloss))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    assert page.check_export_report_btn.isEnabled()
+
+    monkeypatch.setattr(
+        QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), 'HTML (*.html)'))
+    page.check_export_report_btn.click()
+
+    assert '已导出报告到' in page.log.toPlainText()
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Term-Consistency Check</title>' in content
+    assert 'big data' in content and '大资料' in content
+
+
+def test_check_export_report_before_any_check_is_a_silent_noop(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._start_export_report()
+    assert page.log.toPlainText() == ''
+
+
 # ------------------------------------------------------------ dirty tracking
 
 def test_page_starts_clean(qtbot):

@@ -3,6 +3,7 @@
 module + function whose output it adapts, so it's obvious at a glance
 which upstream shape each adapter depends on and needs updating alongside.
 """
+from language_tools import align_report as align_report_module
 from language_tools.reports.render import Report, ReportTable
 from language_tools.tm import leverage as leverage_module
 from language_tools.tm import qa_report as qa_report_module
@@ -26,6 +27,44 @@ def from_leverage_summary(summary):
             for band in leverage_module.BANDS]
     table = ReportTable(columns=['Band', 'Segments', 'Words'], rows=rows)
     return Report(title='Leverage Analysis', summary_lines=lines, table=table)
+
+
+def from_align_summary(summary):
+    """Adapts ``align_report.summarize()``'s ``{'total', 'gap_count',
+    'move_counts', 'qa_flagged'}``. ``move_counts`` is labeled via
+    ``align_report.move_label()`` so the report reads in the reviewer's
+    terms, not raw move codes -- same presentation choice as the GUI
+    alignment-check table's 对齐方式 column.
+    """
+    lines = ['Total segments: %d' % summary['total'],
+             'Gaps (no corresponding sentence): %d' % summary['gap_count'],
+             'QA-flagged: %d' % summary['qa_flagged']]
+    rows = [['%s（%s）' % (code, align_report_module.move_label(code)), str(count)]
+            for code, count in sorted(summary['move_counts'].items())]
+    table = ReportTable(columns=['Move type', 'Segments'], rows=rows) if rows else None
+    return Report(title='Alignment Check', summary_lines=lines, table=table)
+
+
+def from_term_summary(summary, units):
+    """Adapts ``terms.check.summarize()``'s ``{'total', 'flagged'}`` plus
+    the checked units themselves -- unlike QA's fixed issue codes, a term
+    hit names its own glossary entry, so the per-term breakdown can only
+    be aggregated from ``meta['term_issues']`` after the fact, not from
+    the summary dict alone.
+    """
+    total, flagged = summary['total'], summary['flagged']
+    pct = (flagged / total * 100) if total else 0.0
+    lines = ['Total segments: %d' % total, 'Flagged: %d (%.1f%%)' % (flagged, pct)]
+    counts = {}
+    for u in units:
+        for hit in u.meta.get('term_issues', []):
+            key = (hit['src_term'], hit['tgt_term'])
+            counts[key] = counts.get(key, 0) + 1
+    rows = [[src, tgt, str(n)] for (src, tgt), n in
+            sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+    table = ReportTable(columns=['Source term', 'Forbidden translation', 'Hits'],
+                        rows=rows) if rows else None
+    return Report(title='Term-Consistency Check', summary_lines=lines, table=table)
 
 
 def from_compare_report(report):

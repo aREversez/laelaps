@@ -75,3 +75,19 @@ def test_write_pdf_produces_valid_pdf_with_table(tmp_path):
     data = out.read_bytes()
     assert data.startswith(b'%PDF')
     assert b'%%EOF' in data
+
+
+def test_write_pdf_registers_cjk_font_for_chinese_content(tmp_path):
+    # The align/term adapters put Chinese labels and term text into
+    # summary lines/table rows -- default Helvetica (WinAnsi-only) would
+    # render those as blanks, so write_pdf() must use a CJK-capable font.
+    pytest.importorskip('reportlab')
+    report = Report(title='对齐检查', summary_lines=['1:1（一一对应）: 2'],
+                     table=ReportTable(columns=['Source term', 'Target term'],
+                                       rows=[['big data', '大资料']]))
+    out = tmp_path / 'cjk.pdf'
+    write_pdf(str(out), report)
+    data = out.read_bytes()
+    assert data.startswith(b'%PDF')
+    assert b'%%EOF' in data
+    assert b'STSong-Light' in data

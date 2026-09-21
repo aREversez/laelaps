@@ -22,7 +22,9 @@ Two tabs, same ``QTabWidget`` shape as ``tm_maintenance/page.py``:
   ``language_tools.terms.check.run()``, browse/export results. Deliberately
   mirrors ``qa_check/page.py`` almost line for line (file picker ->
   primary button -> summary label -> filter row + table folded into one
-  "检查结果" section -> export button -> shared log) -- it's the same
+  "检查结果" section -> export buttons (CSV + HTML/PDF summary report,
+  same ``language_tools.reports`` path as qa_check's 导出报告) -> shared
+  log) -- it's the same
   shape of task (run a check against an existing corpus, let the user
   narrow/export what came back), so reusing that page's proven layout
   instead of inventing a new one is the right call. The one structural
@@ -95,6 +97,8 @@ from PySide6.QtWidgets import (
     QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from language_tools.reports import adapters as report_adapters
+from language_tools.reports import render as report_render
 from language_tools.terms import check as term_check_module
 from language_tools.terms import glossary as glossary_module
 from language_tools.terms.filelock import FileLock, office_lock_marker_exists
@@ -118,6 +122,7 @@ _SETTINGS_PREFIX = 'term_management/'
 # the filename themselves.
 _GLOSSARY_SAVE_FILTER = 'CSV (*.csv);;Excel (*.xlsx)'
 _CSV_FILTER = 'CSV (*.csv)'
+_REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
 
 
 _STATUS_LABELS = {'approved': '推荐译法', 'forbidden': '禁用译法'}
@@ -210,6 +215,7 @@ class TermManagementPage(QWidget):
         self._dirty = False          # True if _entries has changes not yet saved to _glossary_path
         self._file_lock = None       # FileLock held on _glossary_path while editing, or None
         self._last_units = None      # last consistency-check result
+        self._last_summary = None
         self._check_worker = None
         self._export_worker = None
         self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
@@ -648,8 +654,14 @@ class TermManagementPage(QWidget):
         self.check_export_btn.setEnabled(False)
         self.check_export_btn.setToolTip('导出全部条目（含未标记问题的），不受下面的筛选影响')
         self.check_export_btn.clicked.connect(self._start_export)
+        self.check_export_report_btn = QPushButton('导出报告…')
+        self.check_export_report_btn.setEnabled(False)
+        self.check_export_report_btn.setToolTip(
+            '导出为 HTML 或 PDF 的汇总报告（总数/命中占比/按术语统计），适合给非技术干系人看')
+        self.check_export_report_btn.clicked.connect(self._start_export_report)
         action_row.addWidget(self.check_btn)
         action_row.addWidget(self.check_export_btn)
+        action_row.addWidget(self.check_export_report_btn)
         action_row.addStretch(1)
         layout.addLayout(action_row)
 
@@ -720,9 +732,11 @@ class TermManagementPage(QWidget):
 
     def _start_check(self):
         self._last_units = None
+        self._last_summary = None
         self.check_table.setRowCount(0)
         self.check_summary_label.setText('')
         self.check_export_btn.setEnabled(False)
+        self.check_export_report_btn.setEnabled(False)
 
         error = self._validate_check()
         if error:
@@ -746,10 +760,12 @@ class TermManagementPage(QWidget):
         self.check_btn.setEnabled(True)
         self._last_units = units
         s = term_check_module.summarize(units)
+        self._last_summary = s
         rate = (s['flagged'] / s['total'] * 100) if s['total'] else 0.0
         self.check_summary_label.setText(
             '共 %d 条，%d 条命中禁用译法（%.1f%%）' % (s['total'], s['flagged'], rate))
         self.check_export_btn.setEnabled(bool(units))
+        self.check_export_report_btn.setEnabled(bool(units))
         self._refresh_check_table()
         self._log('检查完成', 'success')
 
@@ -802,6 +818,27 @@ class TermManagementPage(QWidget):
     def _on_export_err(self, message):
         self.check_export_btn.setEnabled(True)
         self._log('导出失败：%s' % message, 'error')
+
+    def _start_export_report(self):
+        # Same synchronous report_render.write() pattern as qa_check's
+        # 导出报告 button -- one small summary, nothing worth a worker
+        # thread; see qa_check/page.py's docstring for the full reasoning.
+        if not self._last_units:
+            return
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, '导出报告', os.path.join(self._last_dir, '术语检查报告'), _REPORT_FILTER)
+        if not path:
+            return
+        if '.' not in os.path.basename(path):
+            path += '.pdf' if 'PDF' in selected_filter else '.html'
+        self._last_dir = os.path.dirname(path)
+        try:
+            report_render.write(path, report_adapters.from_term_summary(
+                self._last_summary, self._last_units))
+        except (ValueError, ImportError) as e:
+            self._log('出错了：%s' % e, 'error')
+            return
+        self._log('已导出报告到 %s' % path, 'success')
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):

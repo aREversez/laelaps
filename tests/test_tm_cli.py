@@ -409,6 +409,35 @@ def test_compare_report_writes_html(tmp_path):
     assert '<title>TM Comparison</title>' in content
 
 
+def test_align_report_writes_html(tmp_path):
+    src = tmp_path / 'in.csv'
+    _write_bilingual_csv(src, [
+        ('Hello there.', '你好。'),
+        ('Found %d results.', '找到了结果。'),
+    ])
+    out = tmp_path / 'report.html'
+    result = _run(['align', str(src), '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--no-header', '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Alignment Check</title>' in content
+    assert 'QA-flagged: 1' in content
+
+
+def test_term_check_report_writes_html_with_hit_table(tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('big data.', '大资料。'), _u('clean sentence.', '干净的句子。')])
+    _write_glossary_csv(gloss, [('big data', '大资料', 'forbidden')])
+    out = tmp_path / 'report.html'
+    result = _run(['term-check', str(src), '--glossary', str(gloss), '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Term-Consistency Check</title>' in content
+    assert 'big data' in content and '大资料' in content
+
+
 def test_report_unsupported_extension_fails_cleanly(tmp_path):
     input_ = tmp_path / 'in.tmx'
     _write_tmx(input_, [_u('Hello', '你好')])
@@ -429,3 +458,36 @@ def test_report_pdf_produces_valid_pdf(tmp_path):
     result = _run(['compare', str(a), str(b), '--report', str(out)])
     assert result.returncode == 0, result.stderr
     assert out.read_bytes().startswith(b'%PDF')
+
+
+def test_term_check_report_pdf_carries_cjk_font(tmp_path):
+    # The term report table puts Chinese term text into PDF cells --
+    # needs the CJK font registered or glyphs drop to blanks (default
+    # Helvetica is WinAnsi-only).
+    pytest.importorskip('reportlab')
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('big data.', '大资料。')])
+    _write_glossary_csv(gloss, [('big data', '大资料', 'forbidden')])
+    out = tmp_path / 'report.pdf'
+    result = _run(['term-check', str(src), '--glossary', str(gloss), '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    data = out.read_bytes()
+    assert data.startswith(b'%PDF')
+    assert b'STSong-Light' in data
+
+
+def test_write_report_surfaces_missing_reportlab_cleanly(tmp_path, monkeypatch, capsys):
+    # Without the optional reportlab extra, `--report x.pdf` used to
+    # escape as a raw ImportError stack trace (main() only catches
+    # ValueError/FileNotFoundError) -- it must come out as a clean
+    # error line + non-zero rc instead.
+    from language_tools import tm_cli
+
+    def fake_write(path, report):
+        raise ImportError('PDF report export requires the optional "reportlab" package')
+
+    monkeypatch.setattr(tm_cli.report_render, 'write', fake_write)
+    rc = tm_cli._write_report(str(tmp_path / 'r.pdf'), None)
+    assert rc == 1
+    assert 'reportlab' in capsys.readouterr().err

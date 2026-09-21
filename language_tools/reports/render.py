@@ -85,6 +85,8 @@ def write_pdf(path, report):
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
         from reportlab.platypus import (ListFlowable, ListItem, Paragraph, SimpleDocTemplate,
                                          Spacer, Table, TableStyle)
     except ImportError as e:
@@ -94,7 +96,18 @@ def write_pdf(path, report):
             'use write_pdf() / `--report *.pdf`.'
         ) from e
 
+    # reportlab's default styles are Helvetica (WinAnsi encoding only),
+    # which silently drops CJK glyphs to blanks/boxes -- and unlike the
+    # earlier QA/leverage/compare reports, the align/term adapters put
+    # Chinese labels and term text straight into summary_lines/table rows.
+    # STSong-Light is a built-in CID font: metrics ship with reportlab,
+    # no external font file needed, and it covers CJK *and* Latin, so
+    # English-only reports render unchanged apart from the face swap.
+    cjk_font = 'STSong-Light'
+    pdfmetrics.registerFont(UnicodeCIDFont(cjk_font))
     styles = getSampleStyleSheet()
+    styles['Normal'].fontName = cjk_font
+    styles['Title'].fontName = cjk_font
     story = [Paragraph(_html.escape(report.title), styles['Title']), Spacer(1, 12)]
     if report.summary_lines:
         story.append(ListFlowable(
@@ -108,6 +121,7 @@ def write_pdf(path, report):
         table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.whitesmoke),
             ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('FONTNAME', (0, 0), (-1, -1), cjk_font),
             ('FONTSIZE', (0, 0), (-1, -1), 9),
             ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ]))

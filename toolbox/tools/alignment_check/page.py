@@ -10,7 +10,10 @@ Same three-part shape as ``qa_check`` (its closest sibling -- see that
 page's docstring for the full reasoning this one doesn't repeat):
 ``section()``/``CallableWorker`` from the shared toolbox modules, a
 ``QTableWidget`` results view with a "只显示有问题的条目" filter, an
-export that always writes the full unfiltered set. Three differences
+export that always writes the full unfiltered set, and (same as
+``qa_check`` since the ``reports/`` module existed) a second 导出报告
+button writing an HTML/PDF summary via ``language_tools.reports`` for
+non-technical stakeholders. Three differences
 from qa_check worth calling out:
 
 - The filter defaults to UNCHECKED here (qa_check's defaults to checked).
@@ -85,6 +88,8 @@ from PySide6.QtWidgets import (
 
 from language_tools import align_report
 from language_tools import qa as qa_module
+from language_tools.reports import adapters as report_adapters
+from language_tools.reports import render as report_render
 from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
@@ -93,6 +98,7 @@ from toolbox.workers import CallableWorker
 
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
 _CSV_FILTER = 'CSV (*.csv)'
+_REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
 _SETTINGS_PREFIX = 'alignment_check/'
 
 _MOVE_TOOLTIPS = {
@@ -108,6 +114,7 @@ class AlignmentCheckPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._last_units = None
+        self._last_summary = None
         self._check_worker = None
         self._export_worker = None
         self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
@@ -175,8 +182,14 @@ class AlignmentCheckPage(QWidget):
         self.export_btn.setEnabled(False)
         self.export_btn.setToolTip('导出全部条目（含没有问题的），不受下面的筛选影响')
         self.export_btn.clicked.connect(self._start_export)
+        self.export_report_btn = QPushButton('导出报告…')
+        self.export_report_btn.setEnabled(False)
+        self.export_report_btn.setToolTip(
+            '导出为 HTML 或 PDF 的汇总报告（总数/GAP/按对齐方式统计），适合给非技术干系人看')
+        self.export_report_btn.clicked.connect(self._start_export_report)
         action_row.addWidget(self.check_btn)
         action_row.addWidget(self.export_btn)
+        action_row.addWidget(self.export_report_btn)
         action_row.addStretch(1)
         outer.addLayout(action_row)
 
@@ -283,9 +296,11 @@ class AlignmentCheckPage(QWidget):
 
     def _start_check(self):
         self._last_units = None
+        self._last_summary = None
         self.results_table.setRowCount(0)
         self.summary_label.setText('')
         self.export_btn.setEnabled(False)
+        self.export_report_btn.setEnabled(False)
         self._reset_move_filter()
 
         error = self._validate_check()
@@ -313,9 +328,11 @@ class AlignmentCheckPage(QWidget):
         self.check_btn.setEnabled(True)
         self._last_units = units
         s = align_report.summarize(units)
+        self._last_summary = s
         self.summary_label.setText(
             '共 %d 条，%d 条 GAP，%d 条被 QA 标记' % (s['total'], s['gap_count'], s['qa_flagged']))
         self.export_btn.setEnabled(bool(units))
+        self.export_report_btn.setEnabled(bool(units))
         self._populate_move_filter(s['move_counts'])
         self._refresh_table()
         if s['total'] and not s['gap_count'] and not s['qa_flagged']:
@@ -418,3 +435,23 @@ class AlignmentCheckPage(QWidget):
     def _on_export_err(self, message):
         self.export_btn.setEnabled(True)
         self._log('导出失败：%s' % message, 'error')
+
+    def _start_export_report(self):
+        # Same synchronous report_render.write() pattern as qa_check's
+        # 导出报告 button -- one small summary, nothing worth a worker
+        # thread; see qa_check/page.py's docstring for the full reasoning.
+        if not self._last_units:
+            return
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, '导出报告', os.path.join(self._last_dir, '对齐检查报告'), _REPORT_FILTER)
+        if not path:
+            return
+        if '.' not in os.path.basename(path):
+            path += '.pdf' if 'PDF' in selected_filter else '.html'
+        self._last_dir = os.path.dirname(path)
+        try:
+            report_render.write(path, report_adapters.from_align_summary(self._last_summary))
+        except (ValueError, ImportError) as e:
+            self._log('出错了：%s' % e, 'error')
+            return
+        self._log('已导出报告到 %s' % path, 'success')
