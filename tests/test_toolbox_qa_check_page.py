@@ -228,6 +228,55 @@ def test_export_cancelled_dialog_does_not_error(qtbot, monkeypatch):
     assert '导出失败' not in page.log.toPlainText()
 
 
+def test_export_report_before_any_check_is_a_silent_noop(qtbot):
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.export_report_btn.click()
+    assert page.log.toPlainText() == ''
+
+
+def test_export_report_button_disabled_until_check_succeeds(qtbot):
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    assert not page.export_report_btn.isEnabled()
+    page.input_edit.setText(tmx_path('inline_markup_qa.tmx'))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    assert page.export_report_btn.isEnabled()
+
+
+def test_export_report_writes_html_summary(qtbot, tmp_path, monkeypatch):
+    out = tmp_path / 'report.html'
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(tmx_path('inline_markup_qa.tmx'))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.qa_check.page.QFileDialog.getSaveFileName',
+        lambda *a, **k: (str(out), 'HTML (*.html)'))
+    page.export_report_btn.click()
+
+    assert '已导出报告到' in page.log.toPlainText()
+    content = out.read_text(encoding='utf-8')
+    assert '<title>QA Report</title>' in content
+
+
+def test_export_report_cancelled_dialog_does_not_error(qtbot, monkeypatch):
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(tmx_path('inline_markup_qa.tmx'))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.qa_check.page.QFileDialog.getSaveFileName',
+        lambda *a, **k: ('', ''))
+    page.export_report_btn.click()
+    assert '出错了' not in page.log.toPlainText()
+
+
 # ------------------------------------------------------------------- layout
 
 def test_results_table_has_its_own_section_title(qtbot):

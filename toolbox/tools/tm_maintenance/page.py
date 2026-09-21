@@ -69,11 +69,13 @@ from language_tools.tm import io as tm_io
 from language_tools.tm import leverage as leverage_module
 from language_tools.tm import merge as merge_module
 from language_tools.tm import stats as stats_module
+from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, compact_combo, labeled_field, section
 from toolbox.workers import CallableWorker
 
 _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
+_CSV_FILTER = 'CSV (*.csv)'
 _REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
 _SETTINGS_PREFIX = 'tm_maintenance/'
 
@@ -121,12 +123,28 @@ def _stats_job(input_path):
     return stats_module.compute(units)
 
 
+def _leverage_job(candidate_path, tm_path):
+    tm_units = tm_io.read_corpus(tm_path)
+    candidate_units = tm_io.read_corpus(candidate_path)
+    leverage_module.analyze(tm_units, candidate_units)
+    return candidate_units
+
+
+def _compare_job(input_paths):
+    named = [(os.path.basename(p), tm_io.read_corpus(p)) for p in input_paths]
+    return compare_module.compare(named)
+
+
 class TmMaintenancePage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._clean_worker = None
         self._merge_worker = None
+        self._leverage_worker = None
+        self._compare_worker = None
         self._stats_worker = None
+        self._leverage_units = None    # last leverage analyze() result, for export
+        self._compare_report = None    # last compare() result, for export
         self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         self._build_ui()
 
@@ -146,6 +164,8 @@ class TmMaintenancePage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_clean_tab(), '清理')
         self.tabs.addTab(self._build_merge_tab(), '合并')
+        self.tabs.addTab(self._build_leverage_tab(), '杠杆分析')
+        self.tabs.addTab(self._build_compare_tab(), '对比')
         self.tabs.addTab(self._build_stats_tab(), '统计')
         outer.addWidget(self.tabs)
 
@@ -286,6 +306,139 @@ class TmMaintenancePage(QWidget):
         layout.addStretch(1)
         return tab
 
+    def _build_leverage_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(14)
+
+        candidate_row = QWidget()
+        candidate_layout = QHBoxLayout(candidate_row)
+        candidate_layout.setContentsMargins(0, 0, 0, 0)
+        self.leverage_input_edit = QLineEdit()
+        self.leverage_input_edit.setPlaceholderText('要评估的新内容（tmx/sdltm）…')
+        candidate_browse_btn = QPushButton('浏览…')
+        candidate_browse_btn.clicked.connect(self._browse_leverage_input)
+        candidate_layout.addWidget(self.leverage_input_edit, 1)
+        candidate_layout.addWidget(candidate_browse_btn)
+        layout.addWidget(section('待分析文件', candidate_row))
+
+        tm_row = QWidget()
+        tm_layout = QHBoxLayout(tm_row)
+        tm_layout.setContentsMargins(0, 0, 0, 0)
+        self.leverage_tm_edit = QLineEdit()
+        self.leverage_tm_edit.setPlaceholderText('已有的参考 TM（tmx/sdltm）…')
+        self.leverage_tm_edit.setToolTip('待分析文件里的每一句，会拿来跟这份 TM 里的原文做匹配')
+        tm_browse_btn = QPushButton('浏览…')
+        tm_browse_btn.clicked.connect(self._browse_leverage_tm)
+        tm_layout.addWidget(self.leverage_tm_edit, 1)
+        tm_layout.addWidget(tm_browse_btn)
+        layout.addWidget(section('参考 TM', tm_row))
+
+        self.leverage_btn = QPushButton('开始分析')
+        self.leverage_btn.setObjectName('primaryButton')
+        self.leverage_btn.clicked.connect(self._start_leverage)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.leverage_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+        self.leverage_table = QTableWidget(0, 3)
+        self.leverage_table.setHorizontalHeaderLabels(['匹配等级', '条数', '字数'])
+        self.leverage_table.verticalHeader().setVisible(False)
+        self.leverage_table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.leverage_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.leverage_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.leverage_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.leverage_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.leverage_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.leverage_table.setShowGrid(False)
+        self.leverage_table.setAlternatingRowColors(True)
+        layout.addWidget(section('分析结果', self.leverage_table), 1)
+
+        export_row = QHBoxLayout()
+        self.leverage_export_csv_btn = QPushButton('导出 CSV')
+        self.leverage_export_csv_btn.setEnabled(False)
+        self.leverage_export_csv_btn.setToolTip('导出待分析文件的每一句及其匹配等级')
+        self.leverage_export_csv_btn.clicked.connect(self._export_leverage_csv)
+        self.leverage_export_report_btn = QPushButton('导出报告…')
+        self.leverage_export_report_btn.setEnabled(False)
+        self.leverage_export_report_btn.setToolTip('导出为 HTML 或 PDF，适合给非技术干系人看')
+        self.leverage_export_report_btn.clicked.connect(self._export_leverage_report)
+        export_row.addWidget(self.leverage_export_csv_btn)
+        export_row.addWidget(self.leverage_export_report_btn)
+        export_row.addStretch(1)
+        layout.addLayout(export_row)
+        return tab
+
+    def _build_compare_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(14)
+
+        list_widget = QWidget()
+        list_layout = QVBoxLayout(list_widget)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+        list_layout.setSpacing(6)
+        self.compare_list = QListWidget()
+        self.compare_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.compare_list.setToolTip('要对比的 tmx/sdltm 文件，至少 2 个')
+        list_layout.addWidget(self.compare_list)
+        list_btn_row = QHBoxLayout()
+        self.compare_add_btn = QPushButton('添加文件…')
+        self.compare_add_btn.clicked.connect(self._browse_compare_inputs)
+        self.compare_remove_btn = QPushButton('移除选中')
+        self.compare_remove_btn.clicked.connect(self._remove_selected_compare_inputs)
+        self.compare_clear_btn = QPushButton('清空')
+        self.compare_clear_btn.clicked.connect(self.compare_list.clear)
+        list_btn_row.addWidget(self.compare_add_btn)
+        list_btn_row.addWidget(self.compare_remove_btn)
+        list_btn_row.addWidget(self.compare_clear_btn)
+        list_btn_row.addStretch(1)
+        list_layout.addLayout(list_btn_row)
+        layout.addWidget(section('选择要对比的文件（至少 2 个）', list_widget))
+
+        self.compare_btn = QPushButton('开始对比')
+        self.compare_btn.setObjectName('primaryButton')
+        self.compare_btn.clicked.connect(self._start_compare)
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.compare_btn)
+        btn_row.addStretch(1)
+        layout.addLayout(btn_row)
+
+        self.compare_summary_label = QLabel('')
+        self.compare_summary_label.setStyleSheet('color: #6B7280;')
+        layout.addWidget(self.compare_summary_label)
+
+        # Column count isn't fixed like leverage_table/stats_table's --
+        # one column per file being compared, via _set_dynamic_table_rows()
+        # -- so this starts empty and is shaped fresh on every run.
+        self.compare_table = QTableWidget(0, 0)
+        self.compare_table.verticalHeader().setVisible(False)
+        self.compare_table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.compare_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.compare_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.compare_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.compare_table.setShowGrid(False)
+        self.compare_table.setAlternatingRowColors(True)
+        self.compare_table.setToolTip('有分歧的原文句段——同一句原文，不同文件里译文不一样')
+        layout.addWidget(section('冲突明细', self.compare_table), 1)
+
+        export_row = QHBoxLayout()
+        self.compare_export_csv_btn = QPushButton('导出冲突 CSV')
+        self.compare_export_csv_btn.setEnabled(False)
+        self.compare_export_csv_btn.clicked.connect(self._export_compare_csv)
+        self.compare_export_report_btn = QPushButton('导出报告…')
+        self.compare_export_report_btn.setEnabled(False)
+        self.compare_export_report_btn.setToolTip('导出为 HTML 或 PDF，适合给非技术干系人看')
+        self.compare_export_report_btn.clicked.connect(self._export_compare_report)
+        export_row.addWidget(self.compare_export_csv_btn)
+        export_row.addWidget(self.compare_export_report_btn)
+        export_row.addStretch(1)
+        layout.addLayout(export_row)
+        return tab
+
     def _build_stats_tab(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
@@ -340,6 +493,30 @@ class TmMaintenancePage(QWidget):
             self.stats_table.setItem(row, 0, QTableWidgetItem(label))
             self.stats_table.setItem(row, 1, QTableWidgetItem(value))
 
+    def _set_leverage_table_rows(self, rows):
+        """Same shape/reasoning as ``_set_stats_table_rows``, one row per
+        (band, count, words) triple.
+        """
+        self.leverage_table.setRowCount(len(rows))
+        for row, (band, count, words) in enumerate(rows):
+            self.leverage_table.setItem(row, 0, QTableWidgetItem(band))
+            self.leverage_table.setItem(row, 1, QTableWidgetItem(count))
+            self.leverage_table.setItem(row, 2, QTableWidgetItem(words))
+
+    def _set_dynamic_table_rows(self, columns, rows):
+        """Unlike ``_set_stats_table_rows``/``_set_leverage_table_rows``
+        (fixed column count, set once at tab-build time), ``compare_table``'s
+        column count depends on how many files were just compared -- so this
+        reshapes the table itself (``setColumnCount``/header labels) on every
+        call, not just its rows.
+        """
+        self.compare_table.setColumnCount(len(columns))
+        self.compare_table.setHorizontalHeaderLabels(columns)
+        self.compare_table.setRowCount(len(rows))
+        for r, values in enumerate(rows):
+            for c, value in enumerate(values):
+                self.compare_table.setItem(r, c, QTableWidgetItem(str(value)))
+
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
         color = LOG_COLORS.get(kind, LOG_COLORS['info'])
@@ -376,6 +553,31 @@ class TmMaintenancePage(QWidget):
         if path:
             self.merge_output_edit.setText(path)
             self._last_dir = os.path.dirname(path)
+
+    def _browse_leverage_input(self):
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, CORPUS_FILTER)
+        if path:
+            self.leverage_input_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
+
+    def _browse_leverage_tm(self):
+        path, _ = QFileDialog.getOpenFileName(self, '选择参考 TM', self._last_dir, CORPUS_FILTER)
+        if path:
+            self.leverage_tm_edit.setText(path)
+            self._last_dir = os.path.dirname(path)
+
+    def _browse_compare_inputs(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件（可多选）', self._last_dir, CORPUS_FILTER)
+        existing = {self.compare_list.item(i).text() for i in range(self.compare_list.count())}
+        for path in paths:
+            if path not in existing:
+                self.compare_list.addItem(path)
+        if paths:
+            self._last_dir = os.path.dirname(paths[-1])
+
+    def _remove_selected_compare_inputs(self):
+        for item in self.compare_list.selectedItems():
+            self.compare_list.takeItem(self.compare_list.row(item))
 
     def _browse_stats_input(self):
         path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, CORPUS_FILTER)
@@ -493,6 +695,160 @@ class TmMaintenancePage(QWidget):
     def _on_merge_err(self, message):
         self.merge_btn.setEnabled(True)
         self._log('出错了：%s' % message, 'error')
+
+    # ------------------------------------------------------- report export
+    def _start_export_report(self, report, default_name):
+        """Shared by leverage/compare: opens a save dialog restricted to
+        the two ``language_tools.reports.render`` formats and dispatches
+        by whichever the user picked, via ``report_render.write()`` (same
+        extension-dispatch ``tmtool``'s own ``--report`` flag uses).
+        """
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, '导出报告', os.path.join(self._last_dir, default_name), _REPORT_FILTER)
+        if not path:
+            return
+        if '.' not in os.path.basename(path):
+            path += '.pdf' if 'PDF' in selected_filter else '.html'
+        self._last_dir = os.path.dirname(path)
+        try:
+            report_render.write(path, report)
+        except (ValueError, ImportError) as e:
+            self._log('出错了：%s' % e, 'error')
+            return
+        self._log('已导出报告到 %s' % path, 'success')
+
+    # -------------------------------------------------------- leverage
+    def _validate_leverage(self):
+        candidate_path = self.leverage_input_edit.text().strip()
+        tm_path = self.leverage_tm_edit.text().strip()
+        if not candidate_path:
+            return '请先选择要分析的文件'
+        if not os.path.exists(candidate_path):
+            return '找不到这个文件，请重新选择'
+        if not tm_path:
+            return '请选择参考 TM'
+        if not os.path.exists(tm_path):
+            return '找不到参考 TM 文件，请重新选择'
+        return None
+
+    def _start_leverage(self):
+        self._leverage_units = None
+        self._set_leverage_table_rows([])
+        self.leverage_export_csv_btn.setEnabled(False)
+        self.leverage_export_report_btn.setEnabled(False)
+
+        error = self._validate_leverage()
+        if error:
+            self._log(error, 'error')
+            return
+
+        candidate_path = self.leverage_input_edit.text().strip()
+        tm_path = self.leverage_tm_edit.text().strip()
+        self.leverage_btn.setEnabled(False)
+        self._log('正在分析…')
+        self._leverage_worker = CallableWorker(
+            lambda: _leverage_job(candidate_path, tm_path), parent=self)
+        self._leverage_worker.finished_ok.connect(self._on_leverage_ok)
+        self._leverage_worker.finished_err.connect(self._on_leverage_err)
+        self._leverage_worker.start()
+
+    def _on_leverage_ok(self, candidate_units):
+        self.leverage_btn.setEnabled(True)
+        self._leverage_units = candidate_units
+        s = leverage_module.summarize(candidate_units)
+        rows = [(band, str(s['bands'][band]['count']), str(s['bands'][band]['words']))
+                for band in leverage_module.BANDS]
+        self._set_leverage_table_rows(rows)
+        self.leverage_export_csv_btn.setEnabled(bool(candidate_units))
+        self.leverage_export_report_btn.setEnabled(bool(candidate_units))
+        self._log('分析完成：共 %d 句，%d 字' % (s['total'], s['total_words']), 'success')
+
+    def _on_leverage_err(self, message):
+        self.leverage_btn.setEnabled(True)
+        self._set_leverage_table_rows([])
+        self._log('出错了：%s' % message, 'error')
+
+    def _export_leverage_csv(self):
+        if not self._leverage_units:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', self._last_dir, _CSV_FILTER)
+        if not path:
+            return
+        if not path.lower().endswith('.csv'):
+            path += '.csv'
+        self._last_dir = os.path.dirname(path)
+        src_lang, tgt_lang = tm_io.infer_langs(self._leverage_units)
+        csv_writer.write(path, self._leverage_units, src_lang or 'SRC', tgt_lang or 'TGT',
+                          include_leverage=True)
+        self._log('已导出到 %s' % path, 'success')
+
+    def _export_leverage_report(self):
+        if not self._leverage_units:
+            return
+        s = leverage_module.summarize(self._leverage_units)
+        self._start_export_report(report_adapters.from_leverage_summary(s), '杠杆分析报告')
+
+    # --------------------------------------------------------- compare
+    def _validate_compare(self):
+        if self.compare_list.count() < 2:
+            return '请至少添加 2 个文件'
+        return None
+
+    def _start_compare(self):
+        self._compare_report = None
+        self.compare_summary_label.setText('')
+        self._set_dynamic_table_rows([], [])
+        self.compare_export_csv_btn.setEnabled(False)
+        self.compare_export_report_btn.setEnabled(False)
+
+        error = self._validate_compare()
+        if error:
+            self._log(error, 'error')
+            return
+
+        input_paths = [self.compare_list.item(i).text() for i in range(self.compare_list.count())]
+        self.compare_btn.setEnabled(False)
+        self._log('正在对比 %d 个文件…' % len(input_paths))
+        self._compare_worker = CallableWorker(lambda: _compare_job(input_paths), parent=self)
+        self._compare_worker.finished_ok.connect(self._on_compare_ok)
+        self._compare_worker.finished_err.connect(self._on_compare_err)
+        self._compare_worker.start()
+
+    def _on_compare_ok(self, report):
+        self.compare_btn.setEnabled(True)
+        self._compare_report = report
+        self.compare_summary_label.setText(
+            '共 %d 个文件，%d 处一致，%d 处冲突'
+            % (len(report['labels']), report['shared_segments'], len(report['conflicts'])))
+        columns = ['原文'] + report['labels']
+        rows = [[entry['src']] + [';'.join(entry['labels'].get(label, [])) for label in report['labels']]
+                for entry in report['conflicts']]
+        self._set_dynamic_table_rows(columns, rows)
+        self.compare_export_csv_btn.setEnabled(bool(report['conflicts']))
+        self.compare_export_report_btn.setEnabled(True)
+        self._log('对比完成', 'success')
+
+    def _on_compare_err(self, message):
+        self.compare_btn.setEnabled(True)
+        self._set_dynamic_table_rows([], [])
+        self._log('出错了：%s' % message, 'error')
+
+    def _export_compare_csv(self):
+        if not self._compare_report or not self._compare_report['conflicts']:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, '导出冲突 CSV', self._last_dir, _CSV_FILTER)
+        if not path:
+            return
+        if not path.lower().endswith('.csv'):
+            path += '.csv'
+        self._last_dir = os.path.dirname(path)
+        compare_module.write_conflicts_csv(path, self._compare_report)
+        self._log('已导出到 %s' % path, 'success')
+
+    def _export_compare_report(self):
+        if not self._compare_report:
+            return
+        self._start_export_report(report_adapters.from_compare_report(self._compare_report), '对比报告')
 
     # ----------------------------------------------------------- stats
     def _validate_stats(self):

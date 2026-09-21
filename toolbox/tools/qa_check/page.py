@@ -160,6 +160,18 @@ Settings persistence: implements the optional ``restore_settings()``/
 round-trip across launches via ``toolbox/settings.py``, under the
 ``qa_check/`` key prefix. 问题类型 filter selection isn't persisted:
 it's chosen against whatever check just ran, not a standing preference.
+
+导出报告 (``_start_export_report()``) is a second export button next to
+导出 CSV: same source data (``self._last_units``) but going through
+``language_tools.reports`` instead -- a summary (total/flagged-rate/
+by-issue-type breakdown, via ``report_adapters.from_qa_summary()``) as
+HTML or PDF, for a non-technical stakeholder who wants a readable report
+rather than a CSV to filter in Excel. Synchronous, unlike CSV export's
+``CallableWorker`` thread: this is writing one small summary, not
+``self._last_units`` in full, so there's nothing here worth a background
+thread for. tm_maintenance/page.py's leverage/compare tabs are the other
+two ``tmtool`` subcommands with a ``--report``, and use the identical
+``report_render.write()``/extension-dispatch pattern.
 """
 import html
 import os
@@ -175,6 +187,8 @@ from PySide6.QtWidgets import (
 )
 
 from language_tools import qa as qa_module
+from language_tools.reports import adapters as report_adapters
+from language_tools.reports import render as report_render
 from language_tools.tm import io as tm_io
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
@@ -183,6 +197,7 @@ from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, section
 from toolbox.workers import CallableWorker
 
 _CSV_FILTER = 'CSV (*.csv)'
+_REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
 _SETTINGS_PREFIX = 'qa_check/'
 
 # Opt-in diagnostic logging for the wrap-mode row-height/resize path,
@@ -460,8 +475,14 @@ class QaCheckPage(QWidget):
         self.export_btn.setEnabled(False)
         self.export_btn.setToolTip('导出全部条目（含未标记问题的），不受下面的筛选影响')
         self.export_btn.clicked.connect(self._start_export)
+        self.export_report_btn = QPushButton('导出报告…')
+        self.export_report_btn.setEnabled(False)
+        self.export_report_btn.setToolTip(
+            '导出为 HTML 或 PDF 的汇总报告（总数/问题占比/按类型统计），适合给非技术干系人看')
+        self.export_report_btn.clicked.connect(self._start_export_report)
         action_row.addWidget(self.check_btn)
         action_row.addWidget(self.export_btn)
+        action_row.addWidget(self.export_report_btn)
         action_row.addStretch(1)
         outer.addLayout(action_row)
 
@@ -585,6 +606,7 @@ class QaCheckPage(QWidget):
         self.results_table.setRowCount(0)
         self.summary_label.setText('')
         self.export_btn.setEnabled(False)
+        self.export_report_btn.setEnabled(False)
         self.highlight_hint_label.setVisible(False)
 
         error = self._validate_check()
@@ -608,6 +630,7 @@ class QaCheckPage(QWidget):
         self.summary_label.setText(
             '共 %d 条，%d 条有问题（%.1f%%）' % (s['total'], s['flagged'], rate))
         self.export_btn.setEnabled(bool(units))
+        self.export_report_btn.setEnabled(bool(units))
         self._refresh_table()
         self._log('检查完成', 'success')
 
@@ -795,3 +818,21 @@ class QaCheckPage(QWidget):
     def _on_export_err(self, message):
         self.export_btn.setEnabled(True)
         self._log('导出失败：%s' % message, 'error')
+
+    def _start_export_report(self):
+        if not self._last_units:
+            return
+        path, selected_filter = QFileDialog.getSaveFileName(
+            self, '导出报告', os.path.join(self._last_dir, 'QA报告'), _REPORT_FILTER)
+        if not path:
+            return
+        if '.' not in os.path.basename(path):
+            path += '.pdf' if 'PDF' in selected_filter else '.html'
+        self._last_dir = os.path.dirname(path)
+        s = qa_report_module.summarize(self._last_units)
+        try:
+            report_render.write(path, report_adapters.from_qa_summary(s))
+        except (ValueError, ImportError) as e:
+            self._log('出错了：%s' % e, 'error')
+            return
+        self._log('已导出报告到 %s' % path, 'success')

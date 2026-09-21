@@ -167,6 +167,197 @@ def test_merge_end_to_end_prefer_last_resolves_conflict(qtbot, tmp_path):
     assert units[0].tgt_text == '准备好了'
 
 
+# --------------------------------------------------------------- leverage
+
+def test_leverage_no_candidate_shows_validation_error(qtbot):
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.leverage_btn.click()
+    assert '请先选择要分析的文件' in page.log.toPlainText()
+
+
+def test_leverage_no_tm_shows_validation_error(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好')])
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.leverage_input_edit.setText(str(src))
+    page.leverage_btn.click()
+    assert '请选择参考 TM' in page.log.toPlainText()
+
+
+def test_leverage_end_to_end_fills_bands_table_and_enables_export(qtbot, tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    candidate = tmp_path / 'in.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])
+    _write_tmx(candidate, [_u('Click OK to continue.', '点击确定继续。'),
+                            _u('Totally unrelated text.', '完全无关的文本。')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.leverage_input_edit.setText(str(candidate))
+    page.leverage_tm_edit.setText(str(tm))
+    page.leverage_btn.click()
+    qtbot.waitUntil(lambda: page.leverage_btn.isEnabled(), timeout=5000)
+
+    assert '分析完成' in page.log.toPlainText()
+    rows = {page.leverage_table.item(r, 0).text():
+            (page.leverage_table.item(r, 1).text(), page.leverage_table.item(r, 2).text())
+            for r in range(page.leverage_table.rowCount())}
+    assert rows['exact'] == ('1', '4')
+    assert rows['no_match'][0] == '1'
+    assert page.leverage_export_csv_btn.isEnabled()
+    assert page.leverage_export_report_btn.isEnabled()
+
+
+def test_leverage_export_csv_writes_leverage_columns(qtbot, tmp_path, monkeypatch):
+    tm = tmp_path / 'tm.tmx'
+    candidate = tmp_path / 'in.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])
+    _write_tmx(candidate, [_u('Click OK to continue.', '点击确定继续。')])
+    out = tmp_path / 'report.csv'
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.leverage_input_edit.setText(str(candidate))
+    page.leverage_tm_edit.setText(str(tm))
+    page.leverage_btn.click()
+    qtbot.waitUntil(lambda: page.leverage_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.tm_maintenance.page.QFileDialog.getSaveFileName',
+        lambda *a, **kw: (str(out), ''))
+    page.leverage_export_csv_btn.click()
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'leverage_band' in content
+    assert 'exact' in content
+
+
+def test_leverage_export_report_writes_html(qtbot, tmp_path, monkeypatch):
+    tm = tmp_path / 'tm.tmx'
+    candidate = tmp_path / 'in.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])
+    _write_tmx(candidate, [_u('Click OK to continue.', '点击确定继续。')])
+    out = tmp_path / 'report.html'
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.leverage_input_edit.setText(str(candidate))
+    page.leverage_tm_edit.setText(str(tm))
+    page.leverage_btn.click()
+    qtbot.waitUntil(lambda: page.leverage_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.tm_maintenance.page.QFileDialog.getSaveFileName',
+        lambda *a, **kw: (str(out), 'HTML (*.html)'))
+    page.leverage_export_report_btn.click()
+    assert '<title>Leverage Analysis</title>' in out.read_text(encoding='utf-8')
+    assert '已导出报告' in page.log.toPlainText()
+
+
+# ---------------------------------------------------------------- compare
+
+def test_compare_fewer_than_two_files_shows_validation_error(qtbot, tmp_path):
+    a = tmp_path / 'a.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.compare_list.addItem(str(a))
+    page.compare_btn.click()
+    assert '请至少添加 2 个文件' in page.log.toPlainText()
+
+
+def test_compare_remove_selected_removes_only_selected_items(qtbot):
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.compare_list.addItem('a.tmx')
+    page.compare_list.addItem('b.tmx')
+    page.compare_list.item(0).setSelected(True)
+    page.compare_remove_btn.click()
+    assert [page.compare_list.item(i).text() for i in range(page.compare_list.count())] == ['b.tmx']
+
+
+def test_compare_end_to_end_fills_summary_and_conflict_table(qtbot, tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Hello', '您好')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.compare_list.addItem(str(a))
+    page.compare_list.addItem(str(b))
+    page.compare_btn.click()
+    qtbot.waitUntil(lambda: page.compare_btn.isEnabled(), timeout=5000)
+
+    assert '对比完成' in page.log.toPlainText()
+    assert '1 处冲突' in page.compare_summary_label.text()
+    assert page.compare_table.columnCount() == 3  # 原文 + a.tmx + b.tmx
+    assert page.compare_table.item(0, 0).text() == 'Hello'
+    assert page.compare_export_csv_btn.isEnabled()
+    assert page.compare_export_report_btn.isEnabled()
+
+
+def test_compare_no_conflicts_disables_csv_export_but_not_report(qtbot, tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Hello', '你好')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.compare_list.addItem(str(a))
+    page.compare_list.addItem(str(b))
+    page.compare_btn.click()
+    qtbot.waitUntil(lambda: page.compare_btn.isEnabled(), timeout=5000)
+
+    assert not page.compare_export_csv_btn.isEnabled()
+    assert page.compare_export_report_btn.isEnabled()
+
+
+def test_compare_export_csv_writes_one_column_per_input(qtbot, tmp_path, monkeypatch):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Hello', '您好')])
+    out = tmp_path / 'conflicts.csv'
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.compare_list.addItem(str(a))
+    page.compare_list.addItem(str(b))
+    page.compare_btn.click()
+    qtbot.waitUntil(lambda: page.compare_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.tm_maintenance.page.QFileDialog.getSaveFileName',
+        lambda *a, **kw: (str(out), ''))
+    page.compare_export_csv_btn.click()
+    lines = out.read_text(encoding='utf-8-sig').strip().splitlines()
+    assert lines[0] == 'source,a.tmx,b.tmx'
+
+
+def test_compare_export_report_writes_html(qtbot, tmp_path, monkeypatch):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Hello', '您好')])
+    out = tmp_path / 'report.html'
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.compare_list.addItem(str(a))
+    page.compare_list.addItem(str(b))
+    page.compare_btn.click()
+    qtbot.waitUntil(lambda: page.compare_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.tm_maintenance.page.QFileDialog.getSaveFileName',
+        lambda *a, **kw: (str(out), 'HTML (*.html)'))
+    page.compare_export_report_btn.click()
+    assert '<title>TM Comparison</title>' in out.read_text(encoding='utf-8')
+
+
 # ------------------------------------------------------------------ stats
 
 def test_stats_empty_input_shows_validation_error(qtbot):
@@ -253,11 +444,11 @@ def test_clean_option_checkboxes_have_tooltips(qtbot):
     assert page.clean_chk_remove_identical.toolTip()
 
 
-def test_tabs_present_for_all_three_actions(qtbot):
+def test_tabs_present_for_all_five_actions(qtbot):
     page = TmMaintenancePage()
     qtbot.addWidget(page)
     titles = [page.tabs.tabText(i) for i in range(page.tabs.count())]
-    assert titles == ['清理', '合并', '统计']
+    assert titles == ['清理', '合并', '杠杆分析', '对比', '统计']
 
 
 # ------------------------------------------------------------- settings
