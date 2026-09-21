@@ -10,7 +10,8 @@
 - **对齐检查**：不写文件，单独预览一个双语文档会被怎样对齐——哪些段落被合并/拆分、哪句完全没找到对应（GAP），转换前先心里有数（`tmtool align` / 桌面 GUI「对齐检查」页），命令行版本额外支持 `--fail-on-issues` 退出码，方便脚本批量检查一堆文档
 - QA 检查：空值、长度比异常、重复条目（源冲突/译文冲突）、数字不匹配、占位符不匹配（`{name}`/`%s` 等）、URL 丢失或改动、inline 标签不匹配（TMX 带格式标记时）——转换时可选勾选，也可以单独对着一个已有的 tmx/sdltm 跑（`tmtool qa` / 桌面 GUI「QA 检查」页），支持导出 CSV 审阅报告
 - **TM 维护**（`tmtool` 命令行 + 桌面 GUI「语料维护」页）：清理（去重/去空/normalize）、多文件合并（可选冲突策略）、语料统计、对齐检查
-- **术语管理**（`tmtool term-check` + 桌面 GUI「术语管理」页）：维护双语术语表（csv/xlsx），对照一个已有 tmx/sdltm 检查禁用译法——v1 只做"原文出现术语、译文出现明确禁用的错译"这一个方向，见 [DESIGN.md](./DESIGN.md) 第 15.1 节为什么范围先这么定
+- **术语管理**（`tmtool term-check` + 桌面 GUI「术语管理」页）：维护双语术语表（csv/xlsx），对照一个已有 tmx/sdltm 检查禁用译法——默认只做"原文出现术语、译文出现明确禁用的错译"这一个方向（几乎不会误报）；`approved` 方向（原文出现术语、译文未用推荐译法）可选开启（`--check-approved` / GUI 复选框），因为同义改写就可能触发，定位为"待核实提示"而非缺陷判定。见 [DESIGN.md](./DESIGN.md) 第 15.1 节为什么范围这么定
+- **报告导出**：对齐检查、QA 检查、杠杆分析、多 TM 对比、术语一致性检查的汇总结果都能导出为 HTML 或 PDF（`tmtool … --report PATH` / 各页"导出报告…"按钮），给非技术干系人看；CSV 导出仍是逐条目审阅的完整报告格式
 - 桌面 GUI（PySide6），也可以纯命令行/脚本调用
 - 打包成本地 Windows exe，不需要联网、不上传文件
 
@@ -31,13 +32,16 @@ pip install -e ".[gui]"       # 再加上桌面GUI
 python -m toolbox.main
 ```
 
-侧边栏五个工具：
+侧边栏八个工具：
 
 - **语料转换**：浏览选择文件 → 双语源文件需要填源/目标语言（语料库文件可留空自动识别）→ 需要的话调整 docx 版式 → 勾选输出格式 → 点转换。
-- **对齐检查**：对着一个双语文档（docx/xlsx/csv/tsv）预览句子对齐结果，不生成任何文件——转换前先看看"这段落是不是被拆/合并对了"。结果表格默认只显示 GAP（某一侧完全没对应句子）或被 QA 标记的行，可按对齐方式（1:1/合并/拆分/GAP）筛选，可导出完整 CSV。
+- **批量转换**：一次选多个文件/一个文件夹，批量跑语料转换（同上参数），逐行报告每个文件的成败。
+- **对齐检查**：对着一个双语文档（docx/xlsx/csv/tsv）预览句子对齐结果，不生成任何文件——转换前先看看"这段落是不是被拆/合并对了"。结果表格默认只显示 GAP（某一侧完全没对应句子）或被 QA 标记的行，可按对齐方式（1:1/合并/拆分/GAP）筛选，可导出完整 CSV 或 HTML/PDF 报告。
+- **批量对齐检查**：一次选多个双语文档逐个跑对齐检查，表格逐行报“对齐正常/需检查/检查失败”，可导出汇总 CSV——把 shell 循环 `tmtool align --fail-on-issues` 的批量筛查搬到 GUI。
 - **QA 检查**：对着一个已有的 tmx/sdltm 单独跑全部 QA 检查（不需要经过转换），结果按"只显示有问题的条目"默认筛选，可按问题类型进一步筛选，可导出完整 CSV 报告（含未标记问题的条目，不受当前筛选影响）。
 - **语料维护**：清理（去重/去空/normalize）、合并（多文件+冲突策略）、统计，三个标签页对应 `tmtool` 的三个子命令。
-- **术语管理**：「术语库」标签页维护一份双语术语表（新增/编辑走弹窗表单，不支持表格内直接改，改动通过表单校验后才落到表里）、导入导出 csv/xlsx；「一致性检查」标签页选一个 tmx/sdltm + 一份术语库，跑检查，结果按"只显示有问题的条目"默认筛选，可导出完整 CSV。
+- **条目编辑**：打开一个 TM 逐条浏览/手动改或删单条（去重后导出）。
+- **术语管理**：「术语库」标签页维护一份双语术语表（新增/编辑走弹窗表单，不支持表格内直接改，改动通过表单校验后才落到表里）、导入导出 csv/xlsx；「一致性检查」标签页选一个 tmx/sdltm + 一份术语库，跑检查（可勾选“同时检查推荐译法未使用”开启 `approved` 方向），结果按"只显示有问题的条目"默认筛选，可导出完整 CSV 或 HTML/PDF 报告。
 
 ### 命令行
 
@@ -66,6 +70,7 @@ tmtool qa a.tmx                                        # 跑全部 QA 检查，�
 tmtool qa a.tmx --export report.csv                     # 同上，并导出完整 CSV 报告（含未标记问题的条目）
 tmtool align input.docx --src en-US --tgt zh-CN         # 对齐检查一个双语文档，打印 GAP/QA 统计，不写任何文件
 tmtool align input.docx --src en-US --tgt zh-CN --export report.csv  # 同上，并导出完整 CSV 报告
+tmtool align input.docx --src en-US --tgt zh-CN --report report.html  # 同上，并导出 HTML/PDF 汇总报告
 ```
 
 合并冲突策略（`--strategy`）：`keep-all`（默认，全部保留，交给后续 QA 检查去发现冲突）、`prefer-first`（同源冲突时保留先出现的译文）、`prefer-last`（保留后出现的）、`prefer-newer`（按 `modified_at` 时间戳取较新的，没有时间戳的条目视为最旧）。
@@ -90,11 +95,13 @@ big data,大资料,forbidden,tech,旧译名，统一用"大数据"
 cloud,云,approved,tech,
 ```
 
-语言对是整份术语库文件级别的属性（不是每行都写一遍），命令行/GUI 里跟其它文件一样传 `--src`/`--tgt` 或用语言下拉框指定。`status` 只有 `approved`/`forbidden` 两档，v1 的一致性检查只看 `forbidden`：原文出现 `src_term`、译文出现对应的 `tgt_term`（即那个被禁止的错误译法）才会被标记；`approved` 方向（推荐译法有没有被用到）v1 暂不检查，见 [DESIGN.md](./DESIGN.md) 第 15.1 节为什么先只做这一半。
+语言对是整份术语库文件级别的属性（不是每行都写一遍），命令行/GUI 里跟其它文件一样传 `--src`/`--tgt` 或用语言下拉框指定。`status` 只有 `approved`/`forbidden` 两档。默认只检查 `forbidden`：原文出现 `src_term`、译文出现对应的 `tgt_term`（即那个被禁止的错误译法）才会被标记。`approved` 方向（原文出现术语、译文未用推荐译法）默认不查，需要显式加 `--check-approved` 开启——因为同义改写、代词回指都可能命中，定位是"待核实提示"而非缺陷（见 [DESIGN.md](./DESIGN.md) 第 15.1 节）。开启后还有两道防噪声闸门：只有 `status` 列**明确写了 `approved`** 的行参与检查（`status` 留空或不识别的行只是默认显示为 `approved`，不会被检查，免得整份没填状态列的老术语表一键开关就涌入待核实命中）；未翻译的空译文条目不标记（那是 QA `EMPTY_TARGET` 的职责）。
 
 ```bash
 tmtool term-check a.tmx --glossary glossary.csv                              # 打印命中数
+tmtool term-check a.tmx --glossary glossary.csv --check-approved            # 额外检查推荐译法未使用（默认关），按方向拆分打印
 tmtool term-check a.tmx --glossary glossary.csv --export report.csv          # 同上，导出完整 CSV
+tmtool term-check a.tmx --glossary glossary.csv --report report.html         # 导出 HTML/PDF 汇总报告（总数/命中占比/按术语×方向统计）
 tmtool term-check a.tmx --glossary glossary.csv --fail-on-issues             # 有命中则退出码 2，同 `align` 的批量脚本用法
 ```
 
