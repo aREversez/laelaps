@@ -49,7 +49,14 @@ each individual row).
 code to look up a label for -- each hit names its own glossary entry --
 so the cell is rendered directly as "<src_term> -> <tgt_term>" pairs
 (semicolon-joined for multiple hits on one row), with the entry's note
-appended in parentheses when present.
+appended in parentheses when present. Since Phase G3 a hit can also come
+from the *approved* direction (preferred translation missing, opt-in);
+those cells get a "未用推荐译法 " prefix so a reviewer can tell the two
+directions apart (a forbidden hit reads "wrong string present", an
+approved hit "right string absent" -- the src/tgt pair alone looks
+identical). Hits predating that change carry no ``status`` key; they can
+only have come from the forbidden direction, so ``.get``-defaulting to
+'forbidden' is both back-compat and correct.
 
 ``include_leverage=True`` appends leverage_band/match_pct columns from
 ``tm.leverage.analyze()``'s ``meta['leverage_band']``/
@@ -76,6 +83,8 @@ def _format_move(move_code):
 
 def _format_term_hit(hit):
     text = '%s->%s' % (hit['src_term'], hit['tgt_term'])
+    if hit.get('status', 'forbidden') == 'approved':
+        text = '未用推荐译法 ' + text
     return '%s(%s)' % (text, hit['note']) if hit.get('note') else text
 
 

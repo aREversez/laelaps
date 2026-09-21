@@ -138,17 +138,30 @@ def _rows_to_entries(rows, src_lang, tgt_lang):
         tgt_term = _cell(cells, col_index, 'tgt_term')
         if not src_term and not tgt_term:
             continue
-        status = _cell(cells, col_index, 'status').lower() or 'approved'
-        if status not in _VALID_STATUSES:
-            bad_status_rows.append(row_number)
+        # Blank/unrecognized status cells still *become* 'approved' (the
+        # entry needs a displayable/round-trippable value), but mark them
+        # status_declared=False: "approved-by-default" and "approved-on-
+        # purpose" only diverge once check.run(check_approved=True) is
+        # switched on, and a legacy file with no status column at all
+        # shouldn't turn into a whole-glossary to-verify list at that
+        # moment -- see TermEntry.status_declared.
+        raw_status = _cell(cells, col_index, 'status').lower()
+        status_declared = raw_status in _VALID_STATUSES
+        if status_declared:
+            status = raw_status
+        else:
+            if raw_status:
+                bad_status_rows.append(row_number)
             status = 'approved'
         entries.append(TermEntry(
             src_lang=src_lang, tgt_lang=tgt_lang, src_term=src_term, tgt_term=tgt_term,
-            status=status, domain=_cell(cells, col_index, 'domain') or None,
+            status=status, status_declared=status_declared,
+            domain=_cell(cells, col_index, 'domain') or None,
             note=_cell(cells, col_index, 'note') or None,
         ))
     if bad_status_rows:
-        print('warning: glossary rows with unrecognized status (treated as \'approved\'): %s'
+        print('warning: glossary rows with unrecognized status (treated as \'approved\', '
+              'but skipped by the opt-in approved check): %s'
               % bad_status_rows)
     return entries
 

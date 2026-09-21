@@ -140,6 +140,36 @@ def test_term_check_prints_summary(tmp_path):
     assert result.returncode == 0, result.stderr
     assert 'Total=2' in result.stdout
     assert 'Flagged=1' in result.stdout
+    assert '  forbidden: 1' in result.stdout
+
+
+def test_term_check_check_approved_flag_fires_approved_direction(tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('about big data.', '关于海量数据。')])
+    _write_glossary_csv(gloss, [('big data', '大数据', 'approved')])
+    # Without the flag: approved direction stays unchecked, nothing fires.
+    off = _run(['term-check', str(src), '--glossary', str(gloss)])
+    assert off.returncode == 0, off.stderr
+    assert 'Flagged=0' in off.stdout
+    # With the flag: missing preferred translation is a to-verify hit.
+    on = _run(['term-check', str(src), '--glossary', str(gloss), '--check-approved'])
+    assert on.returncode == 0, on.stderr
+    assert 'Flagged=1' in on.stdout
+    assert '  approved: 1' in on.stdout
+
+
+def test_term_check_check_approved_export_labels_hint(tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    out = tmp_path / 'report.csv'
+    _write_tmx(src, [_u('about big data.', '关于海量数据。')])
+    _write_glossary_csv(gloss, [('big data', '大数据', 'approved')])
+    result = _run(['term-check', str(src), '--glossary', str(gloss),
+                   '--check-approved', '--export', str(out)])
+    assert result.returncode == 0, result.stderr
+    content = out.read_text(encoding='utf-8-sig')
+    assert '未用推荐译法 big data->大数据' in content
 
 
 def test_term_check_export_writes_full_csv_report(tmp_path):
@@ -458,6 +488,31 @@ def test_report_pdf_produces_valid_pdf(tmp_path):
     result = _run(['compare', str(a), str(b), '--report', str(out)])
     assert result.returncode == 0, result.stderr
     assert out.read_bytes().startswith(b'%PDF')
+
+
+def test_term_check_check_approved_skips_rows_with_undeclared_status(tmp_path):
+    # status cell left blank *displays* as approved via glossary.read()'s
+    # fallback but is marked not-declared -- switching on the opt-in
+    # check must not sweep a whole legacy status-less glossary in.
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('about big data.', '关于海量数据。')])
+    _write_glossary_csv(gloss, [('big data', '大数据', '')])
+    result = _run(['term-check', str(src), '--glossary', str(gloss), '--check-approved'])
+    assert result.returncode == 0, result.stderr
+    assert 'Flagged=0' in result.stdout
+
+
+def test_term_check_check_approved_skips_untranslated_segments(tmp_path):
+    # An empty target trivially misses the approved term; that's the QA
+    # EMPTY_TARGET check's job, not a to-verify hit.
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('about big data.', '')])
+    _write_glossary_csv(gloss, [('big data', '大数据', 'approved')])
+    result = _run(['term-check', str(src), '--glossary', str(gloss), '--check-approved'])
+    assert result.returncode == 0, result.stderr
+    assert 'Flagged=0' in result.stdout
 
 
 def test_term_check_report_pdf_carries_cjk_font(tmp_path):

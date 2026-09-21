@@ -82,25 +82,40 @@ def test_from_align_summary_totals_and_labeled_move_table():
 def _term_u(src, tgt, hits=()):
     return TranslationUnit(
         src_lang='en-US', tgt_lang='zh-CN', src_text=src, tgt_text=tgt,
-        meta={'term_issues': [{'src_term': s, 'tgt_term': t, 'note': ''} for s, t in hits]})
+        meta={'term_issues': [{'src_term': s, 'tgt_term': t, 'note': '',
+                               'status': st} for s, t, st in hits]})
 
 
 def test_from_term_summary_aggregates_hits_per_term_pair():
     units = [
-        _term_u('big data rules.', '大资料规则。', hits=[('big data', '大资料')]),
+        _term_u('big data rules.', '大资料规则。', hits=[('big data', '大资料', 'forbidden')]),
         _term_u('big data and AI.', '大资料和人工智慧。',
-                hits=[('big data', '大资料'), ('AI', '人工智慧')]),
+                hits=[('big data', '大资料', 'forbidden'), ('AI', '人工智慧', 'forbidden')]),
         _term_u('clean.', '干净。'),
     ]
-    summary = {'total': 3, 'flagged': 2}
+    summary = {'total': 3, 'flagged': 2, 'by_status': {'forbidden': 3}}
     report = adapters.from_term_summary(summary, units)
     assert report.title == 'Term-Consistency Check'
     assert any('Flagged: 2 (66.7%)' in line for line in report.summary_lines)
     # Sorted by hit count desc: 'big data' fired twice, 'AI' once.
-    assert report.table.rows == [['big data', '大资料', '2'], ['AI', '人工智慧', '1']]
+    assert report.table.rows == [['big data', '大资料', 'Forbidden', '2'],
+                                 ['AI', '人工智慧', 'Forbidden', '1']]
+
+
+def test_from_term_summary_keeps_directions_apart_per_term_pair():
+    # Same term pair hit in both directions must not merge into one row.
+    units = [
+        _term_u('big data rules.', '大资料规则。', hits=[('big data', '大资料', 'forbidden')]),
+        _term_u('big data elsewhere.', '别的说法。', hits=[('big data', '大数据', 'approved')]),
+    ]
+    report = adapters.from_term_summary({'total': 2, 'flagged': 2}, units)
+    # Equal hit counts -- tie-break is the key itself: 据 (U+636E) sorts
+    # before 料 (U+6599), so the approved row comes first.
+    assert report.table.rows == [['big data', '大数据', 'Approved missing', '1'],
+                                 ['big data', '大资料', 'Forbidden', '1']]
 
 
 def test_from_term_summary_no_hits_has_no_table():
     units = [_term_u('clean.', '干净。')]
-    report = adapters.from_term_summary({'total': 1, 'flagged': 0}, units)
+    report = adapters.from_term_summary({'total': 1, 'flagged': 0, 'by_status': {}}, units)
     assert report.table is None

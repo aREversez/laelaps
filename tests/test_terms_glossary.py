@@ -26,6 +26,10 @@ def test_csv_round_trip(tmp_path):
     assert back[0].note == '首选译法'
     assert back[1].status == 'forbidden'
     assert back[1].note == '禁止使用旧译名'
+    # explicit status cells round-trip as declared -- the opt-in approved
+    # check covers these (see check.run's status_declared gate).
+    assert back[0].status_declared is True
+    assert back[1].status_declared is True
     # write() doesn't persist a language column -- read() stamps whatever
     # pair the caller asks for, same "file-level, not per-row" design.
     assert back[0].src_lang == 'en-US'
@@ -142,6 +146,9 @@ def test_missing_status_defaults_to_approved(tmp_path):
     path.write_text('src_term,tgt_term\ncloud,云\n', encoding='utf-8')
     entries = glossary.read(str(path), 'en-US', 'zh-CN')
     assert entries[0].status == 'approved'
+    # ...but as a fallback, not a choice: the opt-in approved check
+    # must not sweep status-less legacy rows in.
+    assert entries[0].status_declared is False
 
 
 def test_unrecognized_status_falls_back_to_approved_and_warns(tmp_path, capsys):
@@ -149,7 +156,16 @@ def test_unrecognized_status_falls_back_to_approved_and_warns(tmp_path, capsys):
     path.write_text('src_term,tgt_term,status\ncloud,云,maybe\n', encoding='utf-8')
     entries = glossary.read(str(path), 'en-US', 'zh-CN')
     assert entries[0].status == 'approved'
+    assert entries[0].status_declared is False
     assert 'unrecognized status' in capsys.readouterr().out
+
+
+def test_explicit_approved_status_is_marked_declared(tmp_path):
+    path = tmp_path / 'glossary.csv'
+    path.write_text('src_term,tgt_term,status\ncloud,云,approved\napi,接口,\nbig data,大数据,maybe\n',
+                    encoding='utf-8')
+    entries = glossary.read(str(path), 'en-US', 'zh-CN')
+    assert [e.status_declared for e in entries] == [True, False, False]
 
 
 def test_status_matching_is_case_insensitive(tmp_path):

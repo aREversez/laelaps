@@ -24,14 +24,17 @@ from dataclasses import dataclass
 # this specific (wrong) target string" -- a match either is or isn't
 # present, essentially zero false-positive risk.
 #
-# 'approved' (the default) marks a preferred/standard translation but is
-# NOT yet checked against anything -- "does the target text use the
-# approved term" is a much harder question (synonyms, pronoun
-# substitution, and legitimate rewording all make "term didn't literally
-# appear" a poor signal on its own) that needs real false-positive/
-# false-negative data before committing to a matching strategy. Modeled
-# here regardless of the deferred check, so the glossary file format
-# doesn't need a breaking change whenever that check eventually ships.
+# 'approved' (the default) marks a preferred/standard translation. Since
+# Phase G3 ``check.py`` can also check this direction ("source term present
+# but target doesn't use the approved string"), opt-in via
+# ``check_approved=True`` -- opt-in because the question is genuinely
+# harder (synonyms, pronoun substitution, and legitimate rewording all
+# make "term didn't literally appear" a poor signal on its own), so those
+# hits are surfaced as a to-verify hint list rather than a defect verdict.
+# Modeled as data from the start so the glossary file format never needed a
+# breaking change when the check eventually shipped.
+# That check only acts on rows that *explicitly* declared 'approved' --
+# see ``status_declared`` below for how the two cases stay distinguishable.
 STATUSES = ('approved', 'forbidden')
 
 
@@ -42,6 +45,15 @@ class TermEntry:
     src_term: str
     tgt_term: str
     status: str = 'approved'
+    # False when the status value is a fallback rather than a choice:
+    # ``glossary.read()`` sets it for rows whose status cell was blank or
+    # unrecognized (both default to status='approved' so the row still
+    # displays/round-trips as before). ``check.run(check_approved=True)``
+    # skips these -- an unset status must not silently become a
+    # to-verify-hint worklist once the opt-in approved direction is
+    # switched on. Defaults True so entries built in code or through the
+    # GUI form (where a status was actively picked) are covered.
+    status_declared: bool = True
     domain: str | None = None
     note: str | None = None
     guid: str | None = None

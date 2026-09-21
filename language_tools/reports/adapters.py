@@ -46,11 +46,16 @@ def from_align_summary(summary):
 
 
 def from_term_summary(summary, units):
-    """Adapts ``terms.check.summarize()``'s ``{'total', 'flagged'}`` plus
-    the checked units themselves -- unlike QA's fixed issue codes, a term
-    hit names its own glossary entry, so the per-term breakdown can only
-    be aggregated from ``meta['term_issues']`` after the fact, not from
-    the summary dict alone.
+    """Adapts ``terms.check.summarize()``'s ``{'total', 'flagged',
+    'by_status'}`` plus the checked units themselves -- unlike QA's fixed
+    issue codes, a term hit names its own glossary entry, so the per-term
+    breakdown can only be aggregated from ``meta['term_issues']`` after
+    the fact, not from the summary dict alone. Rows are keyed per hit
+    *direction* too ('Forbidden' = wrong string present, 'Approved
+    missing' = preferred string absent) -- the same term pair checked in
+    both directions must not merge into one row. Hits without a ``status``
+    key (written before the approved direction existed) can only be
+    forbidden-direction hits, hence the ``.get`` default.
     """
     total, flagged = summary['total'], summary['flagged']
     pct = (flagged / total * 100) if total else 0.0
@@ -58,11 +63,13 @@ def from_term_summary(summary, units):
     counts = {}
     for u in units:
         for hit in u.meta.get('term_issues', []):
-            key = (hit['src_term'], hit['tgt_term'])
+            key = (hit['src_term'], hit['tgt_term'], hit.get('status', 'forbidden'))
             counts[key] = counts.get(key, 0) + 1
-    rows = [[src, tgt, str(n)] for (src, tgt), n in
+    status_labels = {'forbidden': 'Forbidden', 'approved': 'Approved missing'}
+    rows = [[src, tgt, status_labels.get(status, status), str(n)]
+            for (src, tgt, status), n in
             sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
-    table = ReportTable(columns=['Source term', 'Forbidden translation', 'Hits'],
+    table = ReportTable(columns=['Source term', 'Target term', 'Status', 'Hits'],
                         rows=rows) if rows else None
     return Report(title='Term-Consistency Check', summary_lines=lines, table=table)
 

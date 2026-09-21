@@ -571,10 +571,42 @@ def test_check_end_to_end_flags_forbidden_hit_and_enables_export(qtbot, tmp_path
     qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
 
     assert '检查完成' in page.log.toPlainText()
-    assert '共 2 条，1 条命中禁用译法' in page.check_summary_label.text()
+    assert '共 2 条，1 条有术语问题（50.0%（禁用译法 1））' in page.check_summary_label.text()
     assert page.check_export_btn.isEnabled()
     assert page.check_table.rowCount() == 1  # hide_clean checked by default
     assert 'big data→大资料（旧译名）' in page.check_table.item(0, 3).text()
+
+
+def test_check_approved_checkbox_off_by_default(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.check_approved_chk.isChecked() is False
+
+
+def test_check_with_approved_flag_flags_missing_preferred_translation(qtbot, tmp_path):
+    # Source term present, target reworded around the preferred term --
+    # only surfaces with 同时检查推荐译法未使用 ticked, and the hit cell
+    # labels it as a to-verify hint rather than a bare pair.
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('This is about big data.', '这是关于海量数据的。'),
+                      _u('Clean sentence.', '干净的句子。')])
+    glossary_module.write(str(gloss), [_entry('big data', '大数据', status='approved')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_corpus_edit.setText(str(src))
+    page.check_glossary_edit.setText(str(gloss))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    assert page.check_table.rowCount() == 0  # default off: approved stays unchecked
+
+    page.check_approved_chk.setChecked(True)
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    assert '共 2 条，1 条有术语问题（50.0%（未用推荐译法 1））' in page.check_summary_label.text()
+    assert page.check_table.rowCount() == 1
+    assert '未用推荐译法 big data→大数据' in page.check_table.item(0, 3).text()
 
 
 def test_check_hide_clean_checkbox_toggles_row_count(qtbot, tmp_path):
@@ -1037,6 +1069,7 @@ def test_restore_settings_defaults_when_nothing_saved_yet(qtbot):
     assert lang_combo_code(page.glossary_src_lang) == 'en-US'
     assert lang_combo_code(page.glossary_tgt_lang) == 'zh-CN'
     assert page.check_hide_clean_chk.isChecked() is True
+    assert page.check_approved_chk.isChecked() is False
     assert page._last_dir == ''
 
 
@@ -1047,6 +1080,7 @@ def test_save_then_restore_settings_round_trips(qtbot):
     page.glossary_src_lang.setEditText('ja-JP')
     page.glossary_tgt_lang.setEditText('ko-KR')
     page.check_hide_clean_chk.setChecked(False)
+    page.check_approved_chk.setChecked(True)
     page._last_dir = '/some/folder'
     page.save_settings()
 
@@ -1056,4 +1090,5 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert lang_combo_code(fresh.glossary_src_lang) == 'ja-JP'
     assert lang_combo_code(fresh.glossary_tgt_lang) == 'ko-KR'
     assert fresh.check_hide_clean_chk.isChecked() is False
+    assert fresh.check_approved_chk.isChecked() is True
     assert fresh._last_dir == '/some/folder'

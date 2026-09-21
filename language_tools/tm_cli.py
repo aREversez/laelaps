@@ -185,10 +185,13 @@ def _cmd_term_check(args):
     units = tm_io.read_corpus(args.input)
     src_lang, tgt_lang = tm_io.infer_langs(units)
     entries = glossary_module.read(args.glossary, src_lang, tgt_lang)
-    term_check_module.run(units, entries)
+    term_check_module.run(units, entries, check_approved=args.check_approved)
     s = term_check_module.summarize(units)
     print('Total=%d Flagged=%d (%.1f%%)' % (
         s['total'], s['flagged'], (s['flagged'] / s['total'] * 100) if s['total'] else 0.0))
+    for status in ('forbidden', 'approved'):
+        if s['by_status'].get(status):
+            print('  %s: %d' % (status, s['by_status'][status]))
     if args.export:
         csv_writer.write(args.export, units, src_lang or 'SRC', tgt_lang or 'TGT', include_terms=True)
         print('Wrote %s' % args.export)
@@ -312,6 +315,13 @@ def build_parser():
     term_check_p.add_argument('input', help='input .tmx or .sdltm file')
     term_check_p.add_argument('--glossary', required=True,
                                help='glossary file (.csv or .xlsx) with src_term/tgt_term/status columns')
+    term_check_p.add_argument('--check-approved', action='store_true',
+                               help='also flag segments where a source term appears but its approved '
+                                    'translation is missing from the target -- opt-in because a missing '
+                                    'approved term is a to-verify hint (synonyms, rewording), not a defect; '
+                                    'only rows whose status column explicitly says \'approved\' are '
+                                    'covered (blank/unrecognized statuses are skipped), and untranslated '
+                                    'segments are left to the qa EMPTY_TARGET check')
     term_check_p.add_argument('--export', metavar='PATH',
                                help='write a full CSV report (all units, with a term_issues '
                                     'column) to PATH')

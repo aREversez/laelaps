@@ -78,7 +78,8 @@ module's docstring), ``objectName('primaryButton')``/``objectName('logConsole')`
 Settings persistence: implements the optional ``restore_settings()``/
 ``save_settings()`` hooks ``main_window.py`` checks for (see
 ``corpus_convert/page.py``'s docstring for the full reasoning) -- 术语库
-语言对（原文/译文）、一致性检查的"只显示有问题的条目"、and the shared
+语言对（原文/译文）、一致性检查的"只显示有问题的条目"与"同时检查推荐译法
+未使用"、and the shared
 file dialogs' last-used directory round-trip across launches via
 ``toolbox/settings.py``, under the ``term_management/`` key prefix. Note
 this is separate from the glossary *file* itself (``_glossary_path``):
@@ -127,19 +128,23 @@ _REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
 
 _STATUS_LABELS = {'approved': '推荐译法', 'forbidden': '禁用译法'}
 _STATUS_TOOLTIPS = {
-    'approved': '标准/推荐译法。v1 暂不据此检查译文（详见 DESIGN.md 15.1）',
-    'forbidden': '明确禁止的错误译法——一致性检查只看这一档：原文出现这个词，且译文出现这个禁用译法，就标记出来',
+    'approved': '标准/推荐译法。一致性检查默认不看这一档，勾选"同时检查推荐译法未使用"后才会据此标记译文；'
+                '只有在这里（或术语表 status 列）明确选了"推荐译法"的行才会被那样检查，'
+                'status 留空/无法识别而默认显示为推荐译法的旧行不参与（详见 DESIGN.md 15.1）',
+    'forbidden': '明确禁止的错误译法——原文出现这个词，且译文出现这个禁用译法，就标记出来',
 }
 
 
-def _check_job(corpus_path, glossary_path, src_lang, tgt_lang):
+def _check_job(corpus_path, glossary_path, src_lang, tgt_lang, check_approved=False):
     units = tm_io.read_corpus(corpus_path)
     entries = glossary_module.read(glossary_path, src_lang, tgt_lang)
-    return term_check_module.run(units, entries)
+    return term_check_module.run(units, entries, check_approved=check_approved)
 
 
 def _format_term_hit(hit):
     text = '%s→%s' % (hit['src_term'], hit['tgt_term'])
+    if hit.get('status', 'forbidden') == 'approved':
+        text = '未用推荐译法 ' + text
     return '%s（%s）' % (text, hit['note']) if hit.get('note') else text
 
 
@@ -604,12 +609,15 @@ class TermManagementPage(QWidget):
                              settings.get_str(_SETTINGS_PREFIX + 'tgtLang', 'zh-CN'))
         self.check_hide_clean_chk.setChecked(
             settings.get_bool(_SETTINGS_PREFIX + 'checkHideClean', True))
+        self.check_approved_chk.setChecked(
+            settings.get_bool(_SETTINGS_PREFIX + 'checkApproved', False))
         self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
 
     def save_settings(self):
         settings.set_value(_SETTINGS_PREFIX + 'srcLang', lang_combo_code(self.glossary_src_lang))
         settings.set_value(_SETTINGS_PREFIX + 'tgtLang', lang_combo_code(self.glossary_tgt_lang))
         settings.set_value(_SETTINGS_PREFIX + 'checkHideClean', self.check_hide_clean_chk.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'checkApproved', self.check_approved_chk.isChecked())
         settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
     # --------------------------------------------------------- check tab
@@ -665,6 +673,21 @@ class TermManagementPage(QWidget):
         action_row.addStretch(1)
         layout.addLayout(action_row)
 
+        # Approved-direction check lives next to the check button (not in
+        # the results-filter row below) because it changes what the check
+        # COMPUTES, unlike 只显示有问题的条目 which only changes what the
+        # table displays.
+        options_row = QHBoxLayout()
+        self.check_approved_chk = QCheckBox('同时检查推荐译法未使用')
+        self.check_approved_chk.setToolTip(
+            '勾选后额外标记：原文出现推荐术语、但译文没有用到对应推荐译法的情况。'
+            '同义改写、代词指代都可能触发，结果是待核实提示，不一定是错。'
+            '只检查明确标了"推荐译法"的条目——status 留空或填了不认识的值的行（只是默认显示为推荐译法）不检查；'
+            '没有译文的未翻译条目也不标记（那属于 QA 的空译文检查）')
+        options_row.addWidget(self.check_approved_chk)
+        options_row.addStretch(1)
+        layout.addLayout(options_row)
+
         self.check_summary_label = QLabel('')
         self.check_summary_label.setStyleSheet('color: #4B5262;')
         layout.addWidget(self.check_summary_label)
@@ -688,7 +711,7 @@ class TermManagementPage(QWidget):
         results_layout.addWidget(filter_row)
 
         self.check_table = QTableWidget(0, 4)
-        self.check_table.setHorizontalHeaderLabels(['#', '原文', '译文', '命中的禁用译法'])
+        self.check_table.setHorizontalHeaderLabels(['#', '原文', '译文', '术语问题'])
         self.check_table.verticalHeader().setVisible(False)
         header = self.check_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -750,7 +773,8 @@ class TermManagementPage(QWidget):
         self._check_worker = CallableWorker(
             lambda: _check_job(corpus_path, glossary_path,
                                 lang_combo_code(self.glossary_src_lang),
-                                lang_combo_code(self.glossary_tgt_lang)),
+                                lang_combo_code(self.glossary_tgt_lang),
+                                check_approved=self.check_approved_chk.isChecked()),
             parent=self)
         self._check_worker.finished_ok.connect(self._on_check_ok)
         self._check_worker.finished_err.connect(self._on_check_err)
@@ -762,8 +786,12 @@ class TermManagementPage(QWidget):
         s = term_check_module.summarize(units)
         self._last_summary = s
         rate = (s['flagged'] / s['total'] * 100) if s['total'] else 0.0
+        parts = ['%s %d' % (label, s['by_status'][status])
+                 for status, label in (('forbidden', '禁用译法'), ('approved', '未用推荐译法'))
+                 if s['by_status'].get(status)]
+        detail = '（%s）' % '、'.join(parts) if parts else ''
         self.check_summary_label.setText(
-            '共 %d 条，%d 条命中禁用译法（%.1f%%）' % (s['total'], s['flagged'], rate))
+            '共 %d 条，%d 条有术语问题（%.1f%%%s）' % (s['total'], s['flagged'], rate, detail))
         self.check_export_btn.setEnabled(bool(units))
         self.check_export_report_btn.setEnabled(bool(units))
         self._refresh_check_table()
