@@ -1,4 +1,4 @@
-# language-tools
+# laelaps
 
 语言服务管理（翻译/本地化）工具箱。第一个工具是**双语语料转换**：把 docx/xlsx/csv/tsv 这类双语文档转换成 Trados 等 CAT 工具能用的翻译记忆库格式（sdltm/tmx），也支持 tmx↔sdltm 互转；第二个工具是**术语管理**：维护双语术语表，对照已有翻译记忆库检查禁用译法。提供 Python 库、命令行工具、桌面 GUI 三种使用方式，往后会陆续加入更多语言服务管理相关的工具（批量处理等，见 [DESIGN.md](./DESIGN.md) 第 14/15 节的定位说明和 backlog）。
 
@@ -18,8 +18,8 @@
 ## 安装
 
 ```bash
-git clone https://github.com/aREversez/language-tools.git
-cd language-tools
+git clone https://github.com/aREversez/laelaps.git
+cd laelaps
 pip install -e .              # 库 + biconvert 命令行
 pip install -e ".[gui]"       # 再加上桌面GUI
 ```

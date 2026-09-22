@@ -1,5 +1,11 @@
 # bi-corpus-tools 开发方案（v1，供 opencode 实现）
 
+> `bi-corpus-tools` 是这份文档最初的项目代号，下文出现的 `corpustools/`
+> 包名、目录结构等也是当时的设计方案，与最终实现不完全一致——核心库最终
+> 落地为 `language_tools` 包，仓库先叫 `language-tools`，现已改名为
+> `laelaps`（GitHub: `aREversez/laelaps`），详见第 12 节。这里保留原文不
+> 改，作为设计思路的历史记录；想看当前实际的目录结构/包名，直接看仓库本身。
+
 ## 0. 目标
 
 把 `docx_to_sdltm.py`（单一脚本，docx编号版式→sdltm）演化为一个可复用的 Python 库：
@@ -236,7 +242,7 @@ convert("input.docx", "output.tmx", src_lang="en-US", tgt_lang="zh-CN")
 ## 12. 交付与协作方式
 
 - 走既定流程：opencode 在新仓库的 `dev` 分支实现，GitHub 作为同步媒介，Claude 后续负责审查 + 出 patch。
-- 仓库：`aREversez/language-tools`。GUI 工具箱和核心库同仓库，不拆独立仓库（见第13节）。
+- 仓库：`aREversez/laelaps`（原名 `language-tools`，仓库已重命名，Python 包导入名 `language_tools` 不受影响）。GUI 工具箱和核心库同仓库，不拆独立仓库（见第13节）。
 - 每个 Phase 建议拆成独立 PR/commit 序列，不要把 Phase 1 重构和 Phase 2 新功能混在一次提交里（符合"一次提交一个语义改动"的既有约定）。
 - Phase 0 的基线必须先跑通、Phase 1 对照基线验证语义不变之后，再开始 Phase 2，避免在不稳定的地基上加新 reader。
 
