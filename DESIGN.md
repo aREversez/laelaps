@@ -428,8 +428,14 @@ class TermEntry:
 
 **第一优先**：
 
-- **字数统计 + 加权工作量估算（报价器）**：`align_report` 读双语文件、`leverage.py` 算匹配率、`reports/adapters.py` 已有汇总→CSV/HTML 的适配器模式，三者组合即可产出"源文件 + TM → 每文件 100%/fuzzy/新词字数 → 加权总字数 → 报价单"。PM 每接一单都要做一次，是三条标准里吃得最满的一个。**风险**：fuzzy 折扣分档（100%/95-99%/85-94%/新词等）是行业惯例但没有统一标准，各家 CAT 工具的默认档位不完全一致；不能把 `leverage.py` 现有的匹配率原样接上就算完工，落地前需要先对照实际报价单核实档位定义——这类输出一旦被 PM 拿去对外报价，精度要求比内部 QA 工具高一个量级，算错档位比 QA 漏检的后果更直接。
-- **术语提取（term extraction）**：单语 n-gram/TF-IDF 候选 + 现有句对齐结果做双语对齐对，输出候选表供人工审核，走已有的 `glossary.write()` 入库、`term-check` 消费，形成闭环，补上"术语管理目前只能人工建库"的冷启动缺口。**风险**：简单统计方法精度通常不高，尤其中日韩语言的分词本身是已知难点（参考 `align/splitters.py` 里 `is_cjk_lang` 已经区别对待的原因），候选表噪音可能大到人工审核成本不比纯人工建库低多少。不要默认它是"低成本"——正式立项前应先用手头语料跑一版候选表评估精度，噪音率不可接受就要么换方法要么砍范围。
+- **字数统计 + 加权工作量估算（报价器）** ✅（2026-09）：`language_tools/tm/quote.py` + `tmtool quote`，实现方式与预判一致，落地时把"风险"里提到的顾虑直接做成了产品约束而不是留言提醒——`DEFAULT_WEIGHTS` 在模块 docstring 和 `--weights` 帮助文本里都明确标注"仅为示例惯例，非行业标准，落地前须核对真实费率表"，`--weights` 接受 JSON 费率表覆盖默认值，未知档位/超范围权重直接报错而不是静默算错价。批次输入按扩展名分发（双语源文件走 `align_report.run()`，已转换的 `.tmx`/`.sdltm` 走 `tm_io.read_corpus()`），一批可以混着来，对应 PM"部分文件已转语料、部分还是原始双语稿"的真实场景。测试见 `tests/test_tm_quote.py`、`tests/test_tm_cli.py`。
+- **术语提取（term extraction）** ✅（2026-09，范围收窄，见下方"实际做出来的边界"）：`language_tools/terms/extract.py` + `tmtool term-extract`/`term-extract-promote`。落地过程证实了"风险"栏的判断——统计方法精度确实有限，所以最终形态从"单语 n-gram/TF-IDF → 直接入库"收窄成两段式：`term-extract` 只产出候选审核表（`decision` 列默认全空），`term-extract-promote` 只提升审核表里显式标了 `decision=approve` 的行，两者中间隔着一次人工决定——没有任何路径能让候选词绕过这道人工闸门直接写进 `glossary.write()`。**实现方式和已知边界**（模块 docstring 里的完整版本，供实现细节参考）：
+  - 单语候选：非 CJK 语言按空白分词做 n-gram + 词频，CJK 语言按字符滑窗 n-gram + 一个简化的"内部结合度"过滤（不是严格意义上的互信息 PMI，docstring 里特意没有用 PMI 这个名字，因为没有做语料级概率归一化）；两种语言都不做词形归一化/大小写折叠。
+  - 双语配对（`suggest_bilingual_candidates()`）是共现启发式，不是真正的术语对齐——只看"这个译文候选是否格外集中出现在含有该原文候选的句对里"，没有语序/语法信息，小语料（含某候选的句对不到几十条）通常给不出配对，这是预期结果，不是 bug。
+  - 没有 CJK 分词器/词典/词性标注，未实现完整版新词发现算法（左右邻字熵）；输出噪音水平取决于语料和参数，不承诺精度。
+  - `_drop_nested()` 的嵌套过滤是 O(n²)，`suggest_bilingual_candidates()` 按每个候选重新扫一遍语料，大语料 + 高 `--top-n` 有明显变慢的可能，未做性能优化。
+
+  测试见 `tests/test_terms_extract.py`、`tests/test_tm_cli.py`。
 - **TBX / MultiTerm XML 互通**：15.1 已两次点名"仍未开始，继续后置"，用户群已用 Trados（sdltm 兼容性佐证），是术语交换的行业标准格式，值得从纯 backlog 提级为待评估。**风险**：不要类比 `tmx_reader` 的工程量——TBX（ISO 30042）本身有多种方言，且常与 MultiTerm 的私有字段扩展混用，实际解析复杂度可能高于 TMX；评估时按新格式独立立项（数据模型/格式选型/Phase 划分），不要预设"和 tmx_reader 同套路"。
 - **Fuzzy 近重复检测**：`clean` 现在只去完全重复，TM 里更常见的是"改了一个数字/半句话"的近似冗余条目。编辑距离或 minhash 分簇 + 【TM 编辑】页逐簇裁决保留哪条，是清理类工具里唯一还没做的一环。
 

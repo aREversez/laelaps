@@ -445,6 +445,96 @@ def test_quote_report_writes_html(tmp_path):
     assert '<title>Quote Estimate</title>' in content
 
 
+def test_term_extract_writes_candidate_csv_with_pairing(tmp_path):
+    src = tmp_path / 'a.csv'
+    _write_bilingual_csv(src, [
+        ('Click OK to continue with the installation.', '点击确定以继续安装过程。'),
+        ('Click OK to proceed.', '点击确定以继续。'),
+        ('The installation wizard will now close.', '安装向导现在将会关闭。'),
+        ('Click OK to confirm the installation.', '点击确定以确认安装。'),
+        ('Please wait while the installation completes.', '请稍候，安装正在完成。'),
+    ])
+    out = tmp_path / 'candidates.csv'
+    result = _run(['term-extract', str(src), '--src', 'en-US', '--tgt', 'zh-CN', '--no-header',
+                   '--min-freq', '2', '--out', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    assert 'statistical suggestions only' in result.stdout
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'decision' in content
+    assert 'Click OK' in content
+
+
+def test_term_extract_accepts_a_mixed_batch(tmp_path):
+    a = tmp_path / 'a.csv'
+    _write_bilingual_csv(a, [('Click OK to continue.', '点击确定以继续。')])
+    b = tmp_path / 'b.tmx'
+    _write_tmx(b, [_u('Click OK to proceed.', '点击确定以继续操作。')])
+    out = tmp_path / 'candidates.csv'
+    result = _run(['term-extract', str(a), str(b), '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--no-header', '--min-freq', '1', '--out', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert out.exists()
+
+
+def test_term_extract_requires_src_and_tgt(tmp_path):
+    src = tmp_path / 'a.csv'
+    _write_bilingual_csv(src, [('Hello there.', '你好。')])
+    out = tmp_path / 'candidates.csv'
+    result = _run(['term-extract', str(src), '--out', str(out)])
+    assert result.returncode != 0
+    assert 'required' in result.stderr.lower()
+
+
+def test_term_extract_promote_writes_only_approved_rows(tmp_path):
+    candidates = tmp_path / 'candidates.csv'
+    candidates.write_text(
+        'src_term,tgt_term,decision,status,domain,note,src_freq,pair_freq,concentration\n'
+        'Click OK,点击确定,approve,,,,,3,1.67\n'
+        'installation,,,,,,,4,0\n',
+        encoding='utf-8-sig')
+    glossary_out = tmp_path / 'glossary.csv'
+    result = _run(['term-extract-promote', str(candidates), '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--glossary', str(glossary_out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Promoted=1 Total=1' in result.stdout
+    content = glossary_out.read_text(encoding='utf-8-sig')
+    assert 'Click OK' in content
+    assert '点击确定' in content
+    assert 'installation' not in content
+
+
+def test_term_extract_promote_append_merges_into_existing_glossary(tmp_path):
+    glossary_out = tmp_path / 'glossary.csv'
+    glossary_out.write_text(
+        'src_term,tgt_term,status,domain,note\nExisting,已存在,approved,,\n',
+        encoding='utf-8-sig')
+    candidates = tmp_path / 'candidates.csv'
+    candidates.write_text(
+        'src_term,tgt_term,decision,status,domain,note,src_freq,pair_freq,concentration\n'
+        'Click OK,点击确定,approve,,,,,3,1.67\n',
+        encoding='utf-8-sig')
+    result = _run(['term-extract-promote', str(candidates), '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--glossary', str(glossary_out), '--append'])
+    assert result.returncode == 0, result.stderr
+    assert 'Promoted=1 Total=2' in result.stdout
+    content = glossary_out.read_text(encoding='utf-8-sig')
+    assert 'Existing' in content
+    assert 'Click OK' in content
+
+
+def test_term_extract_promote_rejects_approved_row_with_blank_tgt(tmp_path):
+    candidates = tmp_path / 'candidates.csv'
+    candidates.write_text(
+        'src_term,tgt_term,decision,status,domain,note,src_freq,pair_freq,concentration\n'
+        'foo,,approve,,,,,0,0\n',
+        encoding='utf-8-sig')
+    result = _run(['term-extract-promote', str(candidates), '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--glossary', str(tmp_path / 'glossary.csv')])
+    assert result.returncode != 0
+    assert 'no tgt_term' in result.stderr
+
+
 def test_compare_reports_unique_shared_and_conflicts(tmp_path):
     a = tmp_path / 'a.tmx'
     b = tmp_path / 'b.tmx'

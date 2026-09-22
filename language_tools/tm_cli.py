@@ -41,6 +41,7 @@ from language_tools.cli import _build_reader_opts
 from language_tools.reports import adapters as report_adapters
 from language_tools.reports import render as report_render
 from language_tools.terms import check as term_check_module
+from language_tools.terms import extract as extract_module
 from language_tools.terms import glossary as glossary_module
 from language_tools.tm import clean as clean_module
 from language_tools.tm import compare as compare_module
@@ -205,29 +206,40 @@ def _cmd_term_check(args):
     return 0
 
 
-def _cmd_quote(args):
-    tm_units = tm_io.read_corpus(args.tm)
-    weights = quote_module.load_weights(args.weights) if args.weights else None
-
+def _read_batch_units(paths, src_lang, tgt_lang, args):
+    """Reads a batch of mixed bilingual-source/corpus files into a
+    ``{label: [TranslationUnit, ...]}`` dict, dispatching by extension the
+    same way ``align`` does -- shared by ``quote`` and ``term-extract`` so
+    the two commands can't quietly drift on what "a batch of files"
+    accepts.
+    """
     file_units = {}
-    for path in args.inputs:
+    for path in paths:
         ext = os.path.splitext(path)[1].lower()
         label = os.path.basename(path)
         if ext in _BILINGUAL_EXTS:
-            if not args.src or not args.tgt:
+            if not src_lang or not tgt_lang:
                 raise ValueError(
-                    '--src/--tgt are required to quote bilingual source file %r; a .tmx/'
+                    '--src/--tgt are required to read bilingual source file %r; a .tmx/'
                     '.sdltm corpus input carries its own language codes, but this one '
                     'does not' % path)
             reader_opts = _build_reader_opts(args, ext)
             file_units[label] = align_report.run(
-                path, args.src, args.tgt, repair_path=args.repair, reader_opts=reader_opts)
+                path, src_lang, tgt_lang, repair_path=args.repair, reader_opts=reader_opts)
         elif ext in tm_io.SUPPORTED_EXTS:
             file_units[label] = tm_io.read_corpus(path)
         else:
             raise ValueError(
                 'unsupported input format %r for %r (expected one of %s bilingual or %s '
                 'corpus)' % (ext, path, sorted(_BILINGUAL_EXTS), list(tm_io.SUPPORTED_EXTS)))
+    return file_units
+
+
+def _cmd_quote(args):
+    tm_units = tm_io.read_corpus(args.tm)
+    weights = quote_module.load_weights(args.weights) if args.weights else None
+
+    file_units = _read_batch_units(args.inputs, args.src, args.tgt, args)
 
     result = quote_module.quote_batch(
         file_units, tm_units, fuzzy_floor=args.fuzzy_floor, weights=weights)
@@ -245,6 +257,33 @@ def _cmd_quote(args):
         rc = _write_report(args.report, report_adapters.from_quote_result(result))
         if rc:
             return rc
+    return 0
+
+
+def _cmd_term_extract(args):
+    file_units = _read_batch_units(args.inputs, args.src, args.tgt, args)
+    units = [u for us in file_units.values() for u in us]
+    candidates = extract_module.suggest_bilingual_candidates(
+        units, args.src, args.tgt, min_freq=args.min_freq, max_ngram=args.max_ngram,
+        top_n=args.top_n, min_pair_freq=args.min_pair_freq)
+    paired = sum(1 for c in candidates if c['tgt_term'])
+    print('Candidates=%d Paired=%d (%.1f%%) -- statistical suggestions only, every row still '
+          'needs human review (see language_tools.terms.extract module docstring)' % (
+              len(candidates), paired,
+              (paired / len(candidates) * 100) if candidates else 0.0))
+    extract_module.write_candidates_csv(args.out, candidates)
+    print('Wrote %s' % args.out)
+    return 0
+
+
+def _cmd_term_extract_promote(args):
+    promoted = extract_module.promote_reviewed_candidates(args.candidates, args.src, args.tgt)
+    entries = promoted
+    if args.append:
+        entries = glossary_module.read(args.glossary, args.src, args.tgt) + promoted
+    glossary_module.write(args.glossary, entries)
+    print('Promoted=%d Total=%d' % (len(promoted), len(entries)))
+    print('Wrote %s' % args.glossary)
     return 0
 
 
@@ -422,6 +461,70 @@ def build_parser():
                           help='write a summary report (per-file weighted-word table) to PATH '
                                'as HTML or PDF, by extension')
     quote_p.set_defaults(func=_cmd_quote)
+
+    term_extract_p = sub.add_parser(
+        'term-extract',
+        help='suggest term candidates (src frequency + a best-effort tgt pairing) from a batch '
+             'of files, for human review -- statistical only, no dictionary/segmenter/alignment '
+             'model; read language_tools.terms.extract\'s module docstring for what this can '
+             'and cannot do before trusting any of its output')
+    term_extract_p.add_argument('inputs', nargs='+',
+                                 help='one or more files to mine for term candidates: bilingual '
+                                      'sources (docx/xlsx/csv/tsv) or already-converted .tmx/'
+                                      '.sdltm corpora, mixed batches allowed')
+    term_extract_p.add_argument('--src', required=True, help='source language code, e.g. en-US')
+    term_extract_p.add_argument('--tgt', required=True, help='target language code, e.g. zh-CN')
+    term_extract_p.add_argument('--layout', choices=['auto', 'numbered', 'table', 'alternating'],
+                                 default='auto', help='docx layout for bilingual .docx inputs; '
+                                                       'ignored for other formats')
+    term_extract_p.add_argument('--sheet', help='xlsx sheet name (default: first sheet)')
+    term_extract_p.add_argument('--src-col', help='source column: Excel letter (xlsx) or '
+                                                   '0-based index (docx table/csv)')
+    term_extract_p.add_argument('--tgt-col', help='target column: Excel letter (xlsx) or '
+                                                   '0-based index (docx table/csv)')
+    term_extract_p.add_argument('--delimiter', help='csv/tsv delimiter override (default: '
+                                                      'auto-sniffed)')
+    term_extract_header = term_extract_p.add_mutually_exclusive_group()
+    term_extract_header.add_argument('--header', dest='header', action='store_true',
+                                      default=None,
+                                      help='treat the first row as a header (xlsx/csv/docx table)')
+    term_extract_header.add_argument('--no-header', dest='header', action='store_false',
+                                      help='treat the first row as data, not a header')
+    term_extract_p.add_argument('--repair', metavar='PATH',
+                                 help='path to a repairs.json rule file (bilingual inputs only)')
+    term_extract_p.add_argument('--min-freq', type=int, default=2,
+                                 help='minimum occurrences for a candidate to be considered '
+                                      '(default: 2)')
+    term_extract_p.add_argument('--max-ngram', type=int, default=4,
+                                 help='longest candidate length in tokens (non-CJK) or '
+                                      'characters (CJK) (default: 4)')
+    term_extract_p.add_argument('--top-n', type=int, default=100,
+                                 help='how many top-scoring src candidates to keep and attempt '
+                                      'to pair with a tgt suggestion (default: 100)')
+    term_extract_p.add_argument('--min-pair-freq', type=int, default=2,
+                                 help='minimum co-occurrences before a tgt pairing is even '
+                                      'considered (default: 2)')
+    term_extract_p.add_argument('--out', required=True, metavar='PATH',
+                                 help='write the candidate review sheet (src_term/tgt_term/'
+                                      'decision/status/domain/note plus reference frequency '
+                                      'columns) to PATH as CSV')
+    term_extract_p.set_defaults(func=_cmd_term_extract)
+
+    term_promote_p = sub.add_parser(
+        'term-extract-promote',
+        help='promote reviewed rows (decision=approve) from a `term-extract` review sheet into '
+             'a real glossary file -- the one deliberate gate between a statistical suggestion '
+             'and an actual glossary entry')
+    term_promote_p.add_argument('candidates', help='the reviewed CSV written by `term-extract` '
+                                                     '(edited by a human, decision column filled in)')
+    term_promote_p.add_argument('--src', required=True, help='source language code, e.g. en-US')
+    term_promote_p.add_argument('--tgt', required=True, help='target language code, e.g. zh-CN')
+    term_promote_p.add_argument('--glossary', required=True, metavar='PATH',
+                                 help='glossary file (.csv/.xlsx) to write the promoted entries to')
+    term_promote_p.add_argument('--append', action='store_true',
+                                 help='merge into an existing glossary at PATH instead of '
+                                      'overwriting it (PATH must already exist)')
+    term_promote_p.set_defaults(func=_cmd_term_extract_promote)
 
     align_p = sub.add_parser(
         'align', help='check sentence-alignment quality for a bilingual source file '
