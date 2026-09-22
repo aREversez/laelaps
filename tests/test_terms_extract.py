@@ -117,6 +117,47 @@ def test_suggest_bilingual_candidates_leaves_ambiguous_term_unpaired():
     assert by_src['installation']['concentration'] == 0.0
 
 
+def test_suggest_bilingual_candidates_breaks_concentration_tie_by_pair_freq():
+    # "gamma delta epsilon zeta" (local 3/4, global 3/12) and "theta iota"
+    # (local 4/4, global 4/12) have exactly equal concentration (3.0), but
+    # "theta iota" co-occurs more often (pair_freq 4 vs 3) -- the docstring
+    # promises ties are broken by co-occurrence count, so it must win even
+    # though the ranking score puts the 4-token candidate first.
+    units = [
+        _u('alpha beta one two', 'gamma delta epsilon zeta theta iota',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('alpha beta three four', 'xray gamma delta epsilon zeta theta iota yankee',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('alpha beta five six', 'gamma delta epsilon zeta theta iota',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('alpha beta seven eight', 'theta iota',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('kilo lima mike', 'november oscar papa',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('quebec romeo sierra', 'tango uniform victor',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('golf hotel india', 'juliet whiskey xray',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('papa quebec romeo', 'sierra tango uniform',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('hotel india juliet', 'kilo lima mike',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('oscar papa quebec', 'romeo sierra tango',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('uniform victor whiskey', 'xray yankee zulu',
+           src_lang='en-US', tgt_lang='en-US'),
+        _u('bravo charlie echo', 'foxtrot golf hotel',
+           src_lang='en-US', tgt_lang='en-US'),
+    ]
+    results = extract_module.suggest_bilingual_candidates(
+        units, 'en-US', 'en-US', min_freq=2, max_ngram=4, min_pair_freq=2,
+        concentration_floor=2.5)
+    by_src = {r['src_term']: r for r in results}
+    assert by_src['alpha beta']['tgt_term'] == 'theta iota'
+    assert by_src['alpha beta']['pair_freq'] == 4
+    assert by_src['alpha beta']['concentration'] == 3.0
+
+
 def test_suggest_bilingual_candidates_small_corpus_returns_no_pairings():
     units = [_u('Click OK to continue.', '点击确定以继续。')]
     results = extract_module.suggest_bilingual_candidates(

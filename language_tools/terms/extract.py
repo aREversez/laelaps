@@ -266,7 +266,8 @@ def suggest_bilingual_candidates(units, src_lang, tgt_lang, *, min_freq=2, max_n
                 local_rate = pair_freq / n_local
                 global_rate = global_freq / n_total
                 concentration = local_rate / max(global_rate, 1e-6)
-                if best is None or concentration > best[1]:
+                if (best is None or concentration > best[1] or
+                        (concentration == best[1] and pair_freq > best[2])):
                     best = (tc, concentration, pair_freq)
             if best is not None and best[1] >= concentration_floor:
                 tc, concentration, pair_freq = best
