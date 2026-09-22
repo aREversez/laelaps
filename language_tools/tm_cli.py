@@ -48,6 +48,7 @@ from language_tools.tm import compare as compare_module
 from language_tools.tm import io as tm_io
 from language_tools.tm import leverage as leverage_module
 from language_tools.tm import merge as merge_module
+from language_tools.tm import near_dup as near_dup_module
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.tm import quote as quote_module
 from language_tools.tm import stats as stats_module
@@ -95,6 +96,23 @@ def _cmd_clean(args):
         report['input'], report['output'], report['removed_duplicate'],
         report['removed_empty'], report['removed_identical'], report['normalized']))
     print('Wrote %s' % output)
+    return 0
+
+
+def _cmd_near_dup(args):
+    units = tm_io.read_corpus(args.input)
+    clusters = near_dup_module.find_clusters(
+        units, threshold=args.threshold, side=args.side, min_cluster_size=args.min_cluster_size)
+    s = near_dup_module.summarize(clusters)
+    print('Clusters=%d UnitsInClusters=%d (of %d total)' % (
+        s['cluster_count'], s['total_units'], len(units)))
+    if args.export:
+        near_dup_module.write_clusters_csv(args.export, clusters)
+        print('Wrote %s' % args.export)
+    if args.report:
+        rc = _write_report(args.report, report_adapters.from_near_dup_summary(s))
+        if rc:
+            return rc
     return 0
 
 
@@ -337,6 +355,28 @@ def build_parser():
     clean_p.add_argument('--remove-identical', action='store_true',
                           help='also remove segments where source == target')
     clean_p.set_defaults(func=_cmd_clean)
+
+    near_dup_p = sub.add_parser(
+        'near-dup', help='cluster near-duplicate (not byte-identical) TM entries for review -- '
+                          'catches "changed one word/number" duplicates `clean`\'s exact dedup '
+                          "can't see; see language_tools.tm.near_dup module docstring for the "
+                          'clustering method and its limits')
+    near_dup_p.add_argument('input', help='input .tmx or .sdltm file')
+    near_dup_p.add_argument('--threshold', type=float, default=0.85,
+                             help='minimum edit-distance similarity ratio (0-1] to group two '
+                                  'entries together (default: 0.85)')
+    near_dup_p.add_argument('--side', choices=['src', 'tgt'], default='src',
+                             help='which side\'s text to cluster on (default: src)')
+    near_dup_p.add_argument('--min-cluster-size', type=int, default=2,
+                             help='minimum entries in a group to report it as a cluster '
+                                  '(default: 2)')
+    near_dup_p.add_argument('--export', metavar='PATH',
+                             help='write a per-cluster CSV (cluster_id/cluster_size/src_text/'
+                                  'tgt_text/source_file, one row per unit) to PATH')
+    near_dup_p.add_argument('--report', metavar='PATH',
+                             help='write a summary report (cluster/unit counts) to PATH as '
+                                  'HTML or PDF, by extension')
+    near_dup_p.set_defaults(func=_cmd_near_dup)
 
     merge_p = sub.add_parser('merge', help='merge multiple corpus files into one')
     merge_p.add_argument('inputs', nargs='+', help='one or more .tmx/.sdltm files to merge')

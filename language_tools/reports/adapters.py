@@ -29,6 +29,17 @@ def from_leverage_summary(summary):
     return Report(title='Leverage Analysis', summary_lines=lines, table=table)
 
 
+def from_near_dup_summary(summary):
+    """Adapts ``tm.near_dup.summarize()``'s ``{'cluster_count',
+    'total_units'}``. No detail table -- the per-cluster content belongs
+    in the CSV export (``near_dup.write_clusters_csv()``), which a
+    reviewer needs to actually act on, not a summary report.
+    """
+    lines = ['Clusters found: %d' % summary['cluster_count'],
+              'Units in a cluster: %d' % summary['total_units']]
+    return Report(title='Near-Duplicate Clusters', summary_lines=lines, table=None)
+
+
 def from_quote_result(result):
     """Adapts ``tm.quote.quote_batch()``'s ``{'files', 'total'}``. Unlike
     the other adapters here, the detail table is per *file* (Words /

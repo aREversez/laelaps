@@ -48,6 +48,68 @@ def test_clean_defaults_to_overwriting_input(tmp_path):
     assert len(units) == 1
 
 
+def test_near_dup_clusters_similar_entries(tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u('Click OK to continue.', '点击确定以继续。'),
+        _u('Click OK to continue!', '点击确定以继续了！'),
+        _u('Totally unrelated content about the weather outside today.', '完全无关的内容。'),
+    ])
+    result = _run(['near-dup', str(src), '--threshold', '0.8'])
+    assert result.returncode == 0, result.stderr
+    assert 'Clusters=1 UnitsInClusters=2 (of 3 total)' in result.stdout
+
+
+def test_near_dup_no_clusters_below_threshold(tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u('Click OK to continue.', '点击确定以继续。'),
+        _u('Totally unrelated content about the weather outside today.', '完全无关的内容。'),
+    ])
+    result = _run(['near-dup', str(src)])
+    assert result.returncode == 0, result.stderr
+    assert 'Clusters=0 UnitsInClusters=0' in result.stdout
+
+
+def test_near_dup_export_writes_per_cluster_csv(tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u('Click OK to continue.', '点击确定以继续。'),
+        _u('Click OK to continue!', '点击确定以继续了！'),
+    ])
+    out = tmp_path / 'clusters.csv'
+    result = _run(['near-dup', str(src), '--threshold', '0.8', '--export', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'cluster_id' in content
+    assert 'Click OK to continue.' in content
+
+
+def test_near_dup_report_writes_html(tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u('Click OK to continue.', '点击确定以继续。'),
+        _u('Click OK to continue!', '点击确定以继续了！'),
+    ])
+    out = tmp_path / 'report.html'
+    result = _run(['near-dup', str(src), '--threshold', '0.8', '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Near-Duplicate Clusters</title>' in content
+
+
+def test_near_dup_side_flag_selects_tgt_text(tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u('An orange cat sleeps on the windowsill.', '点击确定以继续。'),
+        _u('The stock market fell sharply this afternoon.', '点击确定以继续了！'),
+    ])
+    result = _run(['near-dup', str(src), '--threshold', '0.8', '--side', 'tgt'])
+    assert result.returncode == 0, result.stderr
+    assert 'Clusters=1' in result.stdout
+
+
 def test_merge_two_files_keep_all(tmp_path):
     a = tmp_path / 'a.tmx'
     b = tmp_path / 'b.tmx'

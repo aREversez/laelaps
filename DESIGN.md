@@ -437,7 +437,7 @@ class TermEntry:
 
   测试见 `tests/test_terms_extract.py`、`tests/test_tm_cli.py`。
 - **TBX / MultiTerm XML 互通**：15.1 已两次点名"仍未开始，继续后置"，用户群已用 Trados（sdltm 兼容性佐证），是术语交换的行业标准格式，值得从纯 backlog 提级为待评估。**风险**：不要类比 `tmx_reader` 的工程量——TBX（ISO 30042）本身有多种方言，且常与 MultiTerm 的私有字段扩展混用，实际解析复杂度可能高于 TMX；评估时按新格式独立立项（数据模型/格式选型/Phase 划分），不要预设"和 tmx_reader 同套路"。
-- **Fuzzy 近重复检测**：`clean` 现在只去完全重复，TM 里更常见的是"改了一个数字/半句话"的近似冗余条目。编辑距离或 minhash 分簇 + 【TM 编辑】页逐簇裁决保留哪条，是清理类工具里唯一还没做的一环。
+- **Fuzzy 近重复检测** ✅（2026-09）：`language_tools/tm/near_dup.py` + `tmtool near-dup`。落地时把"编辑距离或 minhash"里选了前者——`difflib` 编辑距离比值（复用 `tm.leverage` 同一套指标和归一化，保持"相似度"在全代码库里是同一个口径），配一个基于长度的剪枝：由 `ratio = 2M/(len_a+len_b)` 且 `M<=min(len_a,len_b)` 这个定义本身可以推出一个精确的长度比上界，凡是长度差超出这个上界的候选对，数学上不可能达到阈值，剪掉它们不会漏掉任何真正满足阈值的候选对——不是 minhash/LSH 那种近似分桶，牺牲的是 minhash 在超大语料上的渐近性能优势，换来剪枝这一步本身零误差；真到生产级超大 TM 顶不住了，minhash/LSH 是文档里写明的升级路径，不需要推倒重来。**一个诚实的附注**：`difflib.SequenceMatcher` 本身在等长最长公共子串出现平局时，比值会随传参顺序有极小概率不对称（Python 标准库这个工具本来就有的性质，`tm.leverage` 用同一个指标时也没处理这个），`near_dup.py` 固定"短文本在前"的比较顺序，没有为了消除这个边界情形去比较两种顺序取较大值——影响面窄到只有卡在阈值边缘的极少数候选对，不值得为此翻倍比较开销。聚类按连通分量合并（A~B、B~C 但 A~C 不一定成立时，三者仍会被分进同一簇），docstring 里说明了这是标准做法而非 bug。测试见 `tests/test_tm_near_dup.py`（含一次基于随机语料、与暴力枚举比对的剪枝精确性回归测试）、`tests/test_tm_cli.py`。GUI 侧"配合【TM 编辑】页逐簇裁决"仍待办，这轮只做到 CLI/模块层。
 
 **第二优先（低成本增强，复用 `reports/render.py` 或现有 `stats`/QA 基础设施）**：
 
