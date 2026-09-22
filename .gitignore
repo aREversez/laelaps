@@ -6,6 +6,10 @@ build/
 dist/
 .venv/
 *.sdltm
+# Screenshots stay on the test machine — public repo, they evidence a
+# licensed-app install; commit text transcriptions instead
+# (see compatibility/fixtures/README.md)
+compatibility/fixtures/*.png
 *.tmx
 *.csv
 !tests/fixtures/expected/*.csv

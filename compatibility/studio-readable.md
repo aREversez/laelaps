@@ -29,7 +29,10 @@ The four steps each fixture must pass:
 | Edit   | Right-click a TU → Edit → change one char → Save         | Save error; loss of other TUs; Studio crash on save    |
 
 If a step fails, **don't hide it** — record the Studio error dialog verbatim,
-attach a screenshot to `compatibility/fixtures/<fixture>.png`, and open an
+transcribe the supporting screenshot into a text evidence file under
+`compatibility/fixtures/` (raw screenshots are **not committed** — this repo
+is public and full-window shots are direct evidence of a licensed-app
+install on a personal machine; see `fixtures/README.md`), and open an
 issue referencing the commit that broke it. A "failed before, OK after"
 entry is more valuable than a clean "OK" entry because it documents what
 the writer was getting wrong and how it was fixed.
@@ -50,11 +53,11 @@ Pick fixtures that exercise distinct code paths in `sdltm_writer`:
 
 | Fixture             | Last verified | Studio version | biconvert commit | Status    |
 |---------------------|---------------|----------------|-------------------|-----------|
-| `basic.sdltm`        | _(not yet)_   | —              | —                 | UNKNOWN   |
-| `special_chars.sdltm` | _(not yet)_   | —              | —                 | UNKNOWN   |
-| `numbering_mismatch.sdltm` | _(not yet)_ | —          | —                 | UNKNOWN   |
-| `large.sdltm`        | _(not yet)_   | —              | —                 | UNKNOWN   |
-| `reversed.sdltm`    | _(not yet)_   | —              | —                 | UNKNOWN   |
+| `basic.sdltm`        | 2026-09-22    | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
+| `special_chars.sdltm` | 2026-09-22   | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
+| `numbering_mismatch.sdltm` | 2026-09-22 | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
+| `large.sdltm`        | 2026-09-22    | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
+| `reversed.sdltm`    | 2026-09-22    | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
 
 Replace `UNKNOWN` with `PASS` / `FAIL` / `PASS-WITH-CAVEATS` as entries are
 added below. A `FAIL` row should link to an issue and to a verification
@@ -63,6 +66,10 @@ entry with the failure details.
 ---
 
 ## Known issue: "upgrade available" loop with no error and no progress
+
+> **Status update 2026-09-22: hypothesis DISPROVED, real cause identified.**
+> Kept below for the record; see the corrected analysis further down in this
+> section.
 
 Symptom reported 2026-09-08: Studio's Translation Results window shows the
 standard "An upgrade is available for your translation memory..." prompt for
@@ -90,9 +97,61 @@ empirical investigation (check Studio's log file under
 `%APPDATA%\SDL\SDL Trados Studio\...\logs`, check file isn't on a
 cloud-synced/read-only path, check TM isn't open in another process).
 
+### Retest result 2026-09-22 (Trados Studio 2024, build 18.0.2.3255): hypothesis wrong
+
+Tested with `large.sdltm` (1000 TUs, local non-synced `%TEMP%` path).
+The upgrade prompt **still loops at 1000+ TUs**, and this time Studio did
+surface a real error, in the upgrade log
+(`fixtures/TranslationMemoryUpgrade-20260922-210041.log`):
+
+```
+Upgrade Translation Memory
+Translation memory: ...\large.sdltm
+Process failed
+Sdl.LanguagePlatform.Core.LanguagePlatformException: The TM does not support FGA
+   at ...AbstractLocalTranslationMemory.Save(...)
+```
+
+So the "< 1,000 segments threshold" theory is **out**. Corrected
+understanding from this round:
+
+1. **The prompt is not a size issue at all.** `sdltm_writer` emits
+   `parameters.VERSION = '8.06'`, which is older than what Studio 2024
+   expects, so *every* TM we write is flagged as needing the upLIFT/FGA
+   upgrade — regardless of TU count. The prompt appearing is expected
+   behavior for our Level 2 claim; the loop is what's not.
+2. **"Silent no-op" was actually a silent-in-UI failure.** The upgrade
+   wizard's progress dialog can stay "in progress" indefinitely (12+ min
+   observed, zero CPU) even though the background job already failed
+   within the same second — check the upgrade log, not the dialog. That
+   mismatch is what made the failure look like a no-where-to-be-found
+   no-op.
+3. **Un-upgraded TUs can't be edited back.** Open/Browse/Search all pass
+   on un-upgraded files, but Edit→Commit fails with
+   `no such table: translation_unit_fragments` — the writer's DDL has no
+   FGA fragment table, which is exactly what Studio writes edited TUs to.
+   After a successful upgrade (done on `basic.sdltm` as a control), the
+   fragments table is built and Edit→Commit passes.
+4. **Open puzzle for the next round: upgrade succeeds on `basic` but
+   fails on `large`.** Control experiment: `basic.sdltm` (4 unique TUs)
+   upgraded cleanly end-to-end
+   (`fixtures/TranslationMemoryUpgrade-20260922-215932.log`), while
+   `large.sdltm` died with "does not support FGA". Both came from the
+   same writer. Leading new suspect: `large`'s 250× exact-duplicate
+   segments (it also throws `TMTUDuplicate` on commit), but this is not
+   yet confirmed — candidates to rule it in/out: dedupe `large` and
+   retest, and test `special_chars` (2 unique TUs, hand-built like
+   `large`) *with* Upgrade clicked.
+
+Level 2 claim remains defensible with the caveat: **Studio can open,
+browse and search everything we write; edit-after-upgrade works at least
+for non-duplicate TMs; the upgrade itself fails on `large.sdltm`** —
+tracked below until root-caused.
+
 This is exactly the kind of Level-2 claim that can't be settled from the
 sandbox — it needs a real Studio install and should get its own
 `### large.sdltm` verification entry below once tested, per the template.
+→ done 2026-09-22, see Verification entries.
 
 ---
 
@@ -113,4 +172,99 @@ sandbox — it needs a real Studio install and should get its own
 
 -->
 
-_(no entries yet — see the instructions above to add the first one)_
+Round 2026-09-22 — first verification round on a real install (Trados
+Studio 2024, build 18.0.2.3255). All five fixtures generated per
+`compatibility/fixtures/README.md` at commit `a6580b3` and copied to a
+local non-synced `%TEMP%` folder before opening. Screenshot contents are
+transcribed verbatim in
+[`fixtures/evidence-2026-09-22.md`](fixtures/evidence-2026-09-22.md)
+(`evidence §n` references below); the upgrade logs are committed there
+with local paths normalized to `<TESTDIR>`.
+
+### basic.sdltm
+
+- Studio version: Trados Studio 2024 (build 18.0.2.3255)
+- biconvert commit: `a6580b3`
+- TU count exported: 4
+- Open: OK — no error dialogs
+- Browse: OK — 4 TUs listed, CJK targets clean
+- Search: OK — phrase taken from first listed TU, ≥1 hit, targets clean
+- Edit: OK **only after clicking Upgrade** — the upgrade wizard completed
+  cleanly (Backup → Upgrade → Reindex, `Process completed` in
+  `TranslationMemoryUpgrade-20260922-215932.log`), which created the
+  missing `translation_unit_fragments` table; then change-one-char +
+  commit succeeded (evidence §6)
+- Notes: control case for the upgrade-loop investigation — proves the
+  upgrade path itself *can* succeed against our writer output at small
+  TU counts. This copy of the fixture was mutated by the upgrade; the
+  un-upgraded `tests/temp/basic.sdltm` is intact.
+
+### special_chars.sdltm
+
+- Studio version: Trados Studio 2024 (build 18.0.2.3255)
+- biconvert commit: `a6580b3` (hand-built via API per fixtures README)
+- TU count exported: 2
+- Open: OK
+- Browse: OK — **`esc()` verification passed verbatim**: TU1 src shows
+  literally `The spec says R&D output &lt; 5% error, use < and >.`
+  (`&lt;` neither decoded nor double-escaped to `&amp;lt;`); TU2 tgt
+  shows `销售额增长了，例如第三季度<翻倍>并且&三倍。` with `<`, `>`, `&`
+  intact (evidence §4)
+- Search: OK — `R&D` → 1 hit, special chars render correctly in results
+- Edit: **FAIL without upgrade** — commit threw
+  `SQLiteException: no such table: translation_unit_fragments` at
+  `UpdateTuAlignmentDataAsync` (evidence §3)
+- Notes: upgrade prompt appeared but **No** was clicked deliberately, to
+  keep this as the un-upgraded esc-correctness case. Retest *with*
+  Upgrade clicked to help isolate the `large` upgrade failure.
+
+### numbering_mismatch.sdltm
+
+- Studio version: Trados Studio 2024 (build 18.0.2.3255)
+- biconvert commit: `a6580b3`
+- TU count exported: 2
+- Open: OK
+- Browse: OK — 2 TUs (`First sentence.→第一句。`, `Second sentence.→第二句。`)
+- Search: OK — `First sentence` → 1 hit
+- Edit: FAIL without upgrade — same `translation_unit_fragments`-family
+  commit failure, surfaced as "The translation memory or TM container
+  appears to be missing and may have been deleted."
+  (evidence §2)
+- Notes: actual alignment output is 2 TUs, not the "dozens" the test
+  matrix table once guessed — the fixture doc itself only yields 2
+  aligned pairs.
+
+### large.sdltm
+
+- Studio version: Trados Studio 2024 (build 18.0.2.3255)
+- biconvert commit: `a6580b3`
+- TU count exported: 1000
+- Open: OK — no "unsupported/corrupted" dialog; first-open TU grid
+  paginated 50/page × 20 pages
+- Browse: OK — Studio reports 1000 TUs; CJK targets clean
+  (evidence §5); System Fields show Created by=laelaps
+- Search: OK — `Dr. Smith arrived` → ~250 hits across pages, targets
+  clean → fuzzy index builds fine from an empty `fuzzy_data` table
+- Edit: works on-screen, but committing an edit to one of the 250×
+  duplicate segments threw `Translation Unit ID: 1, Error Code:
+  TMTUDuplicate` (evidence §1)
+- Notes: **the upgrade fails** — "An upgrade is available" → Upgrade →
+  Backup ok → Upgrade step dies in <1s with
+  `LanguagePlatformException: The TM does not support FGA`
+  (`TranslationMemoryUpgrade-20260922-210041.log`) while the wizard's
+  progress dialog hangs "in progress" 12+ min. This disproves the
+  <1,000-segment threshold hypothesis for the upgrade loop (see Known
+  issue above). Duplicate-segment content is the leading new suspect.
+
+### reversed.sdltm
+
+- Studio version: Trados Studio 2024 (build 18.0.2.3255)
+- biconvert commit: `a6580b3`
+- TU count exported: 2
+- Open: OK — **language-code wiring confirmed**: TM tab shows
+  `reversed [zh-CN->en-US]`, direction correct, no language errors
+- Browse: OK — 2 TUs, zh as source / en as target, both clean
+- Search: OK — `史密斯博士` → 1 hit, English target renders correctly
+- Edit: FAIL without upgrade — same "TM container appears to be
+  missing" commit failure (evidence §7)
+- Notes: direction wiring (the point of this fixture) fully passes.
