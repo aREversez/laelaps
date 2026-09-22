@@ -419,3 +419,30 @@ class TermEntry:
 - **Phase G1 — 一致性检查** ✅：`language_tools/terms/check.py`，`run(units, glossary)`，只做 `TERM_FORBIDDEN`（精确子串匹配；中日韩语言按字符子串匹配，拉丁字母语言按大小写不敏感的词边界匹配，复用 `align/splitters.py` 的 `is_cjk_lang`），结果写进 `TranslationUnit.meta['term_issues']`，独立于 `qa_issues`。额外加了 `summarize()`（同 `qa_report.summarize()` 的形状，去掉 `by_type`——术语命中没有固定的可枚举代码）。顺带接进了 `tmtool term-check`（`--glossary`/`--export`/`--fail-on-issues`，跟 `tmtool qa`/`tmtool align --fail-on-issues` 是同一套约定），`csv_writer.write()` 加了 `include_terms=True`。测试见 `tests/test_terms_check.py`、`tests/test_tm_cli.py`。
 - **Phase G2 — GUI 工具** ✅：`toolbox/tools/term_management/`，两个标签页。「术语库」：术语表增删改走 `_TermEntryDialog`（模态表单，不是原地单元格编辑——见该模块文档，表单还多一层"提交前校验"，原地编辑没有等价的检查点）+ 导入/导出 csv/xlsx；语言对是页面级的两个下拉框（`compact_combo()`/`labeled_field()`，`toolbox.widgets`），不是每行都填。「一致性检查」：选一个 TM + 一份术语库 → 跑 Phase G1 → 结果表格，UX 基本照抄【QA 检查】页（筛选 + 导出完整 CSV），比 QA 检查少一个"按问题类型筛选"下拉——术语命中没有固定类型可选。测试见 `tests/test_toolbox_term_management_page.py`。
 - **Phase G3（部分完成，2026-09）**：`approved` 方向的检查 ✅ —— `check.run()` 加 `check_approved` 参数（默认 `False`，理由见上方"为什么要分两档"），命中规则与 `forbidden` 对称：原文出现 `src_term` 且译文**没有**出现 `tgt_term` 即命中；另有两道防噪声闸门——译文为空的条目不命中（空译文是 `qa.py` 的 `EMPTY_TARGET` 的职责，不是"改写了"的证据；术语行 `tgt_term` 为空同样跳过），且只有 `status` 显式声明为 `approved` 的行参与（`TermEntry.status_declared`；`glossary.read()` 对留空/无法识别的 status 仍兜底为 `approved` 但标记为未声明，免得整份没填状态列的老术语表在勾选瞬间变成待核实清单）。每条命中带 `status` 键标明来源方向，`summarize()` 相应加 `by_status`（只列非零方向，同 `qa_report` 约定；对未经 `run()` 的 units 和无 `status` 键的旧命中用 `.get` 兜底，保持改动前的容错语义）。接入面：`tmtool term-check --check-approved`（打印按方向拆分）、CSV 列与 GUI 命中列前缀"未用推荐译法"、【术语管理】一致性检查标签页"同时检查推荐译法未使用"复选框（改的是检查计算本身，所以放在检查按钮旁而不是结果筛选行；状态经设置持久化）。TBX 导入导出：仍未开始，继续后置。
+
+### 15.2 语言服务工作流路线图（角色 × 缺口分析，未排期，2026-09）
+
+对现有 8 个工具按"哪个角色在哪个环节重复手动劳动"做了一次盘点：PM/销售售前的报价与译前评估、术语库的冷启动，是当前完全空白或最薄弱的两处（译员/审校的 QA 与术语查询、语言资产负责人的 TM 清洗与盘点、本地化工程师的格式互转都已有工具覆盖）。以下条目延续第 15 节"未排期、看实际需求频率决定"的原则，仅记录相对优先级和已识别的风险点，不是排期承诺。
+
+**优先级判断标准**（沿用第 15 节精神，具体化为三条）：(a) 有角色每周都在手动重复；(b) 离线可做，不违背 README 的"不联网、不上传文件"定位；(c) 能复用现有 reader/writer、`align_report`、`leverage.py`、报告 adapter、`QThread` worker、插件式工具页注册等基础设施，而不是另起一套。
+
+**第一优先**：
+
+- **字数统计 + 加权工作量估算（报价器）**：`align_report` 读双语文件、`leverage.py` 算匹配率、`reports/adapters.py` 已有汇总→CSV/HTML 的适配器模式，三者组合即可产出"源文件 + TM → 每文件 100%/fuzzy/新词字数 → 加权总字数 → 报价单"。PM 每接一单都要做一次，是三条标准里吃得最满的一个。**风险**：fuzzy 折扣分档（100%/95-99%/85-94%/新词等）是行业惯例但没有统一标准，各家 CAT 工具的默认档位不完全一致；不能把 `leverage.py` 现有的匹配率原样接上就算完工，落地前需要先对照实际报价单核实档位定义——这类输出一旦被 PM 拿去对外报价，精度要求比内部 QA 工具高一个量级，算错档位比 QA 漏检的后果更直接。
+- **术语提取（term extraction）**：单语 n-gram/TF-IDF 候选 + 现有句对齐结果做双语对齐对，输出候选表供人工审核，走已有的 `glossary.write()` 入库、`term-check` 消费，形成闭环，补上"术语管理目前只能人工建库"的冷启动缺口。**风险**：简单统计方法精度通常不高，尤其中日韩语言的分词本身是已知难点（参考 `align/splitters.py` 里 `is_cjk_lang` 已经区别对待的原因），候选表噪音可能大到人工审核成本不比纯人工建库低多少。不要默认它是"低成本"——正式立项前应先用手头语料跑一版候选表评估精度，噪音率不可接受就要么换方法要么砍范围。
+- **TBX / MultiTerm XML 互通**：15.1 已两次点名"仍未开始，继续后置"，用户群已用 Trados（sdltm 兼容性佐证），是术语交换的行业标准格式，值得从纯 backlog 提级为待评估。**风险**：不要类比 `tmx_reader` 的工程量——TBX（ISO 30042）本身有多种方言，且常与 MultiTerm 的私有字段扩展混用，实际解析复杂度可能高于 TMX；评估时按新格式独立立项（数据模型/格式选型/Phase 划分），不要预设"和 tmx_reader 同套路"。
+- **Fuzzy 近重复检测**：`clean` 现在只去完全重复，TM 里更常见的是"改了一个数字/半句话"的近似冗余条目。编辑距离或 minhash 分簇 + 【TM 编辑】页逐簇裁决保留哪条，是清理类工具里唯一还没做的一环。
+
+**第二优先（低成本增强，复用 `reports/render.py` 或现有 `stats`/QA 基础设施）**：
+
+- 双语对照审阅文档导出（QA 命中高亮的 HTML 页，供客户/审校看，`reports/render.py` 基础设施已有，只加一种报告类型）
+- 批量预检（preflight）：批量转换前体检 docx 版式置信度、合并单元格、空表格、语言方向异常
+- 语料资产盘点增强：`stats` 加按 `modified_at` 的语料新旧分布（aging）、语言对 × 领域交叉表
+- 标点规范专项 QA：括号/引号/书名号配对、全半角混用、首尾空格——现有 QA 覆盖数字/占位符/URL，标点类目前是漏网的
+- 导出 JSONL 训练格式：csv_writer 旁加一个 writer，纯本地格式转换，不违反"不上传文件"定位
+
+**第三优先（战略性，需要单独权衡工作量或产品定位）**：
+
+- XLIFF 1.2/2.0 读写：能打通"译前准备/译后回收"整段工作流的真正 CAT 交换标准，但方言多、工程量大，需要单独立 Phase，不适合顺手做
+- SRX 断句规则导入导出：分句算法是现有核心竞争力之一，开放给高级用户自定义有价值，但要先确认不会削弱现有 `pick_splitter` 的可维护性
+- LLM 语义 QA：能抓"漏译半句""术语对但语义不对"这类规则 QA 抓不住的问题，但直接冲突 README 的"不联网、不上传文件"承诺——**如果做，必须是显式 opt-in 的可选外挂**（架构上预留 reviewer 接口，本地小模型或用户自备 API key），不能进默认流程，也不能悄悄改变工具箱"纯离线"的定位
