@@ -367,3 +367,29 @@ def test_add_files_and_add_folder_share_and_update_last_dir(qtbot, tmp_path, mon
     page._add_folder()
     assert seen['folder_start_dir'] == str(tmp_path)  # picked up where 添加文件 left it
     assert page._last_dir == str(other_dir)  # ...and moved on to the folder just picked
+
+
+def test_cleanup_waits_for_running_batch_instead_of_crashing(qtbot, tmp_path):
+    """Regression test for the intermittent close-while-converting crash:
+    ``main_window.py``'s ``closeEvent()`` calls ``cleanup()`` on every
+    page with no ``qtbot.waitUntil`` in between, so a close landing
+    mid-batch used to tear down a still-running ``QThread`` (see
+    ``BatchConvertPage.cleanup()``'s docstring). Calling ``cleanup()``
+    right after ``start_btn.click()``, with no wait in between,
+    reproduces that same race deliberately instead of relying on timing
+    luck to hit it.
+    """
+    docx_src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+
+    page = BatchConvertPage()
+    qtbot.addWidget(page)
+    page._append_path(str(docx_src))
+    page._refresh_count()
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
+
+    page.start_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-batch
+
+    assert page._worker.isFinished()
+    assert (tmp_path / 'basic.sdltm').exists()

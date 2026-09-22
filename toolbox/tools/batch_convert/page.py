@@ -325,6 +325,31 @@ class BatchConvertPage(QWidget):
         item.setForeground(QColor(LOG_COLORS.get(kind, LOG_COLORS['info'])))
         self.file_table.setItem(row, 1, item)
 
+    # ------------------------------------------------------------ lifecycle
+    def cleanup(self):
+        """Called by ``main_window.py`` on a real window close (see that
+        module's docstring for the soft ``cleanup()`` convention).
+
+        Without this, closing the window while a batch conversion is
+        still running destroys ``self._worker`` -- a ``QThread`` that is
+        a child of this page -- while its ``run()`` is still executing.
+        That's Qt's own "QThread: Destroyed while thread is still
+        running" fatal error, which aborts the process rather than
+        raising a catchable exception (same class of crash noted in
+        DESIGN.md section 12's QApplication/offscreen testing pitfall).
+        It only shows up when a close happens to land mid-batch, which
+        is why it read as an intermittent crash rather than a reliable
+        repro.
+
+        Blocking here until the worker actually finishes is simpler and
+        safer than trying to interrupt it mid-file: ``api.convert()``
+        isn't written to be cancellable, and killing a conversion
+        mid-write would risk leaving a half-written output file next to
+        the source it came from.
+        """
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.wait()
+
     # ------------------------------------------------------------ settings
     def restore_settings(self):
         set_lang_combo_code(self.src_edit, settings.get_str(_SETTINGS_PREFIX + 'srcLang', 'en-US'))
