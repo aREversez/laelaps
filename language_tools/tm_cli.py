@@ -493,8 +493,10 @@ def build_parser():
                                'segment is No Match (default: 0.50)')
     quote_p.add_argument('--weights', metavar='PATH',
                           help='JSON {band: weight_pct} rate-card file overriding '
-                               'language_tools.tm.quote.DEFAULT_WEIGHTS -- read that module\'s '
-                               'docstring before trusting the built-in defaults for a real quote')
+                               'language_tools.tm.quote.DEFAULT_WEIGHTS -- the built-in '
+                               'defaults are one illustrative industry convention, NOT a '
+                               'pricing standard; verify against a real rate card before '
+                               'quoting (see that module\'s docstring)')
     quote_p.add_argument('--export', metavar='PATH',
                           help='write a per-file + total CSV (segments/words/weighted_words '
                                'plus a band breakdown) to PATH')

@@ -60,6 +60,22 @@ def test_load_weights_rejects_out_of_range_weight(tmp_path):
         quote_module.load_weights(str(path))
 
 
+def test_load_weights_rejects_top_level_json_array(tmp_path):
+    # A rate card that's a list (or any non-object JSON) must raise ValueError
+    # through tm_cli.main()'s error handling, not an AttributeError traceback.
+    path = tmp_path / 'weights.json'
+    path.write_text(json.dumps([{'no_match': 80.0}]), encoding='utf-8')
+    with pytest.raises(ValueError, match='must contain a JSON object'):
+        quote_module.load_weights(str(path))
+
+
+def test_load_weights_rejects_top_level_json_scalar(tmp_path):
+    path = tmp_path / 'weights.json'
+    path.write_text('80.0', encoding='utf-8')
+    with pytest.raises(ValueError, match='must contain a JSON object'):
+        quote_module.load_weights(str(path))
+
+
 def test_quote_batch_rolls_up_per_file_and_total():
     tm = [_u('Click OK to continue.', '点击确定以继续。')]
     file_units = {

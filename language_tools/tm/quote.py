@@ -56,12 +56,16 @@ def load_weights(path):
     """Reads a JSON ``{band: weight_pct}`` rate-card file (``weight_pct``
     0-100). Bands from ``leverage.BANDS`` missing in the file fall back to
     ``DEFAULT_WEIGHTS`` rather than being treated as 0 -- a rate card only
-    needs to list the bands it wants to override. An unrecognized band key
-    or an out-of-range weight raises ``ValueError``: fail loudly on a rate
-    card typo rather than silently mispricing a job.
+    needs to list the bands it wants to override. A top-level JSON value
+    that isn't an object, an unrecognized band key, or an out-of-range
+    weight raises ``ValueError``: fail loudly on a rate card typo rather
+    than silently mispricing a job.
     """
     with open(path, encoding='utf-8') as f:
         data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError('weights file %r must contain a JSON object {band: weight_pct}, '
+                          'got %s' % (path, type(data).__name__))
     unknown = set(data) - set(leverage_module.BANDS)
     if unknown:
         raise ValueError('unknown band(s) in weights file %r: %s (expected one of %s)' %
