@@ -16,7 +16,7 @@ the existing ``--export`` CSVs (``writers/csv_writer.py``,
 duplicate them.
 
 HTML rendering is stdlib-only. PDF rendering needs the optional
-``reportlab`` dependency (``pip install language-tools[reports]``) --
+``reportlab`` dependency (``pip install laelaps[reports]``) --
 ``write_pdf()`` imports it lazily so importing this module, or using
 ``write_html()``, never requires it.
 """
@@ -92,7 +92,7 @@ def write_pdf(path, report):
     except ImportError as e:
         raise ImportError(
             'PDF report export requires the optional "reportlab" package -- install it with '
-            '`pip install language-tools[reports]` (or `pip install reportlab` directly) to '
+            '`pip install laelaps[reports]` (or `pip install reportlab` directly) to '
             'use write_pdf() / `--report *.pdf`.'
         ) from e
 
