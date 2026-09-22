@@ -205,6 +205,37 @@ def test_term_check_prints_summary(tmp_path):
     assert '  forbidden: 1' in result.stdout
 
 
+def test_term_check_accepts_tbx_glossary(tmp_path):
+    from language_tools.terms import glossary as glossary_module
+    from language_tools.terms.model import TermEntry
+
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('big data.', '大资料。'), _u('clean sentence.', '干净的句子。')])
+    gloss = tmp_path / 'glossary.tbx'
+    glossary_module.write(str(gloss), [
+        TermEntry(src_lang='en-US', tgt_lang='zh-CN', src_term='big data', tgt_term='大资料',
+                  status='forbidden', status_declared=True)])
+    result = _run(['term-check', str(src), '--glossary', str(gloss)])
+    assert result.returncode == 0, result.stderr
+    assert 'Flagged=1' in result.stdout
+
+
+def test_term_extract_promote_writes_tbx_glossary(tmp_path):
+    candidates = tmp_path / 'candidates.csv'
+    candidates.write_text(
+        'src_term,tgt_term,decision,status,domain,note,src_freq,pair_freq,concentration\n'
+        'Click OK,点击确定,approve,,,,,3,1.67\n',
+        encoding='utf-8-sig')
+    glossary_out = tmp_path / 'glossary.tbx'
+    result = _run(['term-extract-promote', str(candidates), '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--glossary', str(glossary_out)])
+    assert result.returncode == 0, result.stderr
+    content = glossary_out.read_text(encoding='utf-8')
+    assert '<termEntry' in content
+    assert 'Click OK' in content
+    assert '点击确定' in content
+
+
 def test_term_check_check_approved_flag_fires_approved_direction(tmp_path):
     src = tmp_path / 'in.tmx'
     gloss = tmp_path / 'glossary.csv'

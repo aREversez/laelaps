@@ -32,11 +32,20 @@ docstring: this module (like every ``toolbox/tools/*/page.py``) gets
 imported at app startup regardless of whether the person ever opens an
 xlsx glossary in the session, so an eager import would make every launch
 pay openpyxl's load cost, not just the ones that use it.
+
+``.tbx`` (DESIGN.md 15.2's TBX/MultiTerm interop item) dispatches to
+``terms/tbx.py`` instead of the row-based reader/writer below -- TBX is a
+concept-oriented XML format, not a flat row table, so it gets its own
+module rather than being squeezed into ``_rows_to_entries()``'s CSV/xlsx
+row model. Read that module's docstring before trusting a round trip
+through a real third-party TBX export; it is NOT the same "lossless for
+files this module wrote" guarantee the CSV/xlsx path gives.
 """
 import csv
 import io
 import os
 
+from language_tools.terms import tbx as tbx_module
 from language_tools.terms.model import TermEntry
 
 ENCODINGS = ['utf-8-sig', 'utf-8', 'gb18030']
@@ -70,7 +79,7 @@ HEADER_ALIASES = {
 }
 
 _VALID_STATUSES = {'approved', 'forbidden'}
-_SUPPORTED_EXTS = ('.csv', '.xlsx', '.xlsm')
+_SUPPORTED_EXTS = ('.csv', '.xlsx', '.xlsm', '.tbx')
 
 
 def _read_text(path):
@@ -168,6 +177,8 @@ def _rows_to_entries(rows, src_lang, tgt_lang):
 
 def read(path, src_lang, tgt_lang):
     ext = os.path.splitext(path)[1].lower()
+    if ext == '.tbx':
+        return tbx_module.read(path, src_lang, tgt_lang)
     if ext == '.csv':
         text, _enc = _read_text(path)
         rows = [row for row in csv.reader(io.StringIO(text)) if any(c.strip() for c in row)]
@@ -189,6 +200,9 @@ def read(path, src_lang, tgt_lang):
 
 def write(path, entries):
     ext = os.path.splitext(path)[1].lower()
+    if ext == '.tbx':
+        tbx_module.write(path, entries)
+        return
     rows = [COLUMNS] + [
         [e.src_term, e.tgt_term, e.status, e.domain or '', e.note or ''] for e in entries
     ]

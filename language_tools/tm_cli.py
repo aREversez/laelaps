@@ -437,7 +437,8 @@ def build_parser():
         'term-check', help='check a corpus file against a glossary for forbidden translations')
     term_check_p.add_argument('input', help='input .tmx or .sdltm file')
     term_check_p.add_argument('--glossary', required=True,
-                               help='glossary file (.csv or .xlsx) with src_term/tgt_term/status columns')
+                               help='glossary file (.csv/.xlsx/.tbx) with src_term/tgt_term/status '
+                                    'columns (or TBX termEntry/langSet structure)')
     term_check_p.add_argument('--check-approved', action='store_true',
                                help='also flag segments where a source term appears but its approved '
                                     'translation is missing from the target -- opt-in because a missing '
@@ -560,7 +561,8 @@ def build_parser():
     term_promote_p.add_argument('--src', required=True, help='source language code, e.g. en-US')
     term_promote_p.add_argument('--tgt', required=True, help='target language code, e.g. zh-CN')
     term_promote_p.add_argument('--glossary', required=True, metavar='PATH',
-                                 help='glossary file (.csv/.xlsx) to write the promoted entries to')
+                                 help='glossary file (.csv/.xlsx/.tbx) to write the promoted '
+                                      'entries to')
     term_promote_p.add_argument('--append', action='store_true',
                                  help='merge into an existing glossary at PATH instead of '
                                       'overwriting it (PATH must already exist)')

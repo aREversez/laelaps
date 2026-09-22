@@ -436,7 +436,15 @@ class TermEntry:
   - `_drop_nested()` 的嵌套过滤是 O(n²)，`suggest_bilingual_candidates()` 按每个候选重新扫一遍语料，大语料 + 高 `--top-n` 有明显变慢的可能，未做性能优化。
 
   测试见 `tests/test_terms_extract.py`、`tests/test_tm_cli.py`。
-- **TBX / MultiTerm XML 互通**：15.1 已两次点名"仍未开始，继续后置"，用户群已用 Trados（sdltm 兼容性佐证），是术语交换的行业标准格式，值得从纯 backlog 提级为待评估。**风险**：不要类比 `tmx_reader` 的工程量——TBX（ISO 30042）本身有多种方言，且常与 MultiTerm 的私有字段扩展混用，实际解析复杂度可能高于 TMX；评估时按新格式独立立项（数据模型/格式选型/Phase 划分），不要预设"和 tmx_reader 同套路"。
+- **TBX / MultiTerm XML 互通** ✅（2026-09）：`language_tools/terms/tbx.py`，接入 `glossary.read()`/`glossary.write()` 的 `.tbx` 扩展名分发，`term-check`/`term-extract-promote` 等所有走 `--glossary` 参数的命令自动获得 TBX 支持，没有新增 CLI 子命令。落地过程证实了"风险"栏的两条判断都是真的，没有一条是过度谨慎：
+  - **方言问题是真的**：TBX 2008/TBX-Basic（`termEntry`/`langSet`/`tig`，MultiTerm/Trados/多数现存 TBX 文件实际用的）和 ISO 30042:2019"TBX 3.0"（改名成 `conceptEntry`/`langSec`/`termSec`，外加一个默认命名空间）是两套不兼容的元素命名。`read()` 按本地标签名兼容两种；`write()` 只输出前者，因为 DESIGN.md 这条本身点名的目标工具（Trados/MultiTerm）用的就是前者。
+  - **MultiTerm 私有字段混用问题也是真的**：真实 MultiTerm 导出里的自定义 `descripGrp`/`descrip` 字段、多同义词 `tig`（一个概念下多个同语言候选词）在我们的 `TermEntry`（一行一个 src/tgt 词对，只有 approved/forbidden 两态）里根本没有对应位置。没有强行塞、也没有静默丢弃后假装完整——`read()` 只读 `<term>`、`administrativeStatus`、首个 `<note>`、`<descrip type="subjectField"|"domain"|"category">` 这几个有明确映射的字段，其余一律忽略；同义词只保留每语言下第一个 `<tig>`/`<termSec>`，多余的计数并打印警告，不猜哪个源语言同义词该配哪个目标语言同义词。
+  - `administrativeStatus` 官方 picklist（`preferredTerm-admn-sts`/`admittedTerm-admn-sts`/`deprecatedTerm-admn-sts`/`supersededTerm-admn-sts`……）和 Weblate 等工具实际在用的简写值（`forbidden`/`deprecated`）都识别，统一折叠进我们的二态模型；`write()` 用官方 picklist 值（`forbidden`→`deprecatedTerm-admn-sts`，已声明的 `approved`→`preferredTerm-admn-sts`，未声明的 fallback `approved` 不写 termNote，避免把一个从没真正设置过状态的词条写成"官方推荐术语"）。
+  - **"往返保真"的承诺范围写清楚了，没有夸大**：只保证"本模块自己写出来的文件，读回来是原样的"，不承诺能完整复现第三方 MultiTerm 导出——上面两条会丢的东西，丢了就是丢了。
+
+  测试见 `tests/test_terms_tbx.py`（含跨方言读取、官方/简写状态值映射、同义词丢弃警告、命名空间处理）、`tests/test_terms_glossary.py`（`.tbx` 分发不影响既有 csv/xlsx 路径）、`tests/test_tm_cli.py`（`term-check`/`term-extract-promote` 端到端接受 `.tbx`）。
+
+至此，DESIGN.md 15.2 第一优先批次四项全部落地（字数估算/报价器、术语提取、fuzzy 近重复检测、TBX/MultiTerm 互通）。两处已知的 GUI 缺口（术语提取候选审核、近重复分簇裁决）仍待办，未来若要补，属于第二轮"给已落地的 CLI/模块功能配 GUI"的范畴，不是新功能立项。
 - **Fuzzy 近重复检测** ✅（2026-09）：`language_tools/tm/near_dup.py` + `tmtool near-dup`。落地时把"编辑距离或 minhash"里选了前者——`difflib` 编辑距离比值（复用 `tm.leverage` 同一套指标和归一化，保持"相似度"在全代码库里是同一个口径），配一个基于长度的剪枝：由 `ratio = 2M/(len_a+len_b)` 且 `M<=min(len_a,len_b)` 这个定义本身可以推出一个精确的长度比上界，凡是长度差超出这个上界的候选对，数学上不可能达到阈值，剪掉它们不会漏掉任何真正满足阈值的候选对——不是 minhash/LSH 那种近似分桶，牺牲的是 minhash 在超大语料上的渐近性能优势，换来剪枝这一步本身零误差；真到生产级超大 TM 顶不住了，minhash/LSH 是文档里写明的升级路径，不需要推倒重来。**一个诚实的附注**：`difflib.SequenceMatcher` 本身在等长最长公共子串出现平局时，比值会随传参顺序有极小概率不对称（Python 标准库这个工具本来就有的性质，`tm.leverage` 用同一个指标时也没处理这个），`near_dup.py` 固定"短文本在前"的比较顺序，没有为了消除这个边界情形去比较两种顺序取较大值——影响面窄到只有卡在阈值边缘的极少数候选对，不值得为此翻倍比较开销。聚类按连通分量合并（A~B、B~C 但 A~C 不一定成立时，三者仍会被分进同一簇），docstring 里说明了这是标准做法而非 bug。测试见 `tests/test_tm_near_dup.py`（含一次基于随机语料、与暴力枚举比对的剪枝精确性回归测试）、`tests/test_tm_cli.py`。GUI 侧"配合【TM 编辑】页逐簇裁决"仍待办，这轮只做到 CLI/模块层。
 
 **第二优先（低成本增强，复用 `reports/render.py` 或现有 `stats`/QA 基础设施）**：
