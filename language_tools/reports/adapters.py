@@ -29,6 +29,24 @@ def from_leverage_summary(summary):
     return Report(title='Leverage Analysis', summary_lines=lines, table=table)
 
 
+def from_quote_result(result):
+    """Adapts ``tm.quote.quote_batch()``'s ``{'files', 'total'}``. Unlike
+    the other adapters here, the detail table is per *file* (Words /
+    Weighted words), not per band -- a quote is read as "what does each
+    file cost", with the band breakdown available in the CSV export
+    (``quote.write_quote_csv()``) for whoever wants to audit the pricing.
+    """
+    t = result['total']
+    lines = ['Files: %d' % len(result['files']),
+              'Total segments: %d' % t['summary']['total'],
+              'Total words: %d' % t['summary']['total_words'],
+              'Weighted words: %.1f' % t['weighted_total']]
+    rows = [[label, str(entry['summary']['total_words']), '%.1f' % entry['weighted_total']]
+            for label, entry in result['files'].items()]
+    table = ReportTable(columns=['File', 'Words', 'Weighted words'], rows=rows) if rows else None
+    return Report(title='Quote Estimate', summary_lines=lines, table=table)
+
+
 def from_align_summary(summary):
     """Adapts ``align_report.summarize()``'s ``{'total', 'gap_count',
     'move_counts', 'qa_flagged'}``. ``move_counts`` is labeled via

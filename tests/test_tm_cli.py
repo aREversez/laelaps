@@ -350,6 +350,101 @@ def test_leverage_requires_tm_argument(tmp_path):
     assert 'required' in result.stderr.lower()
 
 
+def test_quote_reports_weighted_words_across_a_batch(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。')])
+    a = tmp_path / 'a.tmx'
+    _write_tmx(a, [_u('Click OK to continue.', '点击确定继续。')])  # exact, 0% weight
+    b = tmp_path / 'b.tmx'
+    _write_tmx(b, [_u('Totally unrelated content here.', '完全无关的内容。')])  # no_match, 100%
+    result = _run(['quote', str(a), str(b), '--tm', str(tm)])
+    assert result.returncode == 0, result.stderr
+    assert 'Files=2 Segments=2 Words=8 WeightedWords=4.0' in result.stdout
+
+
+def test_quote_accepts_a_mixed_batch_of_bilingual_source_and_corpus(tmp_path):
+    # tmx_writer filters empty-source-or-target pairs on write (same
+    # behavior csv_writer.py's own docstring notes for the corpus
+    # writers), so these fixtures need a non-empty tgt_text to round-trip.
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。')])
+    corpus = tmp_path / 'a.tmx'
+    _write_tmx(corpus, [_u('Click OK to continue.', '点击确定继续。')])
+    src = tmp_path / 'b.csv'
+    _write_bilingual_csv(src, [('Totally unrelated content here.', '完全无关的内容。')])
+    result = _run(['quote', str(corpus), str(src), '--tm', str(tm),
+                   '--src', 'en-US', '--tgt', 'zh-CN', '--no-header'])
+    assert result.returncode == 0, result.stderr
+    assert 'Files=2 Segments=2 Words=8' in result.stdout
+
+
+def test_quote_requires_src_and_tgt_for_bilingual_source_input(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Hello', '你好')])
+    src = tmp_path / 'a.csv'
+    _write_bilingual_csv(src, [('Hello there.', '你好。')])
+    result = _run(['quote', str(src), '--tm', str(tm)])
+    assert result.returncode != 0
+    assert '--src/--tgt are required' in result.stderr
+
+
+def test_quote_requires_tm_argument(tmp_path):
+    a = tmp_path / 'a.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    result = _run(['quote', str(a)])
+    assert result.returncode != 0
+    assert 'required' in result.stderr.lower()
+
+
+def test_quote_unsupported_input_format_errors_cleanly(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Hello', '你好')])
+    bad = tmp_path / 'a.json'
+    bad.write_text('[]')
+    result = _run(['quote', str(bad), '--tm', str(tm)])
+    assert result.returncode != 0
+    assert 'unsupported input format' in result.stderr
+
+
+def test_quote_export_writes_per_file_and_total_csv(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。')])
+    a = tmp_path / 'a.tmx'
+    _write_tmx(a, [_u('Click OK to continue.', '点击确定继续。')])
+    out = tmp_path / 'quote.csv'
+    result = _run(['quote', str(a), '--tm', str(tm), '--export', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'weighted_words' in content
+    assert 'TOTAL' in content
+
+
+def test_quote_weights_flag_overrides_default_no_match_weight(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。')])
+    a = tmp_path / 'a.tmx'
+    # non-empty tgt_text -- tmx_writer filters empty-target pairs on write
+    _write_tmx(a, [_u('Totally unrelated content here.', '完全无关的内容。')])  # no_match, 4 words
+    weights_path = tmp_path / 'weights.json'
+    weights_path.write_text('{"no_match": 50.0}', encoding='utf-8')
+    result = _run(['quote', str(a), '--tm', str(tm), '--weights', str(weights_path)])
+    assert result.returncode == 0, result.stderr
+    assert 'WeightedWords=2.0' in result.stdout
+
+
+def test_quote_report_writes_html(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。')])
+    a = tmp_path / 'a.tmx'
+    _write_tmx(a, [_u('Click OK to continue.', '点击确定继续。')])
+    out = tmp_path / 'report.html'
+    result = _run(['quote', str(a), '--tm', str(tm), '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Quote Estimate</title>' in content
+
+
 def test_compare_reports_unique_shared_and_conflicts(tmp_path):
     a = tmp_path / 'a.tmx'
     b = tmp_path / 'b.tmx'

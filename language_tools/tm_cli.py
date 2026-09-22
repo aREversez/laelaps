@@ -48,6 +48,7 @@ from language_tools.tm import io as tm_io
 from language_tools.tm import leverage as leverage_module
 from language_tools.tm import merge as merge_module
 from language_tools.tm import qa_report as qa_report_module
+from language_tools.tm import quote as quote_module
 from language_tools.tm import stats as stats_module
 from language_tools.writers import csv_writer
 
@@ -204,6 +205,49 @@ def _cmd_term_check(args):
     return 0
 
 
+def _cmd_quote(args):
+    tm_units = tm_io.read_corpus(args.tm)
+    weights = quote_module.load_weights(args.weights) if args.weights else None
+
+    file_units = {}
+    for path in args.inputs:
+        ext = os.path.splitext(path)[1].lower()
+        label = os.path.basename(path)
+        if ext in _BILINGUAL_EXTS:
+            if not args.src or not args.tgt:
+                raise ValueError(
+                    '--src/--tgt are required to quote bilingual source file %r; a .tmx/'
+                    '.sdltm corpus input carries its own language codes, but this one '
+                    'does not' % path)
+            reader_opts = _build_reader_opts(args, ext)
+            file_units[label] = align_report.run(
+                path, args.src, args.tgt, repair_path=args.repair, reader_opts=reader_opts)
+        elif ext in tm_io.SUPPORTED_EXTS:
+            file_units[label] = tm_io.read_corpus(path)
+        else:
+            raise ValueError(
+                'unsupported input format %r for %r (expected one of %s bilingual or %s '
+                'corpus)' % (ext, path, sorted(_BILINGUAL_EXTS), list(tm_io.SUPPORTED_EXTS)))
+
+    result = quote_module.quote_batch(
+        file_units, tm_units, fuzzy_floor=args.fuzzy_floor, weights=weights)
+    t = result['total']
+    print('Files=%d Segments=%d Words=%d WeightedWords=%.1f' % (
+        len(file_units), t['summary']['total'], t['summary']['total_words'], t['weighted_total']))
+    for label, entry in result['files'].items():
+        print('  %s: %d words -> %.1f weighted' % (
+            label, entry['summary']['total_words'], entry['weighted_total']))
+
+    if args.export:
+        quote_module.write_quote_csv(args.export, result)
+        print('Wrote %s' % args.export)
+    if args.report:
+        rc = _write_report(args.report, report_adapters.from_quote_result(result))
+        if rc:
+            return rc
+    return 0
+
+
 def _cmd_align(args):
     ext = os.path.splitext(args.input)[1].lower()
     if ext not in _BILINGUAL_EXTS:
@@ -333,6 +377,51 @@ def build_parser():
                               help='write a summary report (totals plus a by-term hit '
                                    'breakdown) to PATH as HTML or PDF, by extension')
     term_check_p.set_defaults(func=_cmd_term_check)
+
+    quote_p = sub.add_parser(
+        'quote', help='estimate a weighted word count for a batch of files against a reference '
+                      'TM -- Exact/Fuzzy/Repetition/New words banded per `leverage`, then '
+                      'discounted per a pricing weight table (see language_tools.tm.quote.'
+                      'DEFAULT_WEIGHTS and --weights)')
+    quote_p.add_argument('inputs', nargs='+',
+                          help='one or more files to quote: bilingual sources (docx/xlsx/csv/tsv) '
+                               'or already-converted .tmx/.sdltm corpora -- mixed batches allowed')
+    quote_p.add_argument('--tm', required=True,
+                          help='reference .tmx or .sdltm file to leverage every input against')
+    quote_p.add_argument('--src', help='source language code, e.g. en-US -- required if any '
+                                        'input is a bilingual source file')
+    quote_p.add_argument('--tgt', help='target language code, e.g. zh-CN -- required if any '
+                                        'input is a bilingual source file')
+    quote_p.add_argument('--layout', choices=['auto', 'numbered', 'table', 'alternating'],
+                          default='auto', help='docx layout for bilingual .docx inputs; '
+                                                'ignored for other formats')
+    quote_p.add_argument('--sheet', help='xlsx sheet name (default: first sheet)')
+    quote_p.add_argument('--src-col', help='source column: Excel letter (xlsx) or 0-based '
+                                            'index (docx table/csv)')
+    quote_p.add_argument('--tgt-col', help='target column: Excel letter (xlsx) or 0-based '
+                                            'index (docx table/csv)')
+    quote_p.add_argument('--delimiter', help='csv/tsv delimiter override (default: auto-sniffed)')
+    quote_header = quote_p.add_mutually_exclusive_group()
+    quote_header.add_argument('--header', dest='header', action='store_true', default=None,
+                               help='treat the first row as a header (xlsx/csv/docx table)')
+    quote_header.add_argument('--no-header', dest='header', action='store_false',
+                               help='treat the first row as data, not a header')
+    quote_p.add_argument('--repair', metavar='PATH',
+                          help='path to a repairs.json rule file (bilingual inputs only)')
+    quote_p.add_argument('--fuzzy-floor', type=float, default=0.50,
+                          help='lowest match ratio (0-1) still counted as a match; below it a '
+                               'segment is No Match (default: 0.50)')
+    quote_p.add_argument('--weights', metavar='PATH',
+                          help='JSON {band: weight_pct} rate-card file overriding '
+                               'language_tools.tm.quote.DEFAULT_WEIGHTS -- read that module\'s '
+                               'docstring before trusting the built-in defaults for a real quote')
+    quote_p.add_argument('--export', metavar='PATH',
+                          help='write a per-file + total CSV (segments/words/weighted_words '
+                               'plus a band breakdown) to PATH')
+    quote_p.add_argument('--report', metavar='PATH',
+                          help='write a summary report (per-file weighted-word table) to PATH '
+                               'as HTML or PDF, by extension')
+    quote_p.set_defaults(func=_cmd_quote)
 
     align_p = sub.add_parser(
         'align', help='check sentence-alignment quality for a bilingual source file '
