@@ -60,6 +60,7 @@ from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, set_lang_combo_code
 from toolbox.widgets import section as _section
+from toolbox.workers import wait_for_running
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _CORPUS_EXTS = {'.tmx', '.sdltm'}
@@ -328,27 +329,13 @@ class BatchConvertPage(QWidget):
     # ------------------------------------------------------------ lifecycle
     def cleanup(self):
         """Called by ``main_window.py`` on a real window close (see that
-        module's docstring for the soft ``cleanup()`` convention).
-
-        Without this, closing the window while a batch conversion is
-        still running destroys ``self._worker`` -- a ``QThread`` that is
-        a child of this page -- while its ``run()`` is still executing.
-        That's Qt's own "QThread: Destroyed while thread is still
-        running" fatal error, which aborts the process rather than
-        raising a catchable exception (same class of crash noted in
-        DESIGN.md section 12's QApplication/offscreen testing pitfall).
-        It only shows up when a close happens to land mid-batch, which
-        is why it read as an intermittent crash rather than a reliable
-        repro.
-
-        Blocking here until the worker actually finishes is simpler and
-        safer than trying to interrupt it mid-file: ``api.convert()``
-        isn't written to be cancellable, and killing a conversion
-        mid-write would risk leaving a half-written output file next to
-        the source it came from.
+        module's docstring for the soft ``cleanup()`` convention). See
+        ``toolbox.workers.wait_for_running()`` for why this is needed --
+        this was the page where the resulting intermittent crash was
+        first found and fixed; the same call is now on every other page
+        with a worker of its own.
         """
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.wait()
+        wait_for_running(self._worker)
 
     # ------------------------------------------------------------ settings
     def restore_settings(self):

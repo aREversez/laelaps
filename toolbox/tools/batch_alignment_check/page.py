@@ -48,6 +48,7 @@ from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, set_lang_combo_code
 from toolbox.widgets import section as _section
+from toolbox.workers import wait_for_running
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
@@ -297,6 +298,14 @@ class BatchAlignmentCheckPage(QWidget):
         item = QTableWidgetItem(text)
         item.setForeground(QColor(LOG_COLORS.get(kind, LOG_COLORS['info'])))
         self.file_table.setItem(row, 1, item)
+
+    # ------------------------------------------------------------ lifecycle
+    def cleanup(self):
+        """Called by ``main_window.py`` on a real window close. See
+        ``toolbox.workers.wait_for_running()`` for why a page with a
+        worker needs this.
+        """
+        wait_for_running(self._worker)
 
     # ------------------------------------------------------------ settings
     def restore_settings(self):

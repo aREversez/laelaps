@@ -440,3 +440,22 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert lang_combo_code(fresh.tgt_edit) == 'ko-KR'
     assert fresh.layout_combo.currentData() == 'table'
     assert fresh._last_dir == '/some/folder'
+
+
+def test_cleanup_waits_for_running_check_instead_of_crashing(qtbot):
+    """Regression test: closing the window while a check is still running
+    used to destroy a live QThread (see ``AlignmentCheckPage.cleanup()``).
+    Calling ``cleanup()`` right after ``check_btn.click()``, with no wait
+    in between, reproduces that race deliberately instead of relying on
+    timing luck.
+    """
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(_DOCX)
+    page.check_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-check
+    qtbot.wait(50)  # cleanup() only waits for the thread; let its queued
+                     # finished_ok signal actually reach its slot too
+
+    assert page._check_worker.isFinished()
+    assert '检查完成' in page.log.toPlainText()

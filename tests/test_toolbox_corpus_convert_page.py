@@ -98,6 +98,28 @@ def test_real_conversion_end_to_end(qtbot, tmp_path):
     assert '转换完成' in log_text
     assert '出错了' not in log_text
     assert (tmp_path / 'basic.sdltm').exists()
+
+
+def test_cleanup_waits_for_running_conversion_instead_of_crashing(qtbot, tmp_path):
+    """Regression test: closing the window while a conversion is still
+    running used to destroy a live QThread (see
+    ``CorpusConvertPage.cleanup()``). Calling ``cleanup()`` right after
+    ``convert_btn.click()``, with no wait in between, reproduces that
+    race deliberately instead of relying on timing luck.
+    """
+    src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
+
+    page.convert_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-conversion
+
+    assert page._worker.isFinished()
+    assert (tmp_path / 'basic.sdltm').exists()
     assert (tmp_path / 'basic.tmx').exists()
     assert (tmp_path / 'basic.csv').exists()
 

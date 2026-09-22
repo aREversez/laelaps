@@ -109,7 +109,7 @@ from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field
 from toolbox.widgets import lang_combo_code, make_lang_combo, section, set_lang_combo_code
-from toolbox.workers import CallableWorker
+from toolbox.workers import CallableWorker, wait_for_running
 
 _GLOSSARY_OPEN_FILTER = 'Glossary files (*.csv *.xlsx)'
 _SETTINGS_PREFIX = 'term_management/'
@@ -598,7 +598,14 @@ class TermManagementPage(QWidget):
         actually closing, so a normal exit releases the file lock instead
         of leaving it held (and the file unusable elsewhere) after this
         tool itself has stopped running.
+
+        Also waits for ``_check_worker``/``_export_worker`` if either is
+        still running -- see ``toolbox.workers.wait_for_running()``. This
+        page already implemented ``cleanup()`` for the file lock, which is
+        exactly why its own two workers had been missed: the hook existed,
+        but nothing in it looked at either worker.
         """
+        wait_for_running(self._check_worker, self._export_worker)
         self._release_file_lock()
 
     # ---------------------------------------------------------- settings

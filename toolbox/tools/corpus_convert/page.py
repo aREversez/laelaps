@@ -74,6 +74,7 @@ from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, set_lang_combo_code
 from toolbox.widgets import section as _section
+from toolbox.workers import wait_for_running
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.sdltm)'
@@ -209,6 +210,14 @@ class CorpusConvertPage(QWidget):
     def _log(self, message, kind='info'):
         color = LOG_COLORS.get(kind, LOG_COLORS['info'])
         self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))
+
+    # ------------------------------------------------------------ lifecycle
+    def cleanup(self):
+        """Called by ``main_window.py`` on a real window close. See
+        ``toolbox.workers.wait_for_running()`` for why a page with a
+        worker needs this.
+        """
+        wait_for_running(self._worker)
 
     # ------------------------------------------------------------ settings
     def restore_settings(self):

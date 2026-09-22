@@ -194,7 +194,7 @@ from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, section
-from toolbox.workers import CallableWorker
+from toolbox.workers import CallableWorker, wait_for_running
 
 _CSV_FILTER = 'CSV (*.csv)'
 _REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
@@ -575,6 +575,14 @@ class QaCheckPage(QWidget):
         if path:
             self.input_edit.setText(path)
             self._last_dir = os.path.dirname(path)
+
+    # ---------------------------------------------------------- lifecycle
+    def cleanup(self):
+        """Called by ``main_window.py`` on a real window close. See
+        ``toolbox.workers.wait_for_running()`` for why a page with a
+        worker needs this.
+        """
+        wait_for_running(self._check_worker, self._export_worker)
 
     # ---------------------------------------------------------- settings
     def restore_settings(self):

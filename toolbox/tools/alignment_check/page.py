@@ -94,7 +94,7 @@ from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, section, set_lang_combo_code
-from toolbox.workers import CallableWorker
+from toolbox.workers import CallableWorker, wait_for_running
 
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
 _CSV_FILTER = 'CSV (*.csv)'
@@ -262,6 +262,14 @@ class AlignmentCheckPage(QWidget):
         if path:
             self.input_edit.setText(path)
             self._last_dir = os.path.dirname(path)
+
+    # ---------------------------------------------------------- lifecycle
+    def cleanup(self):
+        """Called by ``main_window.py`` on a real window close. See
+        ``toolbox.workers.wait_for_running()`` for why a page with a
+        worker needs this.
+        """
+        wait_for_running(self._check_worker, self._export_worker)
 
     # ---------------------------------------------------------- settings
     def restore_settings(self):

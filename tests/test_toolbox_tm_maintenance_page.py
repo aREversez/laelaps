@@ -483,3 +483,27 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert fresh.clean_chk_remove_identical.isChecked() is True
     assert fresh.merge_strategy_combo.currentData() == 'prefer-last'
     assert fresh._last_dir == '/some/folder'
+
+
+def test_cleanup_waits_for_running_stats_instead_of_crashing(qtbot, tmp_path):
+    """Regression test: closing the window while any of this page's five
+    worker actions is still running used to destroy a live QThread (see
+    ``TmMaintenancePage.cleanup()``). Calling ``cleanup()`` right after
+    ``stats_btn.click()``, with no wait in between, reproduces that race
+    deliberately instead of relying on timing luck -- stats stands in for
+    all five here since ``cleanup()`` waits on the same worker slots the
+    same way regardless of which tab started one.
+    """
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好'), _u('Bye', '再见')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.stats_input_edit.setText(str(src))
+    page.stats_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-run
+    qtbot.wait(50)  # cleanup() only waits for the thread; let its queued
+                     # finished_ok signal actually reach its slot too
+
+    assert page._stats_worker.isFinished()
+    assert '统计完成' in page.log.toPlainText()

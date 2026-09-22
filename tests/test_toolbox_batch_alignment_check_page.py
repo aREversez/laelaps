@@ -273,3 +273,24 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert lang_combo_code(fresh.tgt_edit) == 'ko-KR'
     assert fresh.layout_combo.currentData() == 'table'
     assert fresh._last_dir == '/some/folder'
+
+
+def test_cleanup_waits_for_running_batch_instead_of_crashing(qtbot, tmp_path):
+    """Regression test: closing the window while a batch check is still
+    running used to destroy a live QThread (see
+    ``BatchAlignmentCheckPage.cleanup()``). Calling ``cleanup()`` right
+    after ``start_btn.click()``, with no wait in between, reproduces that
+    race deliberately instead of relying on timing luck.
+    """
+    a = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+
+    page = BatchAlignmentCheckPage()
+    qtbot.addWidget(page)
+    page._append_path(str(a))
+    page.start_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-batch
+    qtbot.wait(50)  # cleanup() only waits for the thread; let its queued
+                     # all_done signal actually reach its slot too
+
+    assert page._worker.isFinished()
+    assert '完成' in page.summary_label.text()

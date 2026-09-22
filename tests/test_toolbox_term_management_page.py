@@ -1092,3 +1092,30 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert fresh.check_hide_clean_chk.isChecked() is False
     assert fresh.check_approved_chk.isChecked() is True
     assert fresh._last_dir == '/some/folder'
+
+
+def test_cleanup_waits_for_running_check_instead_of_crashing(qtbot, tmp_path):
+    """Regression test: closing the window while a consistency check is
+    still running used to destroy a live QThread -- and this page had
+    already implemented ``cleanup()`` for its file lock (see that
+    method's docstring), which is exactly why its own two workers had
+    been missed until now. Calling ``cleanup()`` right after
+    ``check_btn.click()``, with no wait in between, reproduces that race
+    deliberately instead of relying on timing luck.
+    """
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('Clean sentence.', '干净的句子。')])
+    glossary_module.write(str(gloss), [_entry('big data', '大资料', status='forbidden')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_corpus_edit.setText(str(src))
+    page.check_glossary_edit.setText(str(gloss))
+    page.check_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-check
+    qtbot.wait(50)  # cleanup() only waits for the thread; let its queued
+                     # finished_ok signal actually reach its slot too
+
+    assert page._check_worker.isFinished()
+    assert '检查完成' in page.log.toPlainText()

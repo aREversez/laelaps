@@ -916,3 +916,22 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert fresh.hide_clean_chk.isChecked() is False
     assert fresh.wrap_chk.isChecked() is True
     assert fresh._last_dir == '/some/folder'
+
+
+def test_cleanup_waits_for_running_check_instead_of_crashing(qtbot):
+    """Regression test: closing the window while a check is still running
+    used to destroy a live QThread (see ``QaCheckPage.cleanup()``).
+    Calling ``cleanup()`` right after ``check_btn.click()``, with no wait
+    in between, reproduces that race deliberately instead of relying on
+    timing luck.
+    """
+    page = QaCheckPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(tmx_path('inline_markup_qa.tmx'))
+    page.check_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-check
+    qtbot.wait(50)  # cleanup() only waits for the thread; let its queued
+                     # finished_ok signal actually reach its slot too
+
+    assert page._check_worker.isFinished()
+    assert '检查完成' in page.log.toPlainText()
