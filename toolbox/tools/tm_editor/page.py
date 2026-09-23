@@ -95,6 +95,9 @@ class _TUEntryDialog(QDialog):
         self.tgt_edit = QPlainTextEdit(unit.tgt_text if unit else '')
         for edit in (self.src_edit, self.tgt_edit):
             edit.setMaximumHeight(90)
+            # Default QPlainTextEdit behavior inserts a literal tab
+            # character; Tab should move focus to the next field instead.
+            edit.setTabChangesFocus(True)
 
         self.error_label = QLabel('')
         self.error_label.setStyleSheet('color: %s;' % LOG_COLORS['error'])
@@ -433,11 +436,18 @@ class TmEditorPage(QWidget):
         dialog = _TUEntryDialog(self)
         if dialog.exec() == QDialog.Accepted:
             values = dialog.result_values()
-            self._units.append(TranslationUnit(
+            # Insert right after the current selection (Excel-style
+            # insert-below), not always at the end -- with multiple rows
+            # selected, after the last one. No selection: append, same as
+            # before.
+            rows = self._selected_rows()
+            insert_at = rows[-1] + 1 if rows else len(self._units)
+            self._units.insert(insert_at, TranslationUnit(
                 src_lang=lang_combo_code(self.src_lang_combo),
                 tgt_lang=lang_combo_code(self.tgt_lang_combo), **values))
             self._dirty = True
             self._refresh_entry_table()
+            self.entry_table.selectRow(insert_at)
             self._sync_buttons()
             self._log('已添加 1 条记录', 'success')
 
