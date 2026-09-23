@@ -39,5 +39,9 @@ def get_bool(key, default=False):
     return QSettings().value(key, default, type=bool)
 
 
+def get_int(key, default=0):
+    return QSettings().value(key, default, type=int)
+
+
 def set_value(key, value):
     QSettings().setValue(key, value)

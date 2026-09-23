@@ -53,13 +53,15 @@ import os
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QAbstractItemView, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
-    QHBoxLayout, QHeaderView, QLabel, QMenu, QMessageBox, QPlainTextEdit,
-    QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QMenu,
+    QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from language_tools.model import TranslationUnit
 from language_tools.tm import io as tm_io
+from language_tools.tm import near_dup as near_dup_module
 from toolbox import settings
 from toolbox.widgets import CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field
 from toolbox.widgets import lang_combo_code, make_lang_combo, set_lang_combo_code
@@ -128,6 +130,166 @@ class _TUEntryDialog(QDialog):
         }
 
 
+class _NearDupDialog(QDialog):
+    """Review dialog for ``tm.near_dup.find_clusters()`` -- DESIGN.md
+    15.2's fuzzy 近重复检测 GUI follow-up (the original roadmap note's
+    "配合【TM 编辑】页逐簇裁决保留哪条"). Runs clustering synchronously, no
+    worker thread: the clustering itself is already well below O(n^2) for
+    a TM this page would realistically hold open at once interactively
+    (see ``near_dup.py``'s module docstring on scale) -- if that ever
+    proves slow enough in practice to need a worker + progress
+    indicator, that's the signal to add one, not a cost to pay upfront
+    for a TM size this tool isn't really meant to hold in memory anyway.
+
+    "Keep exactly one row per cluster" is built from plain checkable
+    ``QTableWidgetItem``s (same reasoning as term_management's candidate-
+    extraction tab for avoiding ``setCellWidget()``), not real
+    ``QRadioButton``s -- a checkbox has no grouping primitive of its own,
+    so ``_on_item_changed()`` enforces the invariant by hand: checking a
+    row unchecks its cluster-mates, and unchecking the last checked row
+    in a cluster is refused (re-checked immediately) rather than left at
+    zero, since "keep nothing from this cluster" isn't a state the
+    caller (which removes every non-kept unit) has a sane way to handle.
+    The first unit in each cluster starts checked (an arbitrary but
+    deterministic default -- "keep the first occurrence" -- so accepting
+    the dialog without touching anything still does something
+    predictable rather than nothing).
+    """
+
+    def __init__(self, parent, units):
+        super().__init__(parent)
+        self.setWindowTitle('查找近重复')
+        self.setMinimumSize(640, 480)
+        self._units = units
+        self._clusters = []
+        self._cluster_rows = []   # cluster index -> list of table row numbers
+        self._updating = False
+        self._build_ui()
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+
+        note = QLabel('按编辑距离相似度分簇，不是精确去重——每簇里具体哪条该留、哪条该删，'
+                       '仍需要人工核对，默认只是"留第一条"')
+        note.setWordWrap(True)
+        note.setStyleSheet('color: #6B7280;')
+        layout.addWidget(note)
+
+        params_row = QHBoxLayout()
+        self.threshold_spin = QDoubleSpinBox()
+        self.threshold_spin.setRange(0.01, 1.0)
+        self.threshold_spin.setSingleStep(0.01)
+        self.threshold_spin.setValue(0.85)
+        self.threshold_spin.setToolTip('相似度阈值，越接近 1 要求越相似')
+        self.side_combo = QComboBox()
+        self.side_combo.addItem('原文', 'src')
+        self.side_combo.addItem('译文', 'tgt')
+        compact_combo(self.side_combo)
+        self.min_size_spin = QSpinBox()
+        self.min_size_spin.setRange(2, 100)
+        self.min_size_spin.setValue(2)
+        self.min_size_spin.setToolTip('至少多少条互相相似才算一簇')
+        for spin in (self.threshold_spin, self.min_size_spin):
+            spin.setMaximumWidth(90)
+        params_row.addLayout(labeled_field('相似度阈值', self.threshold_spin))
+        params_row.addLayout(labeled_field('比较', self.side_combo))
+        params_row.addLayout(labeled_field('最小簇大小', self.min_size_spin))
+        find_btn = QPushButton('开始查找')
+        find_btn.clicked.connect(self._run_find)
+        params_row.addWidget(find_btn)
+        params_row.addStretch(1)
+        layout.addLayout(params_row)
+
+        self.summary_label = QLabel('')
+        self.summary_label.setStyleSheet('color: #4B5262;')
+        layout.addWidget(self.summary_label)
+
+        self.results_table = QTableWidget(0, 4)
+        self.results_table.setHorizontalHeaderLabels(['留', '簇', '原文', '译文'])
+        self.results_table.verticalHeader().setVisible(False)
+        header = self.results_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.results_table.setShowGrid(False)
+        self.results_table.setAlternatingRowColors(True)
+        self.results_table.itemChanged.connect(self._on_item_changed)
+        layout.addWidget(self.results_table, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText('应用')
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _run_find(self):
+        id_to_index = {id(u): i for i, u in enumerate(self._units)}
+        self._clusters = near_dup_module.find_clusters(
+            self._units, threshold=self.threshold_spin.value(),
+            side=self.side_combo.currentData(), min_cluster_size=self.min_size_spin.value())
+
+        self._updating = True
+        self.results_table.setRowCount(0)
+        self._cluster_rows = []
+        row = 0
+        for cluster_idx, cluster in enumerate(self._clusters):
+            rows_for_cluster = []
+            self.results_table.setRowCount(self.results_table.rowCount() + len(cluster['units']))
+            for i, u in enumerate(cluster['units']):
+                check_item = QTableWidgetItem()
+                check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                check_item.setCheckState(Qt.Checked if i == 0 else Qt.Unchecked)
+                check_item.setData(Qt.UserRole, (cluster_idx, id_to_index[id(u)]))
+                self.results_table.setItem(row, 0, check_item)
+                self.results_table.setItem(row, 1, QTableWidgetItem(str(cluster_idx + 1)))
+                self.results_table.setItem(row, 2, QTableWidgetItem(u.src_text))
+                self.results_table.setItem(row, 3, QTableWidgetItem(u.tgt_text))
+                rows_for_cluster.append(row)
+                row += 1
+            self._cluster_rows.append(rows_for_cluster)
+        self._updating = False
+
+        s = near_dup_module.summarize(self._clusters)
+        self.summary_label.setText('共 %d 簇，涉及 %d 条记录' %
+                                    (s['cluster_count'], s['total_units']))
+
+    def _on_item_changed(self, item):
+        if self._updating or item.column() != 0:
+            return
+        cluster_idx, _ = item.data(Qt.UserRole)
+        rows = self._cluster_rows[cluster_idx]
+        if item.checkState() == Qt.Checked:
+            self._updating = True
+            for row in rows:
+                if row != item.row():
+                    self.results_table.item(row, 0).setCheckState(Qt.Unchecked)
+            self._updating = False
+        else:
+            others_checked = any(
+                self.results_table.item(r, 0).checkState() == Qt.Checked
+                for r in rows if r != item.row())
+            if not others_checked:
+                self._updating = True
+                item.setCheckState(Qt.Checked)
+                self._updating = False
+
+    def indices_to_remove(self):
+        """Original-list indices (into the ``units`` passed to
+        ``__init__``) of every unit NOT marked "留" in some cluster --
+        what the caller should delete after the dialog is accepted.
+        """
+        remove = []
+        for rows in self._cluster_rows:
+            for row in rows:
+                item = self.results_table.item(row, 0)
+                if item.checkState() != Qt.Checked:
+                    _, idx = item.data(Qt.UserRole)
+                    remove.append(idx)
+        return remove
+
+
 class TmEditorPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -180,7 +342,9 @@ class TmEditorPage(QWidget):
         self.save_btn.clicked.connect(self._save)
         save_as_btn = QPushButton('另存为…')
         save_as_btn.clicked.connect(self._save_as)
-        for b in (new_btn, open_btn, self.close_btn, self.save_btn, save_as_btn):
+        near_dup_btn = QPushButton('查找近重复…')
+        near_dup_btn.clicked.connect(self._open_near_dup_dialog)
+        for b in (new_btn, open_btn, self.close_btn, self.save_btn, save_as_btn, near_dup_btn):
             btn_row.addWidget(b)
         btn_row.addStretch(1)
         file_layout.addLayout(btn_row)
@@ -309,6 +473,24 @@ class TmEditorPage(QWidget):
         self._refresh_entry_table()
         self._sync_buttons()
         self._log('已删除 %d 条记录' % len(rows), 'success')
+
+    def _open_near_dup_dialog(self):
+        if not self._units:
+            self._log('当前记忆库没有记录', 'error')
+            return
+        dialog = _NearDupDialog(self, self._units)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        remove_indices = dialog.indices_to_remove()
+        if not remove_indices:
+            self._log('未找到需要处理的近重复记录（或未点击"开始查找"）')
+            return
+        for idx in sorted(remove_indices, reverse=True):
+            del self._units[idx]
+        self._dirty = True
+        self._refresh_entry_table()
+        self._sync_buttons()
+        self._log('已删除 %d 条近重复记录' % len(remove_indices), 'success')
 
     # ---------------------------------------------------------- open/close
     def _new_tm(self):

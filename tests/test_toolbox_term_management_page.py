@@ -1,4 +1,5 @@
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from language_tools.model import TranslationUnit
@@ -7,6 +8,7 @@ from language_tools.terms.filelock import FileLock
 from language_tools.terms.model import TermEntry
 from language_tools.writers import tmx_writer
 from toolbox.tools.term_management.page import TermManagementPage, _TermEntryDialog
+from toolbox.widgets import lang_combo_code
 
 
 def _u(src, tgt, **kw):
@@ -1119,3 +1121,186 @@ def test_cleanup_waits_for_running_check_instead_of_crashing(qtbot, tmp_path):
 
     assert page._check_worker.isFinished()
     assert '检查完成' in page.log.toPlainText()
+
+
+# -------------------------------------------------------------- extract tab
+
+def test_extract_tab_starts_with_promote_disabled(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.extract_table.rowCount() == 0
+    assert not page.extract_promote_btn.isEnabled()
+
+
+def test_add_extract_inputs_via_dialog(qtbot, monkeypatch, tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('hello', '你好')])
+    _write_tmx(b, [_u('bye', '再见')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileNames',
+                         lambda *args, **kw: ([str(a), str(b)], ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._add_extract_inputs()
+    assert page._extract_inputs == [str(a), str(b)]
+    assert page.extract_input_list.count() == 2
+
+    # adding the same file again is a no-op, not a duplicate
+    monkeypatch.setattr(QFileDialog, 'getOpenFileNames', lambda *args, **kw: ([str(a)], ''))
+    page._add_extract_inputs()
+    assert page._extract_inputs == [str(a), str(b)]
+    assert page.extract_input_list.count() == 2
+
+
+def test_remove_selected_extract_inputs(qtbot, tmp_path):
+    a = tmp_path / 'a.tmx'
+    _write_tmx(a, [_u('hello', '你好')])
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_inputs = [str(a)]
+    page.extract_input_list.addItem(str(a))
+    page.extract_input_list.selectAll()
+    page._remove_selected_extract_inputs()
+    assert page._extract_inputs == []
+    assert page.extract_input_list.count() == 0
+
+
+def test_start_extract_with_no_inputs_shows_error(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._start_extract()
+    assert '请先添加' in page.log.toPlainText()
+
+
+def test_extract_end_to_end_populates_table_unchecked_and_enables_promote(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u('Click OK to continue with the installation.', '点击确定以继续安装过程。'),
+        _u('Click OK to proceed.', '点击确定以继续。'),
+        _u('The installation wizard will now close.', '安装向导现在将会关闭。'),
+        _u('Click OK to confirm the installation.', '点击确定以确认安装。'),
+        _u('Please wait while the installation completes.', '请稍候，安装正在完成。'),
+    ])
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_inputs = [str(src)]
+    page.extract_input_list.addItem(str(src))
+    page.extract_min_freq_spin.setValue(2)
+    page.extract_max_ngram_spin.setValue(4)
+    page.extract_min_pair_freq_spin.setValue(2)
+
+    page.extract_btn.click()
+    qtbot.waitUntil(lambda: page.extract_btn.isEnabled(), timeout=5000)
+
+    assert '提取完成' in page.log.toPlainText()
+    assert page.extract_table.rowCount() > 0
+    assert page.extract_promote_btn.isEnabled()
+    # nothing pre-checked -- see _build_extract_tab()'s docstring
+    for row in range(page.extract_table.rowCount()):
+        assert page.extract_table.item(row, 0).checkState() == Qt.Unchecked
+
+    texts = [page.extract_table.item(row, 1).text() for row in range(page.extract_table.rowCount())]
+    assert 'Click OK' in texts
+
+
+def test_promote_with_nothing_checked_shows_error(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_candidates = [{'src_term': 'foo', 'tgt_term': '', 'src_freq': 1,
+                                  'pair_freq': 0, 'concentration': 0.0}]
+    page._refresh_extract_table()
+    page._promote_extract_selection()
+    assert '请先勾选' in page.log.toPlainText()
+    assert page._entries == []
+
+
+def test_promote_checked_row_with_blank_translation_is_rejected(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_candidates = [{'src_term': 'foo', 'tgt_term': '', 'src_freq': 1,
+                                  'pair_freq': 0, 'concentration': 0.0}]
+    page._refresh_extract_table()
+    page.extract_table.item(0, 0).setCheckState(Qt.Checked)
+    page._promote_extract_selection()
+    assert '译文建议为空' in page.log.toPlainText()
+    assert page._entries == []
+    assert not page._dirty
+
+
+def test_promote_checked_rows_appends_to_glossary_and_marks_dirty(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_candidates = [
+        {'src_term': 'click ok', 'tgt_term': '点击确定', 'src_freq': 3,
+         'pair_freq': 3, 'concentration': 1.67},
+        {'src_term': 'installation', 'tgt_term': '', 'src_freq': 4,
+         'pair_freq': 0, 'concentration': 0.0},
+    ]
+    page._refresh_extract_table()
+    page.extract_table.item(0, 0).setCheckState(Qt.Checked)
+    page.extract_table.item(0, 3).setText('localization')  # domain
+    page.extract_table.item(0, 4).setText('extracted')     # note
+
+    page._promote_extract_selection()
+
+    assert page._dirty is True
+    assert len(page._entries) == 1
+    entry = page._entries[0]
+    assert entry.src_term == 'click ok'
+    assert entry.tgt_term == '点击确定'
+    assert entry.status == 'approved'
+    assert entry.status_declared is True
+    assert entry.domain == 'localization'
+    assert entry.note == 'extracted'
+    assert entry.src_lang == lang_combo_code(page.glossary_src_lang)
+    assert '已提升 1 条' in page.log.toPlainText()
+    # promoted row's checkbox resets so it can't be double-promoted by accident
+    assert page.extract_table.item(0, 0).checkState() == Qt.Unchecked
+    # 术语库 tab's own table reflects the promotion immediately
+    assert page.entry_table.rowCount() == 1
+
+
+def test_promote_allows_editing_the_suggested_translation_before_approving(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_candidates = [
+        {'src_term': 'foo', 'tgt_term': 'bar', 'src_freq': 2, 'pair_freq': 2,
+         'concentration': 5.0},
+    ]
+    page._refresh_extract_table()
+    page.extract_table.item(0, 0).setCheckState(Qt.Checked)
+    page.extract_table.item(0, 2).setText('corrected translation')
+    page._promote_extract_selection()
+    assert page._entries[0].tgt_term == 'corrected translation'
+
+
+def test_extract_settings_round_trip(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.extract_min_freq_spin.setValue(5)
+    page.extract_max_ngram_spin.setValue(6)
+    page.extract_top_n_spin.setValue(50)
+    page.extract_min_pair_freq_spin.setValue(3)
+    page.save_settings()
+
+    fresh = TermManagementPage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert fresh.extract_min_freq_spin.value() == 5
+    assert fresh.extract_max_ngram_spin.value() == 6
+    assert fresh.extract_top_n_spin.value() == 50
+    assert fresh.extract_min_pair_freq_spin.value() == 3
+
+
+def test_cleanup_waits_for_running_extract_instead_of_crashing(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('hello there', '你好')])
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_inputs = [str(src)]
+    page.extract_input_list.addItem(str(src))
+    page.extract_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-extraction
+    qtbot.wait(50)
+    assert page._extract_worker.isFinished()

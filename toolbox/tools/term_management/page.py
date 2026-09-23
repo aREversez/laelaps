@@ -94,13 +94,14 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QMenu, QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
-    QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QListWidget, QMenu, QMessageBox, QPushButton, QSpinBox, QTableWidget,
+    QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from language_tools.reports import adapters as report_adapters
 from language_tools.reports import render as report_render
 from language_tools.terms import check as term_check_module
+from language_tools.terms import extract as extract_module
 from language_tools.terms import glossary as glossary_module
 from language_tools.terms.filelock import FileLock, office_lock_marker_exists
 from language_tools.terms.model import STATUSES, TermEntry
@@ -111,19 +112,20 @@ from toolbox.widgets import CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_com
 from toolbox.widgets import lang_combo_code, make_lang_combo, section, set_lang_combo_code
 from toolbox.workers import CallableWorker, wait_for_running
 
-_GLOSSARY_OPEN_FILTER = 'Glossary files (*.csv *.xlsx)'
+_GLOSSARY_OPEN_FILTER = 'Glossary files (*.csv *.xlsx *.xlsm *.tbx)'
 _SETTINGS_PREFIX = 'term_management/'
-# Save needs the csv/xlsx choice split into separate named filters (not
-# one combined "Glossary files (*.csv *.xlsx)" entry) so picking a format
-# from the dialog's format dropdown actually determines which extension
-# gets appended -- same convention tm_maintenance/page.py's _SAVE_FILTER
-# already uses for its TMX/SDLTM choice ('TMX (*.tmx);;SDLTM (*.sdltm)').
-# A single combined filter meant Save always produced .csv regardless of
-# which format the person actually wanted, unless they typed ".xlsx" into
-# the filename themselves.
-_GLOSSARY_SAVE_FILTER = 'CSV (*.csv);;Excel (*.xlsx)'
+# Save needs each format split into its own named filter (not one
+# combined "Glossary files (*.csv *.xlsx *.tbx)" entry) so picking a
+# format from the dialog's format dropdown actually determines which
+# extension gets appended -- same convention tm_maintenance/page.py's
+# _SAVE_FILTER already uses for its TMX/SDLTM choice ('TMX (*.tmx);;SDLTM
+# (*.sdltm)'). A single combined filter meant Save always produced .csv
+# regardless of which format the person actually wanted, unless they
+# typed the extension into the filename themselves.
+_GLOSSARY_SAVE_FILTER = 'CSV (*.csv);;Excel (*.xlsx);;TBX (*.tbx)'
 _CSV_FILTER = 'CSV (*.csv)'
 _REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
+_EXTRACT_CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 
 
 _STATUS_LABELS = {'approved': '推荐译法', 'forbidden': '禁用译法'}
@@ -141,6 +143,15 @@ def _check_job(corpus_path, glossary_path, src_lang, tgt_lang, check_approved=Fa
     return term_check_module.run(units, entries, check_approved=check_approved)
 
 
+def _extract_job(paths, src_lang, tgt_lang, min_freq, max_ngram, top_n, min_pair_freq):
+    units = []
+    for path in paths:
+        units.extend(tm_io.read_corpus(path))
+    return extract_module.suggest_bilingual_candidates(
+        units, src_lang, tgt_lang, min_freq=min_freq, max_ngram=max_ngram, top_n=top_n,
+        min_pair_freq=min_pair_freq)
+
+
 def _format_term_hit(hit):
     text = '%s→%s' % (hit['src_term'], hit['tgt_term'])
     if hit.get('status', 'forbidden') == 'approved':
@@ -149,8 +160,10 @@ def _format_term_hit(hit):
 
 
 def _pick_save_extension(path, selected_filter):
-    if path.lower().endswith('.csv') or path.lower().endswith('.xlsx'):
+    if path.lower().endswith(('.csv', '.xlsx', '.tbx')):
         return path
+    if 'tbx' in selected_filter.lower():
+        return path + '.tbx'
     return path + ('.xlsx' if 'xlsx' in selected_filter.lower() else '.csv')
 
 
@@ -223,6 +236,9 @@ class TermManagementPage(QWidget):
         self._last_summary = None
         self._check_worker = None
         self._export_worker = None
+        self._extract_inputs = []    # corpus file paths queued for candidate extraction
+        self._extract_candidates = []  # last extraction result (list of dicts, see extract.py)
+        self._extract_worker = None
         self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         self._build_ui()
 
@@ -242,6 +258,7 @@ class TermManagementPage(QWidget):
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_glossary_tab(), '术语库')
         self.tabs.addTab(self._build_check_tab(), '一致性检查')
+        self.tabs.addTab(self._build_extract_tab(), '候选词提取')
         outer.addWidget(self.tabs)
 
         self.log = QTextEdit()
@@ -605,7 +622,7 @@ class TermManagementPage(QWidget):
         exactly why its own two workers had been missed: the hook existed,
         but nothing in it looked at either worker.
         """
-        wait_for_running(self._check_worker, self._export_worker)
+        wait_for_running(self._check_worker, self._export_worker, self._extract_worker)
         self._release_file_lock()
 
     # ---------------------------------------------------------- settings
@@ -618,6 +635,14 @@ class TermManagementPage(QWidget):
             settings.get_bool(_SETTINGS_PREFIX + 'checkHideClean', True))
         self.check_approved_chk.setChecked(
             settings.get_bool(_SETTINGS_PREFIX + 'checkApproved', False))
+        self.extract_min_freq_spin.setValue(
+            settings.get_int(_SETTINGS_PREFIX + 'extractMinFreq', 2))
+        self.extract_max_ngram_spin.setValue(
+            settings.get_int(_SETTINGS_PREFIX + 'extractMaxNgram', 4))
+        self.extract_top_n_spin.setValue(
+            settings.get_int(_SETTINGS_PREFIX + 'extractTopN', 100))
+        self.extract_min_pair_freq_spin.setValue(
+            settings.get_int(_SETTINGS_PREFIX + 'extractMinPairFreq', 2))
         self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
 
     def save_settings(self):
@@ -625,6 +650,11 @@ class TermManagementPage(QWidget):
         settings.set_value(_SETTINGS_PREFIX + 'tgtLang', lang_combo_code(self.glossary_tgt_lang))
         settings.set_value(_SETTINGS_PREFIX + 'checkHideClean', self.check_hide_clean_chk.isChecked())
         settings.set_value(_SETTINGS_PREFIX + 'checkApproved', self.check_approved_chk.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'extractMinFreq', self.extract_min_freq_spin.value())
+        settings.set_value(_SETTINGS_PREFIX + 'extractMaxNgram', self.extract_max_ngram_spin.value())
+        settings.set_value(_SETTINGS_PREFIX + 'extractTopN', self.extract_top_n_spin.value())
+        settings.set_value(_SETTINGS_PREFIX + 'extractMinPairFreq',
+                            self.extract_min_pair_freq_spin.value())
         settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
     # --------------------------------------------------------- check tab
@@ -652,7 +682,7 @@ class TermManagementPage(QWidget):
         glossary_layout = QHBoxLayout(glossary_row)
         glossary_layout.setContentsMargins(0, 0, 0, 0)
         self.check_glossary_edit = QLineEdit()
-        self.check_glossary_edit.setPlaceholderText('选择术语库文件（csv/xlsx）…')
+        self.check_glossary_edit.setPlaceholderText('选择术语库文件（csv/xlsx/tbx）…')
         glossary_browse_btn = QPushButton('浏览…')
         glossary_browse_btn.clicked.connect(self._browse_check_glossary)
         glossary_layout.addWidget(self.check_glossary_edit, 1)
@@ -874,6 +904,268 @@ class TermManagementPage(QWidget):
             self._log('出错了：%s' % e, 'error')
             return
         self._log('已导出报告到 %s' % path, 'success')
+
+    # ------------------------------------------------------- extract tab
+    def _build_extract_tab(self):
+        """DESIGN.md 15.2's term-extract GUI follow-up. Deliberately
+        simpler than the CLI's ``term-extract``/``term-extract-promote``
+        pair in two ways, both explained here rather than re-derived by a
+        future reader from the code alone:
+
+        - Input is restricted to corpus files (.tmx/.sdltm), not the full
+          bilingual-source (docx/xlsx/csv/tsv) dispatch ``tmtool
+          term-extract`` supports. Exposing that reader's full option set
+          (layout/sheet/column/delimiter/header) here would mean
+          duplicating most of ``corpus_convert``'s own form just for this
+          one tab; mining an existing TM someone already has open in this
+          same tool is the common case this GUI serves, and the CLI
+          remains the tool for a power-user batch of raw source files.
+        - No separate review-CSV file and no ``decision`` column: the
+          results table below *is* the review UI (a checkable "选中"
+          column plus editable 译文建议/领域/备注 cells), and "提升到
+          术语库" appends straight into this page's own in-memory
+          ``self._entries`` -- the same glossary the 术语库 tab is
+          already editing -- rather than writing a file this page would
+          then have to read back in. This page already has an open-edit-
+          save glossary workflow; routing through a CSV round trip here
+          would just be an extra file for no benefit a GUI reviewer gets
+          from it. The CLI's file-based two-step design earns its keep
+          there specifically because there's no in-memory glossary
+          session to append into between two separate command
+          invocations.
+
+        Promoted entries always get ``status='approved'`` (declared) --
+        no status picker in this tab. A term-extraction run proposes
+        *candidate recommended terms*, not candidate *forbidden*
+        translations; marking something forbidden is a deliberate,
+        specific decision this tab's statistical suggestions have no
+        basis for making on their own, so that stays a 术语库 tab / manual
+        add-entry action.
+
+        The "选中" checkbox column uses ``QTableWidgetItem``'s built-in
+        checkable-item support (``Qt.ItemIsUserCheckable`` + checkState),
+        not ``setCellWidget()`` -- see ``qa_check/page.py``'s docstring
+        for the real, hard-won reasons this codebase avoids cell widgets
+        in a QTableWidget where a plain item will do; a checkbox has no
+        content-driven sizing problem to begin with, so there's no reason
+        to take on that risk here.
+        """
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        note = QLabel('候选词由统计方法（词频 + 共现集中度）生成，不是语言学分析，'
+                       '一定会有噪音——每一行都需要人工判断，勾选"选中"只代表你已经看过并认可这一行，'
+                       '不代表提取结果本身可信')
+        note.setWordWrap(True)
+        note.setStyleSheet('color: #6B7280;')
+        layout.addWidget(note)
+
+        input_widget = QWidget()
+        input_layout = QVBoxLayout(input_widget)
+        input_layout.setContentsMargins(0, 0, 0, 0)
+        input_layout.setSpacing(10)
+
+        self.extract_input_list = QListWidget()
+        self.extract_input_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.extract_input_list.setMaximumHeight(90)
+        input_layout.addWidget(self.extract_input_list)
+
+        input_btn_row = QHBoxLayout()
+        add_input_btn = QPushButton('添加文件…')
+        add_input_btn.clicked.connect(self._add_extract_inputs)
+        remove_input_btn = QPushButton('移除选中')
+        remove_input_btn.clicked.connect(self._remove_selected_extract_inputs)
+        input_btn_row.addWidget(add_input_btn)
+        input_btn_row.addWidget(remove_input_btn)
+        input_btn_row.addStretch(1)
+        input_layout.addLayout(input_btn_row)
+
+        params_row = QHBoxLayout()
+        self.extract_min_freq_spin = QSpinBox()
+        self.extract_min_freq_spin.setRange(1, 1000)
+        self.extract_min_freq_spin.setValue(2)
+        self.extract_min_freq_spin.setToolTip('候选词至少要出现这么多次才会被考虑')
+        self.extract_max_ngram_spin = QSpinBox()
+        self.extract_max_ngram_spin.setRange(1, 20)
+        self.extract_max_ngram_spin.setValue(4)
+        self.extract_max_ngram_spin.setToolTip('候选词最长多少个词（非中日韩）或字符（中日韩）')
+        self.extract_top_n_spin = QSpinBox()
+        self.extract_top_n_spin.setRange(1, 10000)
+        self.extract_top_n_spin.setValue(100)
+        self.extract_top_n_spin.setToolTip('最多取多少个原文候选词并尝试配对译文')
+        self.extract_min_pair_freq_spin = QSpinBox()
+        self.extract_min_pair_freq_spin.setRange(1, 1000)
+        self.extract_min_pair_freq_spin.setValue(2)
+        self.extract_min_pair_freq_spin.setToolTip('译文候选至少要和原文候选共现这么多次才会被建议')
+        for spin in (self.extract_min_freq_spin, self.extract_max_ngram_spin,
+                     self.extract_top_n_spin, self.extract_min_pair_freq_spin):
+            spin.setMaximumWidth(90)
+        params_row.addLayout(labeled_field('最小频次', self.extract_min_freq_spin))
+        params_row.addLayout(labeled_field('最长候选', self.extract_max_ngram_spin))
+        params_row.addLayout(labeled_field('候选词上限', self.extract_top_n_spin))
+        params_row.addLayout(labeled_field('最小配对频次', self.extract_min_pair_freq_spin))
+        params_row.addStretch(1)
+        input_layout.addLayout(params_row)
+
+        layout.addWidget(section('输入文件（tmx/sdltm，语言对沿用术语库 tab 的设置）', input_widget))
+
+        action_row = QHBoxLayout()
+        self.extract_btn = QPushButton('开始提取')
+        self.extract_btn.setObjectName('primaryButton')
+        self.extract_btn.clicked.connect(self._start_extract)
+        self.extract_promote_btn = QPushButton('提升到术语库')
+        self.extract_promote_btn.setEnabled(False)
+        self.extract_promote_btn.setToolTip('把已勾选的行加入当前术语库（内存中，仍需在术语库 tab 保存）')
+        self.extract_promote_btn.clicked.connect(self._promote_extract_selection)
+        action_row.addWidget(self.extract_btn)
+        action_row.addWidget(self.extract_promote_btn)
+        action_row.addStretch(1)
+        layout.addLayout(action_row)
+
+        self.extract_summary_label = QLabel('')
+        self.extract_summary_label.setStyleSheet('color: #4B5262;')
+        layout.addWidget(self.extract_summary_label)
+
+        self.extract_table = QTableWidget(0, 7)
+        self.extract_table.setHorizontalHeaderLabels(
+            ['选中', '原文候选', '译文建议', '领域', '备注', '原文频次', '配对频次/集中度'])
+        self.extract_table.verticalHeader().setVisible(False)
+        header = self.extract_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.Stretch)
+        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # Only 选中/译文建议/领域/备注 are meant to be edited; 原文候选 and
+        # the two reference-number columns stay read-only via each item's
+        # own flags (set in _refresh_extract_table()) rather than a
+        # table-wide NoEditTriggers, since this table (unlike every other
+        # one in this codebase) needs some cells editable.
+        self.extract_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.extract_table.setShowGrid(False)
+        self.extract_table.setAlternatingRowColors(True)
+        layout.addWidget(section('候选结果', self.extract_table), 1)
+        return tab
+
+    def _add_extract_inputs(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, '选择文件', self._last_dir, _EXTRACT_CORPUS_FILTER)
+        if not paths:
+            return
+        self._last_dir = os.path.dirname(paths[0])
+        for path in paths:
+            if path not in self._extract_inputs:
+                self._extract_inputs.append(path)
+                self.extract_input_list.addItem(path)
+
+    def _remove_selected_extract_inputs(self):
+        rows = sorted({idx.row() for idx in self.extract_input_list.selectedIndexes()},
+                      reverse=True)
+        for row in rows:
+            self.extract_input_list.takeItem(row)
+            del self._extract_inputs[row]
+
+    def _start_extract(self):
+        if not self._extract_inputs:
+            self._log('请先添加至少一个 tmx/sdltm 文件', 'error')
+            return
+        self._extract_candidates = []
+        self.extract_table.setRowCount(0)
+        self.extract_summary_label.setText('')
+        self.extract_promote_btn.setEnabled(False)
+        self.extract_btn.setEnabled(False)
+        self._log('正在提取候选词…')
+        self._extract_worker = CallableWorker(
+            lambda: _extract_job(
+                list(self._extract_inputs), lang_combo_code(self.glossary_src_lang),
+                lang_combo_code(self.glossary_tgt_lang),
+                self.extract_min_freq_spin.value(), self.extract_max_ngram_spin.value(),
+                self.extract_top_n_spin.value(), self.extract_min_pair_freq_spin.value()),
+            parent=self)
+        self._extract_worker.finished_ok.connect(self._on_extract_ok)
+        self._extract_worker.finished_err.connect(self._on_extract_err)
+        self._extract_worker.start()
+
+    def _on_extract_ok(self, candidates):
+        self.extract_btn.setEnabled(True)
+        self._extract_candidates = candidates
+        paired = sum(1 for c in candidates if c['tgt_term'])
+        self.extract_summary_label.setText(
+            '共 %d 条候选，%d 条有译文建议（%.1f%%）——统计方法产生的建议，逐行核实后再勾选' % (
+                len(candidates), paired,
+                (paired / len(candidates) * 100) if candidates else 0.0))
+        self.extract_promote_btn.setEnabled(bool(candidates))
+        self._refresh_extract_table()
+        self._log('提取完成，共 %d 条候选' % len(candidates), 'success')
+
+    def _on_extract_err(self, message):
+        self.extract_btn.setEnabled(True)
+        self._log('出错了：%s' % message, 'error')
+
+    def _refresh_extract_table(self):
+        self.extract_table.setRowCount(len(self._extract_candidates))
+        for row, c in enumerate(self._extract_candidates):
+            check_item = QTableWidgetItem()
+            check_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            check_item.setCheckState(Qt.Unchecked)  # never pre-checked -- see tab docstring
+            self.extract_table.setItem(row, 0, check_item)
+
+            src_item = QTableWidgetItem(c['src_term'])
+            src_item.setFlags(src_item.flags() & ~Qt.ItemIsEditable)
+            self.extract_table.setItem(row, 1, src_item)
+
+            self.extract_table.setItem(row, 2, QTableWidgetItem(c.get('tgt_term', '')))
+            self.extract_table.setItem(row, 3, QTableWidgetItem(''))
+            self.extract_table.setItem(row, 4, QTableWidgetItem(''))
+
+            freq_item = QTableWidgetItem(str(c.get('src_freq', '')))
+            freq_item.setFlags(freq_item.flags() & ~Qt.ItemIsEditable)
+            self.extract_table.setItem(row, 5, freq_item)
+
+            pair_text = ('%s / %.2f' % (c.get('pair_freq', 0), c.get('concentration', 0.0))
+                         if c.get('tgt_term') else '-')
+            pair_item = QTableWidgetItem(pair_text)
+            pair_item.setFlags(pair_item.flags() & ~Qt.ItemIsEditable)
+            self.extract_table.setItem(row, 6, pair_item)
+
+    def _promote_extract_selection(self):
+        checked_rows = [row for row in range(self.extract_table.rowCount())
+                         if self.extract_table.item(row, 0).checkState() == Qt.Checked]
+        if not checked_rows:
+            self._log('请先勾选要提升的候选词', 'error')
+            return
+
+        # All-or-nothing on a blank tgt_term among the checked rows -- same
+        # guard language_tools.terms.extract.promote_reviewed_candidates()
+        # enforces for the CLI path, and the same reason: approving a
+        # src-only hit with no translation filled in is almost always an
+        # oversight, not something that should silently produce an empty
+        # glossary entry.
+        blank_rows = [row for row in checked_rows if not self.extract_table.item(row, 2).text().strip()]
+        if blank_rows:
+            self._log('第 %s 行已勾选但译文建议为空，请先填写译文或取消勾选' %
+                       '、'.join(str(r + 1) for r in blank_rows), 'error')
+            return
+
+        src_lang = lang_combo_code(self.glossary_src_lang)
+        tgt_lang = lang_combo_code(self.glossary_tgt_lang)
+        for row in checked_rows:
+            src_term = self.extract_table.item(row, 1).text()
+            tgt_term = self.extract_table.item(row, 2).text().strip()
+            domain = self.extract_table.item(row, 3).text().strip() or None
+            note = self.extract_table.item(row, 4).text().strip() or None
+            self._entries.append(TermEntry(
+                src_lang=src_lang, tgt_lang=tgt_lang, src_term=src_term, tgt_term=tgt_term,
+                status='approved', status_declared=True, domain=domain, note=note))
+            self.extract_table.item(row, 0).setCheckState(Qt.Unchecked)
+
+        self._dirty = True
+        self._refresh_entry_table()
+        self._sync_glossary_buttons()
+        self._log('已提升 %d 条候选词到术语库（还未保存到文件）' % len(checked_rows), 'success')
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):

@@ -1,8 +1,10 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 
 from language_tools.model import InlineNode, TranslationUnit
 from language_tools.tm import io as tm_io
-from toolbox.tools.tm_editor.page import TmEditorPage, _TUEntryDialog, _pick_save_extension
+from toolbox.tools.tm_editor.page import TmEditorPage, _NearDupDialog, _TUEntryDialog
+from toolbox.tools.tm_editor.page import _pick_save_extension
 from toolbox.widgets import lang_combo_code
 
 from conftest import tmx_path
@@ -437,3 +439,140 @@ def test_opening_the_inline_markup_fixture_flags_tagged_rows(qtbot, monkeypatch)
     tag_notes = [page.entry_table.item(r, 2).text() for r in range(page.entry_table.rowCount())]
     assert '含标签' in tag_notes  # at least one row from the fixture has markup
     assert '' in tag_notes        # and at least one doesn't
+
+
+# ---------------------------------------------------------- near-dup dialog
+
+def test_near_dup_dialog_finds_clusters_and_defaults_to_keeping_first(qtbot):
+    units = [
+        _u('Click OK to continue.', '点击确定以继续。'),
+        _u('Click OK to continue!', '点击确定以继续了！'),
+        _u('Totally unrelated content about the weather outside today.', '完全无关的内容。'),
+    ]
+    dialog = _NearDupDialog(None, units)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(0.8)
+    dialog._run_find()
+
+    assert dialog.results_table.rowCount() == 2
+    assert '共 1 簇，涉及 2 条记录' in dialog.summary_label.text()
+    # first row of the (only) cluster defaults to checked ("keep")
+    assert dialog.results_table.item(0, 0).checkState() == Qt.Checked
+    assert dialog.results_table.item(1, 0).checkState() == Qt.Unchecked
+
+
+def test_near_dup_dialog_no_clusters_below_threshold(qtbot):
+    units = [
+        _u('Click OK to continue.', '点击确定以继续。'),
+        _u('Totally unrelated content about the weather outside today.', '完全无关的内容。'),
+    ]
+    dialog = _NearDupDialog(None, units)
+    qtbot.addWidget(dialog)
+    dialog._run_find()
+    assert dialog.results_table.rowCount() == 0
+    assert '共 0 簇' in dialog.summary_label.text()
+    assert dialog.indices_to_remove() == []
+
+
+def test_near_dup_dialog_checking_a_row_unchecks_its_cluster_mates(qtbot):
+    units = [
+        _u('Click OK to continue.', '点击确定以继续。'),
+        _u('Click OK to continue!', '点击确定以继续了！'),
+        _u('Click OK to continue please.', '点击确定以继续吧！'),
+    ]
+    dialog = _NearDupDialog(None, units)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(0.6)
+    dialog._run_find()
+    assert dialog.results_table.rowCount() == 3
+
+    dialog.results_table.item(2, 0).setCheckState(Qt.Checked)
+    assert dialog.results_table.item(0, 0).checkState() == Qt.Unchecked
+    assert dialog.results_table.item(1, 0).checkState() == Qt.Unchecked
+    assert dialog.results_table.item(2, 0).checkState() == Qt.Checked
+
+
+def test_near_dup_dialog_cannot_uncheck_the_only_kept_row(qtbot):
+    units = [
+        _u('Click OK to continue.', '点击确定以继续。'),
+        _u('Click OK to continue!', '点击确定以继续了！'),
+    ]
+    dialog = _NearDupDialog(None, units)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(0.6)
+    dialog._run_find()
+    assert dialog.results_table.item(0, 0).checkState() == Qt.Checked
+    dialog.results_table.item(0, 0).setCheckState(Qt.Unchecked)
+    # blocked -- re-checked immediately, "keep nothing" isn't a valid state
+    assert dialog.results_table.item(0, 0).checkState() == Qt.Checked
+
+
+def test_near_dup_dialog_indices_to_remove_matches_original_list(qtbot):
+    keep = _u('Click OK to continue.', '点击确定以继续。')
+    remove_me = _u('Click OK to continue!', '点击确定以继续了！')
+    other = _u('Totally unrelated content about the weather outside today.', '完全无关。')
+    units = [other, keep, remove_me]  # order matters -- indices must track original positions
+    dialog = _NearDupDialog(None, units)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(0.8)
+    dialog._run_find()
+    assert dialog.indices_to_remove() == [2]  # remove_me's original index
+
+
+def test_near_dup_dialog_side_tgt_clusters_on_target_text(qtbot):
+    units = [
+        _u('An orange cat sleeps on the windowsill.', '点击确定以继续。'),
+        _u('The stock market fell sharply this afternoon.', '点击确定以继续了！'),
+    ]
+    dialog = _NearDupDialog(None, units)
+    qtbot.addWidget(dialog)
+    dialog.threshold_spin.setValue(0.8)
+    dialog.side_combo.setCurrentIndex(dialog.side_combo.findData('tgt'))
+    dialog._run_find()
+    assert dialog.results_table.rowCount() == 2
+
+
+# ------------------------------------------------- near-dup page integration
+
+def test_near_dup_button_disabled_flow_with_empty_tm(qtbot):
+    page = TmEditorPage()
+    qtbot.addWidget(page)
+    page._open_near_dup_dialog()
+    assert '没有记录' in page.status_label.text()
+
+
+def test_near_dup_dialog_cancelled_leaves_units_untouched(qtbot, monkeypatch):
+    page = TmEditorPage()
+    qtbot.addWidget(page)
+    page._units = [_u('Click OK to continue.', '点击确定以继续。'),
+                   _u('Click OK to continue!', '点击确定以继续了！')]
+    monkeypatch.setattr(_NearDupDialog, 'exec', lambda self: QDialog.Rejected)
+    page._open_near_dup_dialog()
+    assert len(page._units) == 2
+    assert page._dirty is False
+
+
+def test_near_dup_applied_removes_units_and_marks_dirty(qtbot, monkeypatch):
+    page = TmEditorPage()
+    qtbot.addWidget(page)
+    page._units = [
+        _u('Click OK to continue.', '点击确定以继续。'),
+        _u('Click OK to continue!', '点击确定以继续了！'),
+        _u('Totally unrelated content about the weather outside today.', '完全无关的内容。'),
+    ]
+
+    def fake_exec(self):
+        self.threshold_spin.setValue(0.8)
+        self._run_find()
+        return QDialog.Accepted
+    monkeypatch.setattr(_NearDupDialog, 'exec', fake_exec)
+
+    page._open_near_dup_dialog()
+    assert page._dirty is True
+    assert len(page._units) == 2
+    assert page.entry_table.rowCount() == 2
+    assert '已删除 1 条近重复记录' in page.status_label.text()
+    remaining_src = [u.src_text for u in page._units]
+    assert 'Totally unrelated content about the weather outside today.' in remaining_src
+    # exactly one of the two near-duplicate variants survived
+    assert sum(1 for s in remaining_src if s.startswith('Click OK to continue')) == 1
