@@ -79,6 +79,24 @@ print('wrote', len(units), 'TUs')
 biconvert tests/fixtures/docx/reversed_direction.docx \
     -o compatibility/fixtures/reversed \
     --src zh-CN --tgt en-US
+
+# large_unique (round-2 addition: same 1000-TU size as large, but every
+# segment unique — isolates the duplicate-segment suspect for the FGA
+# upgrade failure; see studio-readable.md "Round-2 plan")
+python -c "
+from language_tools import api
+from language_tools.model import TranslationUnit
+import os
+os.makedirs('compatibility/fixtures', exist_ok=True)
+from language_tools.writers import sdltm_writer
+units = [TranslationUnit(src_lang='en-US', tgt_lang='zh-CN',
+                         src_text=f'Dr. Smith arrived at 9 a.m. and started the meeting. Record {i:04d}.',
+                         tgt_text=f'史密斯博士上午9点到达，开始了会议。记录{i:04d}。')
+         for i in range(1000)]
+sdltm_writer.write('compatibility/fixtures/large_unique.sdltm',
+                   units, 'en-US', 'zh-CN', 'large-unique-fixture')
+print('wrote', len(units), 'TUs')
+"
 ```
 
 Then copy the resulting `*.sdltm` files to a Windows machine with Trados
@@ -95,3 +113,5 @@ each fixture exercises a distinct code path in `sdltm_writer.py`:
 - `numbering_mismatch` — non-trivial alignment output
 - `large` — first-open "updating indexes" progress dialog
 - `reversed` — zh→en direction (language code wiring in `translation_memories` row)
+- `large_unique` — 1000 unique segments; control against `large` for the
+  FGA upgrade duplicate-segment suspect (round 2, 2026-09-23)

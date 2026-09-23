@@ -48,6 +48,7 @@ Pick fixtures that exercise distinct code paths in `sdltm_writer`:
 | `numbering_mismatch.sdltm`                     | `tests/fixtures/docx/numbering_mismatch.docx` | Larger TU count, exercises non-trivial alignment output                     |
 | `large.sdltm`                                   | Concatenated fixtures, ~1000+ TUs | Triggers Studio's first-open "updating indexes" progress dialog           |
 | `reversed.sdltm`                                | `tests/fixtures/docx/reversed_direction.docx` | zh→en direction; tests language code wiring in `translation_memories` row |
+| `large_unique.sdltm`                             | Hand-built via API, 1000 unique TUs | Round-2 addition: same size as `large` but zero duplicates — isolates the duplicate-segment suspect for the FGA upgrade failure |
 
 ## Status summary
 
@@ -115,11 +116,16 @@ Sdl.LanguagePlatform.Core.LanguagePlatformException: The TM does not support FGA
 So the "< 1,000 segments threshold" theory is **out**. Corrected
 understanding from this round:
 
-1. **The prompt is not a size issue at all.** `sdltm_writer` emits
-   `parameters.VERSION = '8.06'`, which is older than what Studio 2024
-   expects, so *every* TM we write is flagged as needing the upLIFT/FGA
-   upgrade — regardless of TU count. The prompt appearing is expected
-   behavior for our Level 2 claim; the loop is what's not.
+1. **The prompt is not a size issue at all.** The trigger is the
+   *absence* of the FGA structures — above all the
+   `translation_memories.fga_support` column, which only exists after a
+   successful upgrade. (`sdltm_writer` emits `parameters.VERSION =
+   '8.06'`; the 2026-09-23 schema research below showed Studio keeps
+   `VERSION='8.06'` even in a fully upgraded TM, so VERSION is **not**
+   the trigger — an early guess in this section, corrected.) Every TM we
+   write is therefore flagged as needing the upLIFT/FGA upgrade,
+   regardless of TU count. The prompt appearing is expected behavior for
+   our Level 2 claim; the loop is what's not.
 2. **"Silent no-op" was actually a silent-in-UI failure.** The upgrade
    wizard's progress dialog can stay "in progress" indefinitely (12+ min
    observed, zero CPU) even though the background job already failed
@@ -147,6 +153,90 @@ Level 2 claim remains defensible with the caveat: **Studio can open,
 browse and search everything we write; edit-after-upgrade works at least
 for non-duplicate TMs; the upgrade itself fails on `large.sdltm`** —
 tracked below until root-caused.
+
+### Offline schema research 2026-09-23 — what Studio's upgrade actually does
+
+No Studio interaction needed: the round-1 control experiment left us a
+Studio-**upgraded** copy of `basic.sdltm` on the test machine. Diffing it
+against the pristine writer output gives the authoritative answer for
+free. A Studio 2024 FGA upgrade:
+
+- **adds 4 columns to `translation_memories`**: `fga_support` (=1),
+  `data_version` (=1), `text_context_match_type` (=1),
+  `id_context_match` (=0) — `fga_support` is what the
+  "The TM does not support FGA" exception checks;
+- **adds 9 columns to `translation_units`**: `source_token_data`,
+  `target_token_data`, `alignment_data`, `align_model_date`,
+  `insert_date`, `tokenization_sig_hash`, `source_tags`, `target_tags`,
+  `fragment_hash`;
+- **adds 7 tables**: `translation_unit_fragments`
+  (`translation_unit_id INT FK→translation_units ON DELETE CASCADE,
+  fragment_hash INTEGER NOT NULL` + indexes on both columns),
+  `translation_unit_idcontexts`, `trans_model`, `trans_model_rev`,
+  `vocab_src`, `vocab_trg`, `vocabfilter`;
+- **adds 3 `parameters` rows** (with `translation_memory_id` NULL):
+  `TokenDataVersion=1`, `AlignmentDataVersion=1`, `VERSION_CREATED=8.12`;
+- **leaves `VERSION` at `8.06`** and leaves the existing 13 tables and
+  TU data untouched (pure additive `ALTER TABLE`/`CREATE TABLE`).
+
+Notably the upgraded 4-TU `basic` had **all 7 new tables empty** —
+consistent with the published "model needs ≥1,000/5,000 segments"
+guidance being about *content*, while the upgrade itself is structural.
+If Studio accepts "structures present but empty" as upgraded (round-2
+probe: reopen the upgraded basic copy, expect *no* prompt), then the
+writer fix is purely additive DDL — emit the post-upgrade schema and the
+prompt/edit gaps disappear together. The pinned baseline tests in
+`tests/test_sdltm_schema_baseline.py` guard that any such change is
+deliberate.
+
+### Round-2 plan (2026-09-23)
+
+Method correction from round 1: after clicking Upgrade, **do not watch
+the wizard UI** (it can hang 12+ min after the job already finished);
+wait ~90 s and read the newest `TranslationMemoryUpgrade-*.log` in the
+working folder instead.
+
+1. **Upgraded-basic probe** — reopen the round-1 upgraded
+   `basic.sdltm` copy: expect *no* upgrade prompt, and Edit→Commit to
+   work. Confirms "empty FGA structures satisfy Studio".
+2. **special_chars + Upgrade** — click Yes this time; then Edit→Commit.
+   If it upgrades cleanly, the hand-built API path is exonerated and the
+   `large` failure narrows to content (duplicates).
+3. **`large_unique.sdltm` (new fixture, deduped 1000 TUs) + Upgrade** —
+   the duplicate-segment suspect, tested directly.
+4. **`large.sdltm` upgrade retest** — confirm the failure is
+   reproducible and not a round-1 fluke (e.g. file lock from its own
+   open editor tab).
+
+Outcome decision table: if 3 passes and 4 fails → duplicates are the
+cause, fix = dedupe guidance + writer-side duplicate handling; if 2
+passes and 3 fails → size is the cause after all; if 4 passes this time
+→ round-1 failure was environmental, chase the lock instead.
+
+### Round-2 partial results (paused 2026-09-23, tests 2–4 not yet run)
+
+- **Test 1 PASS — the upgraded-basic probe confirms the fix direction**:
+  reopening the round-1 upgraded `basic.sdltm` (450 KB, `fga_support=1`,
+  all 7 FGA tables present but **empty**) shows **no upgrade prompt**,
+  and its Edit→Commit was already verified working. So Studio accepts
+  "structures present, contents empty" as fully upgraded → the writer
+  fix really is purely additive DDL (see schema research above).
+- **Trigger-condition discovery**: double-clicking a TM already
+  registered in the TM tree does **not** raise the upgrade prompt; only
+  first open via File → Open Translation Memory does. Next session,
+  trigger upgrades deterministically via **Batch Tasks → Update
+  Translation Memories** (or open never-registered files through the
+  Open dialog).
+- Remaining: test 2 (special_chars + upgrade → Edit), test 3
+  (`large_unique` + upgrade, search `Record 0500`, Edit), test 4 (`large`
+  upgrade retest). Fixture files and `large_unique.sdltm` are already in
+  the working folder; success/failure is judged from the newest
+  `TranslationMemoryUpgrade-*.log`, not the wizard UI.
+- Housekeeping for future evidence rounds: the upgraded fixture's
+  `translation_units.change_user` recorded `MACHINE\username` (Studio
+  stamps the Windows identity on commit). The .sdltm files are not
+  committed, but any DB field dumps pasted into this ledger must be
+  scrubbed first.
 
 This is exactly the kind of Level-2 claim that can't be settled from the
 sandbox — it needs a real Studio install and should get its own
