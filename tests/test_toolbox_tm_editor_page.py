@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
 from language_tools.model import InlineNode, TranslationUnit
 from language_tools.tm import io as tm_io
 from toolbox.tools.tm_editor.page import TmEditorPage, _NearDupDialog, _TUEntryDialog
-from toolbox.tools.tm_editor.page import _pick_save_extension
+from toolbox.tools.tm_editor.page import _document_to_nodes, _pick_save_extension
 from toolbox.widgets import lang_combo_code
 
 from conftest import tmx_path
@@ -44,7 +44,9 @@ def test_dialog_result_values_strips_whitespace(qtbot):
     dialog.src_edit.setPlainText('  hello  ')
     dialog.tgt_edit.setPlainText('  你好  ')
     values = dialog.result_values()
-    assert values == {'src_text': 'hello', 'tgt_text': '你好'}
+    assert values == {
+        'src_text': 'hello', 'tgt_text': '你好', 'src_markup': None, 'tgt_markup': None,
+    }
 
 
 def test_dialog_shows_no_markup_warning_for_plain_unit(qtbot):
@@ -63,7 +65,19 @@ def test_dialog_shows_markup_warning_for_tagged_unit(qtbot):
              for i in range(dialog.layout().rowCount() * 2)
              if dialog.layout().itemAt(i) and dialog.layout().itemAt(i).widget()
              and hasattr(dialog.layout().itemAt(i).widget(), 'text')]
-    assert any('标签' in t and '清除' in t for t in texts)
+    assert any('标签' in t and '底色' in t for t in texts)
+
+
+def test_markup_round_trips_through_the_rich_text_edit_untouched(qtbot):
+    # A tag sandwiched between two text nodes: prefill highlights it,
+    # result_values() should hand back the same three nodes (adjacent
+    # same-kind runs would also be expected to merge, but there are none
+    # here to merge).
+    markup = [InlineNode('text', 'click '), InlineNode('tag', '<ph/>'), InlineNode('text', ' to continue')]
+    unit = _u('click <ph/> to continue', '', src_markup=markup)
+    dialog = _TUEntryDialog(unit=unit)
+    assert dialog.src_edit.toPlainText() == 'click <ph/> to continue'
+    assert _document_to_nodes(dialog.src_edit) == markup
 
 
 # --------------------------------------------------------------- CRUD table
@@ -119,21 +133,40 @@ def test_edit_selected_entry_updates_table(qtbot, monkeypatch):
     assert page.entry_table.item(0, 1).text() == '大数据（已更新）'
 
 
-def test_editing_a_unit_clears_its_markup(qtbot, monkeypatch):
+def test_editing_a_unit_preserves_markup_when_untouched(qtbot, monkeypatch):
     # The core correctness guard this tool exists to get right -- see the
-    # module docstring's explanation of tmx_writer preferring markup over
-    # src_text/tgt_text when both are present.
+    # module docstring: tags round-trip through the dialog's rich-text
+    # edits now, they don't get silently dropped by an unrelated edit.
     def fake_exec(self):
-        self.src_edit.setPlainText('save (fixed)')
-        return QDialog.Accepted
+        return QDialog.Accepted  # accept without touching either edit
     monkeypatch.setattr(_TUEntryDialog, 'exec', fake_exec)
 
-    tagged = _u('save', '保存', src_markup=[InlineNode('text', 'save')])
+    tagged = _u('save', '保存', src_markup=[InlineNode('tag', '<b>'), InlineNode('text', 'save')])
     page = TmEditorPage()
     qtbot.addWidget(page)
     page._units = [tagged]
     page._refresh_entry_table()
     assert page.entry_table.item(0, 2).text() == '含标签'
+
+    page.entry_table.selectRow(0)
+    page._edit_selected_entry()
+    assert page._units[0].src_text == 'save'
+    assert page._units[0].src_markup == [InlineNode('tag', '<b>'), InlineNode('text', 'save')]
+    assert page.entry_table.item(0, 2).text() == '含标签'
+
+
+def test_editing_a_unit_drops_markup_when_the_tag_run_is_replaced(qtbot, monkeypatch):
+    def fake_exec(self):
+        # Replaces the whole document, tag run included, with plain text.
+        self.src_edit.setPlainText('save (fixed)')
+        return QDialog.Accepted
+    monkeypatch.setattr(_TUEntryDialog, 'exec', fake_exec)
+
+    tagged = _u('save', '保存', src_markup=[InlineNode('tag', '<b>'), InlineNode('text', 'save')])
+    page = TmEditorPage()
+    qtbot.addWidget(page)
+    page._units = [tagged]
+    page._refresh_entry_table()
 
     page.entry_table.selectRow(0)
     page._edit_selected_entry()

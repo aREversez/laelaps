@@ -42,24 +42,27 @@ same reasoning as term_management's _TermEntryDialog: validation (原文/
 cell editing doesn't have without its own itemChanged rollback plumbing.
 One more thing the dialog handles that term_management's doesn't need to:
 a unit can carry inline-markup (TMX <bpt>/<ph>/... tags -- see
-language_tools/model.py's docstring). The dialog only edits plain
-src_text/tgt_text, so accepting it always clears both markup fields --
-tmx_writer prefers markup over src_text/tgt_text when both are present
-(see tmx_writer.py's _seg_body()), so leaving old markup in place after
-a text edit would make the edit silently not show up in the saved file.
-The dialog warns about this up front when editing a unit that has any.
+language_tools/model.py's docstring). src_edit/tgt_edit are QTextEdits, not
+plain text fields: a tag's raw XML fragment is inserted as a highlighted
+run (see _tag_char_format()), and accepting the dialog walks the resulting
+QTextDocument back into an InlineNode list (_document_to_nodes()), so tags
+untouched by the edit survive it, moved/retyped tag text is taken
+verbatim as the new tag content, and a tag run the user deletes is gone.
+A unit with no markup to begin with just gets a plain QTextEdit -- no tag
+runs ever appear, same as a QPlainTextEdit would behave.
 """
 import os
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QTextCharFormat
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QMenu,
-    QMessageBox, QPlainTextEdit, QPushButton, QSpinBox, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QSpinBox, QTableWidget,
+    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from language_tools.model import TranslationUnit
+from language_tools.model import InlineNode, TranslationUnit
 from language_tools.tm import io as tm_io
 from language_tools.tm import near_dup as near_dup_module
 from toolbox import settings
@@ -82,6 +85,95 @@ def _pick_save_extension(path, selected_filter):
     return path + ('.sdltm' if 'sdltm' in selected_filter.lower() else '.tmx')
 
 
+# Custom QTextCharFormat property (Qt reserves PropertyId < UserProperty)
+# used to mark a run of text in _TUEntryDialog's rich-text edits as tag
+# content, so _document_to_nodes() can tell tag runs from plain text runs
+# without relying on the exact highlight color.
+_TAG_FORMAT_PROPERTY = QTextCharFormat.UserProperty + 1
+_TAG_HIGHLIGHT_COLOR = '#FDE68A'  # light amber, consistent with a "handle with care" cue
+
+
+def _tag_char_format():
+    fmt = QTextCharFormat()
+    fmt.setBackground(QColor(_TAG_HIGHLIGHT_COLOR))
+    fmt.setProperty(_TAG_FORMAT_PROPERTY, True)
+    return fmt
+
+
+def _load_markup_into_edit(edit, text, markup):
+    """Populate ``edit`` (a QTextEdit) from ``markup`` if present, tag runs
+    highlighted via ``_tag_char_format()``, else fall back to plain
+    ``text``."""
+    if not markup:
+        edit.setPlainText(text)
+        return
+    cursor = edit.textCursor()
+    plain_format = QTextCharFormat()
+    tag_format = _tag_char_format()
+    for node in markup:
+        cursor.insertText(node.content, tag_format if node.kind == 'tag' else plain_format)
+    # Reset the insertion format at the end so continued typing there
+    # doesn't inherit a trailing tag run's highlight.
+    cursor.setCharFormat(plain_format)
+    edit.setTextCursor(cursor)
+
+
+def _document_to_nodes(edit):
+    """Walk ``edit``'s QTextDocument and rebuild the ``InlineNode`` list,
+    merging adjacent same-kind fragments. A run is 'tag' iff it carries
+    ``_TAG_FORMAT_PROPERTY``; everything else -- including block/paragraph
+    breaks, folded to '\\n' -- is 'text'."""
+    nodes = []
+    current_kind = None
+    current_chunks = []
+
+    def _flush():
+        if current_kind is not None and current_chunks:
+            nodes.append(InlineNode(kind=current_kind, content=''.join(current_chunks)))
+
+    block = edit.document().begin()
+    while block.isValid():
+        it = block.begin()
+        while not it.atEnd():
+            frag = it.fragment()
+            if frag.isValid():
+                kind = 'tag' if frag.charFormat().property(_TAG_FORMAT_PROPERTY) else 'text'
+                if kind != current_kind:
+                    _flush()
+                    current_kind, current_chunks = kind, []
+                current_chunks.append(frag.text())
+            it += 1
+        block = block.next()
+        if block.isValid():
+            # Paragraph break between this block and the next.
+            if current_kind != 'text':
+                _flush()
+                current_kind, current_chunks = 'text', []
+            current_chunks.append('\n')
+    _flush()
+    return nodes
+
+
+def _visible_text(nodes):
+    return ''.join(n.content for n in nodes if n.kind == 'text')
+
+
+def _strip_nodes(nodes):
+    """Strip leading/trailing whitespace the same way ``.strip()`` on the
+    visible text would, but applied to the (possibly tag-bounded) node list
+    itself, so ``src_text``/``tgt_text`` (always stripped) and
+    ``src_markup``/``tgt_markup`` (what tmx_writer actually serializes when
+    present -- see this module's docstring) stay in sync. Only trims
+    'text' nodes at the two ends; a leading/trailing 'tag' node is left
+    alone, since stripping into a tag's raw XML would corrupt it."""
+    nodes = list(nodes)
+    if nodes and nodes[0].kind == 'text':
+        nodes[0] = InlineNode(kind='text', content=nodes[0].content.lstrip())
+    if nodes and nodes[-1].kind == 'text':
+        nodes[-1] = InlineNode(kind='text', content=nodes[-1].content.rstrip())
+    return [n for n in nodes if n.content]
+
+
 class _TUEntryDialog(QDialog):
     """Modal add/edit form for one translation unit."""
 
@@ -91,11 +183,14 @@ class _TUEntryDialog(QDialog):
         self.setMinimumWidth(420)
         form = QFormLayout(self)
 
-        self.src_edit = QPlainTextEdit(unit.src_text if unit else '')
-        self.tgt_edit = QPlainTextEdit(unit.tgt_text if unit else '')
+        self.src_edit = QTextEdit()
+        self.tgt_edit = QTextEdit()
+        _load_markup_into_edit(self.src_edit, unit.src_text if unit else '', unit.src_markup if unit else None)
+        _load_markup_into_edit(self.tgt_edit, unit.tgt_text if unit else '', unit.tgt_markup if unit else None)
         for edit in (self.src_edit, self.tgt_edit):
             edit.setMaximumHeight(90)
-            # Default QPlainTextEdit behavior inserts a literal tab
+            edit.setAcceptRichText(False)  # paste as plain text; only our own tag runs carry formatting
+            # Default rich-text-edit behavior inserts a literal tab
             # character; Tab should move focus to the next field instead.
             edit.setTabChangesFocus(True)
 
@@ -107,7 +202,10 @@ class _TUEntryDialog(QDialog):
         form.addRow('译文', self.tgt_edit)
 
         if unit is not None and (unit.src_markup or unit.tgt_markup):
-            markup_note = QLabel('该条目包含内联标签格式，保存修改后标签会被清除，只保留纯文本')
+            markup_note = QLabel(
+                '底色标出的部分是内联标签内容；直接在里面改字会改到标签本身，'
+                '紧贴标签边界继续输入可能会带上底色（Qt 富文本的固有行为），'
+                '如非有意请把光标移开再输入')
             markup_note.setWordWrap(True)
             markup_note.setStyleSheet('color: %s;' % LOG_COLORS['info'])
             form.addRow(markup_note)
@@ -127,9 +225,13 @@ class _TUEntryDialog(QDialog):
         self.accept()
 
     def result_values(self):
+        src_nodes = _strip_nodes(_document_to_nodes(self.src_edit))
+        tgt_nodes = _strip_nodes(_document_to_nodes(self.tgt_edit))
         return {
-            'src_text': self.src_edit.toPlainText().strip(),
-            'tgt_text': self.tgt_edit.toPlainText().strip(),
+            'src_text': _visible_text(src_nodes),
+            'tgt_text': _visible_text(tgt_nodes),
+            'src_markup': src_nodes if any(n.kind == 'tag' for n in src_nodes) else None,
+            'tgt_markup': tgt_nodes if any(n.kind == 'tag' for n in tgt_nodes) else None,
         }
 
 
@@ -461,10 +563,8 @@ class TmEditorPage(QWidget):
         dialog = _TUEntryDialog(self, unit=unit)
         if dialog.exec() == QDialog.Accepted:
             values = dialog.result_values()
-            # src_markup/tgt_markup dropped unconditionally -- see this
-            # module's docstring for why (the dialog only edits plain
-            # text, and tmx_writer prefers markup over text when both are
-            # present, so stale markup would silently swallow the edit).
+            # values already carries src_markup/tgt_markup rebuilt from
+            # the dialog's rich-text edits -- see this module's docstring.
             self._units[row] = TranslationUnit(
                 src_lang=unit.src_lang, tgt_lang=unit.tgt_lang, **values)
             self._dirty = True
