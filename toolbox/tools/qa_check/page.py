@@ -32,30 +32,35 @@ a punch list quickly but means a long sentence can't actually be read
 without opening the exported CSV. Checking it switches those two columns
 to word-wrapped, auto-growing rows instead.
 
-For a row with NUMBER_MISMATCH, PLACEHOLDER_MISMATCH, or URL_MISMATCH,
-every relevant span (``qa.find_number_spans()``,
-``find_placeholder_spans()``, ``find_url_spans()`` respectively) in
-原文/译文 is highlighted (bold, danger-red -- the one semantic "problem"
-color this app's stylesheet defines, not a new decorative one) --
-independent of the wrap toggle, since a reviewer scanning the default
-single-line view needs exactly as much help spotting what to compare as
-one who expanded a row to read it in full; wrap only controls whether the
-*rest* of the sentence is elided or shown in full, not whether anything
-gets marked. All three checks share one highlight color rather than each
-getting its own: a row can have more than one of these issues at once
-(see e.g. ``test_table_shows_multiple_issue_labels_joined_for_one_row``),
-and a per-type color palette would mean either learning a legend or the
+For a row with NUMBER_MISMATCH, PLACEHOLDER_MISMATCH, URL_MISMATCH,
+PUNCTUATION_UNBALANCED, or WIDTH_MIXING, every relevant span
+(``qa.find_number_spans()``, ``find_placeholder_spans()``,
+``find_url_spans()``, ``find_punctuation_pair_spans()``,
+``find_width_mixing_spans()`` respectively) in 原文/译文 is highlighted
+(bold, danger-red -- the one semantic "problem" color this app's
+stylesheet defines, not a new decorative one) -- independent of the wrap
+toggle, since a reviewer scanning the default single-line view needs
+exactly as much help spotting what to compare as one who expanded a row
+to read it in full; wrap only controls whether the *rest* of the
+sentence is elided or shown in full, not whether anything gets marked.
+All five checks share one highlight color rather than each getting its
+own: a row can have more than one of these issues at once (see e.g.
+``test_table_shows_multiple_issue_labels_joined_for_one_row``), and a
+per-type color palette would mean either learning a legend or the
 colors becoming noise; the "问题类型" column already says *what* kind of
 issue it is, so highlighting's only job is *where* to look, not *which*
 check flagged it. TAG_MISMATCH is deliberately not included: it's
 detected over structured inline-markup nodes, not simple substring
 matches on raw text, so there's no straightforward span to point at (see
 qa.py's ``_tag_type_counts()``); LENGTH_RATIO_OUTLIER, EMPTY_SOURCE/
-_TARGET, and SOURCE_/TARGET_CONFLICT are whole-segment properties with no
-particular substring to blame either. See ``_HIGHLIGHT_HINT``: a small
-caption above the table explains what the red text means, shown only
-when the current (filtered) results actually contain a row with at least
-one of the three highlightable issue types -- no point explaining a
+_TARGET, SOURCE_/TARGET_CONFLICT, and LEADING_TRAILING_SPACE are
+whole-segment properties with no particular substring to blame either --
+LEADING_TRAILING_SPACE specifically has a "span" (the leading/trailing
+run) but it's whitespace, which renders as nothing to look at even in
+red, so there's no point highlighting it. See ``_HIGHLIGHT_HINT``: a
+small caption above the table explains what the red text means, shown
+only when the current (filtered) results actually contain a row with at
+least one of the highlightable issue types -- no point explaining a
 color the user isn't looking at. The point of highlighting a
 NUMBER_MISMATCH row specifically isn't to mark which number is "the"
 wrong one -- with a set-based comparison there often isn't a single
@@ -240,13 +245,15 @@ _CELL_TOP_PADDING = 6
 _ISSUE_HIGHLIGHT_STYLE = 'color:#B23B3B; font-weight:600;'
 
 _HIGHLIGHT_HINT = (
-    '提示：红色文字为"数字不匹配/占位符不匹配/URL 不匹配"检测涉及的内容，'
-    '请核对原文与译文是否一致')
+    '提示：红色文字为"数字不匹配/占位符不匹配/URL 不匹配/括号引号不成对/'
+    '全半角混用"检测涉及的内容，请核对原文与译文是否一致')
 
 _SPAN_FINDERS = {
     'NUMBER_MISMATCH': qa_module.find_number_spans,
     'PLACEHOLDER_MISMATCH': qa_module.find_placeholder_spans,
     'URL_MISMATCH': qa_module.find_url_spans,
+    'PUNCTUATION_UNBALANCED': qa_module.find_punctuation_pair_spans,
+    'WIDTH_MIXING': qa_module.find_width_mixing_spans,
 }
 
 _ISSUE_TOOLTIPS = {
@@ -257,6 +264,9 @@ _ISSUE_TOOLTIPS = {
     'PLACEHOLDER_MISMATCH': '{name}/%s 这类代码占位符在译文里被改动或丢失',
     'URL_MISMATCH': '原文里的链接在译文里丢失或被改动',
     'TAG_MISMATCH': '原文和译文的格式标签（如加粗）数量对不上',
+    'PUNCTUATION_UNBALANCED': '原文或译文里的括号、引号数量不成对',
+    'WIDTH_MIXING': '同一句里全角和半角标点混用',
+    'LEADING_TRAILING_SPACE': '原文或译文开头/结尾有多余空格',
     'SOURCE_CONFLICT': '同一句原文在语料库里对应了不止一种译文',
     'TARGET_CONFLICT': '同一句译文在语料库里对应了不止一种原文',
 }

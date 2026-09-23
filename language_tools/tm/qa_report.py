@@ -18,8 +18,10 @@ from language_tools.tm import io as tm_io
 # --type validation and the GUI's filter dropdown so both stay in sync
 # with qa.py without hand-copying the list a second time.
 ISSUE_TYPES = [
-    'EMPTY_SOURCE', 'EMPTY_TARGET', 'LENGTH_RATIO_OUTLIER',
+    'EMPTY_SOURCE', 'EMPTY_TARGET', 'LEADING_TRAILING_SPACE',
+    'LENGTH_RATIO_OUTLIER',
     'NUMBER_MISMATCH', 'PLACEHOLDER_MISMATCH', 'URL_MISMATCH', 'TAG_MISMATCH',
+    'PUNCTUATION_UNBALANCED', 'WIDTH_MIXING',
     'SOURCE_CONFLICT', 'TARGET_CONFLICT',
 ]
 

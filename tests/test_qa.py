@@ -373,6 +373,91 @@ def test_tag_mismatch_flags_extra_tag_on_target_side():
     assert 'TAG_MISMATCH' in units[0].meta['qa_issues']
 
 
+def test_punctuation_unbalanced_flags_missing_closing_bracket():
+    units = [_tu('Click (OK to continue.', '点击（确定以继续。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PUNCTUATION_UNBALANCED' in units[0].meta['qa_issues']
+    assert units[0].meta['qa_details']['PUNCTUATION_UNBALANCED']['src'] == {'(': (1, 0)}
+    assert units[0].meta['qa_details']['PUNCTUATION_UNBALANCED']['tgt'] == {'（': (1, 0)}
+
+
+def test_no_punctuation_unbalanced_when_pairs_match():
+    units = [_tu('Click (OK) to continue.', '点击（确定）以继续。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PUNCTUATION_UNBALANCED' not in units[0].meta['qa_issues']
+
+
+def test_no_punctuation_unbalanced_for_straight_quote_apostrophe():
+    # Straight quotes/apostrophes are deliberately excluded -- "don't"
+    # alone would otherwise register as one unmatched `'`.
+    units = [_tu("Don't stop.", '别停。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PUNCTUATION_UNBALANCED' not in units[0].meta['qa_issues']
+
+
+def test_punctuation_unbalanced_flags_smart_quote_mismatch():
+    units = [_tu('He said “hello.', '他说“你好。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PUNCTUATION_UNBALANCED' in units[0].meta['qa_issues']
+
+
+def test_find_punctuation_pair_spans_returns_original_substrings():
+    text = 'Click (OK to continue.'
+    spans = qa.find_punctuation_pair_spans(text)
+    assert [text[s:e] for s, e in spans] == ['(']
+
+
+def test_width_mixing_flags_half_and_full_width_same_mark():
+    # tgt uses both the half-width and full-width form of "?" -- a style
+    # inconsistency, even though each individual occurrence is valid
+    # punctuation on its own.
+    units = [_tu('Really? Yes!', '真的?还是？')]
+    qa.run(units, length_ratio=1.0)
+    assert 'WIDTH_MIXING' in units[0].meta['qa_issues']
+    assert units[0].meta['qa_details']['WIDTH_MIXING']['tgt'] == ['?']
+
+
+def test_no_width_mixing_when_consistently_full_width():
+    units = [_tu('Really? Yes!', '真的？还是？')]
+    qa.run(units, length_ratio=1.0)
+    assert 'WIDTH_MIXING' not in units[0].meta['qa_issues']
+
+
+def test_no_width_mixing_for_comma_or_period_thousands_and_decimal_use():
+    # Comma/period deliberately excluded -- see module docstring; a
+    # thousands-separated number next to an unrelated full-width comma
+    # elsewhere in the sentence is not a style inconsistency.
+    units = [_tu('Revenue was 1,000 units.', '销售额为1000个单位，同比增长。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'WIDTH_MIXING' not in units[0].meta['qa_issues']
+
+
+def test_find_width_mixing_spans_returns_original_substrings():
+    text = '等等！真的?'
+    spans = qa.find_width_mixing_spans(text)
+    assert sorted(text[s:e] for s, e in spans) == ['?', '！']
+
+
+def test_leading_trailing_space_flags_source_and_target_independently():
+    units = [_tu(' Hello', 'Hi '), _tu('Clean.', 'Clean.')]
+    qa.run(units, length_ratio=1.0)
+    assert 'LEADING_TRAILING_SPACE' in units[0].meta['qa_issues']
+    assert set(units[0].meta['qa_details']['LEADING_TRAILING_SPACE']['sides']) == {'src', 'tgt'}
+    assert 'LEADING_TRAILING_SPACE' not in units[1].meta['qa_issues']
+
+
+def test_leading_trailing_space_detects_cjk_fullwidth_space():
+    units = [_tu('Hello', '\u3000你好')]
+    qa.run(units, length_ratio=1.0)
+    assert 'LEADING_TRAILING_SPACE' in units[0].meta['qa_issues']
+
+
+def test_no_leading_trailing_space_for_internal_whitespace_only():
+    units = [_tu('Hello world', '你好 世界')]
+    qa.run(units, length_ratio=1.0)
+    assert 'LEADING_TRAILING_SPACE' not in units[0].meta['qa_issues']
+
+
 def test_inline_markup_fixture_end_to_end():
     # Real TMX with hand-written bpt/ept/ph/hi inline tags, read through
     # the actual tmx_reader (not hand-built InlineNode lists) -- exercises

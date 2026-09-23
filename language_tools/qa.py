@@ -95,6 +95,35 @@ vs ``3 miles``, ``100°F`` vs ``38°C``) -- unlike month names and
 magnitude words, these are approximate-equivalence judgment calls, not
 unambiguous rule-checkable equivalence, and stay a matter for human
 review rather than something this check silently clears.
+
+v3 (this commit) adds three punctuation/whitespace checks (DESIGN.md
+section 15.2, "标点规范专项 QA") -- unlike v2's src/tgt *comparison*
+checks, these are single-segment style/well-formedness checks applied to
+src and tgt independently:
+
+- PUNCTUATION_UNBALANCED: open/close counts disagree for a bracket or
+  quote pair (parens, CJK brackets, curly/smart quotes) within one side's
+  text. Count-based per pair type, not stack-based nesting -- same
+  reasoning as TAG_MISMATCH above: free-form prose doesn't reliably nest
+  the way code does, so "do the counts match" is the check that doesn't
+  false-fire on legitimate variation. Straight quotes (``"``, ``'``) are
+  excluded entirely: the same glyph serves as both open and close in
+  plain-text English, and ``'`` doubles as an apostrophe (``don't``), so
+  counting them would misfire on ordinary prose, not catch real defects.
+- WIDTH_MIXING: a segment uses both the half-width and full-width form of
+  the same punctuation mark (e.g. both ``!`` and ``！``). Comma and period
+  are deliberately excluded from the checked set -- both are common
+  thousands-separator/decimal/abbreviation punctuation unrelated to CJK
+  typesetting style, and would mostly false-fire the same way raw-digit
+  comparison did before NUMBER_MISMATCH's currency/thousands handling
+  (see above); the remaining pairs checked essentially never serve double
+  duty that way.
+- LEADING_TRAILING_SPACE: src or tgt has leading/trailing whitespace,
+  including the CJK fullwidth space (U+3000) that's invisible in most
+  editors and a common artifact of pasting from Word/PDF-derived text.
+  Checked against the *raw* text, before the ``.strip()`` this function
+  otherwise works on for every other check -- stripping first would throw
+  away exactly the thing being checked for.
 """
 import re
 
@@ -379,6 +408,76 @@ def expected_length_ratio(units):
     return src_len / max(tgt_len, 1)
 
 
+# Bracket/quote pairing: see the v3 module-docstring note above for why
+# straight quotes are excluded and why this is count-based rather than
+# stack-based.
+_PAIR_CHARS = {
+    '(': ')', '（': '）', '[': ']', '{': '}',
+    '《': '》', '「': '」', '『': '』', '【': '】',
+    '“': '”', '‘': '’',
+}
+
+
+def _unbalanced_pairs(text):
+    """Return {open_char: (open_count, close_count)} for every pair in
+    ``_PAIR_CHARS`` whose open/close counts disagree in ``text``. Empty
+    dict means every pair present is balanced (or absent entirely).
+    """
+    out = {}
+    for open_c, close_c in _PAIR_CHARS.items():
+        o, c = text.count(open_c), text.count(close_c)
+        if o != c:
+            out[open_c] = (o, c)
+    return out
+
+
+def find_punctuation_pair_spans(text):
+    """Spans of every char in ``_PAIR_CHARS`` (open or close side) present
+    in ``text``, for GUI highlighting of a PUNCTUATION_UNBALANCED row --
+    same "highlight every occurrence, let the reviewer judge which one is
+    actually missing its partner" approach as ``find_number_spans()`` et
+    al., since the check itself can only say *that* counts disagree, not
+    reliably *which* specific occurrence is the culprit.
+    """
+    chars = set(_PAIR_CHARS) | set(_PAIR_CHARS.values())
+    pattern = '[' + re.escape(''.join(chars)) + ']'
+    return sorted(m.span() for m in re.finditer(pattern, text))
+
+
+# Full-width/half-width equivalents worth flagging as mixed style within
+# one segment. Comma/period excluded on purpose -- see v3 module-docstring
+# note above.
+_WIDTH_PAIRS = {
+    '!': '！', '?': '？', ':': '：', ';': '；', '(': '（', ')': '）',
+}
+
+
+def _width_mixing(text):
+    """Return the set of half-width chars from ``_WIDTH_PAIRS`` whose
+    full-width counterpart also appears in ``text`` -- the segment uses
+    both styles of the same punctuation mark.
+    """
+    return {half for half, full in _WIDTH_PAIRS.items() if half in text and full in text}
+
+
+def find_width_mixing_spans(text):
+    """Spans of every half/full-width char from ``_WIDTH_PAIRS`` present
+    in ``text``, for GUI highlighting of a WIDTH_MIXING row.
+    """
+    chars = set(_WIDTH_PAIRS) | set(_WIDTH_PAIRS.values())
+    pattern = '[' + re.escape(''.join(chars)) + ']'
+    return sorted(m.span() for m in re.finditer(pattern, text))
+
+
+# CJK fullwidth space (U+3000, "　") counts as leading/trailing whitespace
+# alongside ASCII whitespace -- see v3 module-docstring note above.
+_LEADING_TRAILING_WS_RE = re.compile(r'^[\s\u3000]+|[\s\u3000]+$')
+
+
+def _has_leading_trailing_ws(text):
+    return bool(_LEADING_TRAILING_WS_RE.search(text))
+
+
 # Human-readable (Chinese) label per issue code, for any presentation
 # layer that shouldn't show the raw code to a non-technical reviewer --
 # the CSV export (csv_writer.py) and the QA-check GUI page both import
@@ -398,6 +497,9 @@ ISSUE_LABELS = {
     'PLACEHOLDER_MISMATCH': '占位符不匹配',
     'URL_MISMATCH': 'URL 不匹配',
     'TAG_MISMATCH': '标签不匹配',
+    'PUNCTUATION_UNBALANCED': '括号/引号不成对',
+    'WIDTH_MIXING': '全半角混用',
+    'LEADING_TRAILING_SPACE': '首尾空格',
     'SOURCE_CONFLICT': '原文冲突',
     'TARGET_CONFLICT': '译文冲突',
 }
@@ -434,6 +536,13 @@ def run(units, length_ratio):
             issues.append('EMPTY_SOURCE')
         if not tgt:
             issues.append('EMPTY_TARGET')
+        # Checked against the *raw*, unstripped text -- see v3
+        # module-docstring note above.
+        ws_sides = [side for side, raw in (('src', u.src_text), ('tgt', u.tgt_text))
+                    if raw and _has_leading_trailing_ws(raw)]
+        if ws_sides:
+            issues.append('LEADING_TRAILING_SPACE')
+            u.meta.setdefault('qa_details', {})['LEADING_TRAILING_SPACE'] = {'sides': ws_sides}
         if src and tgt:
             src_len = len(re.sub(r'\s+', '', src))
             tgt_len = len(re.sub(r'\s+', '', tgt))
@@ -456,6 +565,8 @@ def run(units, length_ratio):
                 # whether a recurring false-positive pattern is worth a
                 # new high-confidence equivalence rule (month names,
                 # magnitude words, ...) versus a genuine mismatch.
+                # PUNCTUATION_UNBALANCED/WIDTH_MIXING below get their own
+                # 'qa_details' entries the same way.
                 u.meta.setdefault('qa_details', {})['NUMBER_MISMATCH'] = {
                     'src_numbers': sorted(src_numbers),
                     'tgt_numbers': sorted(tgt_numbers),
@@ -466,6 +577,18 @@ def run(units, length_ratio):
                 issues.append('URL_MISMATCH')
             if _tag_type_counts(u.src_markup) != _tag_type_counts(u.tgt_markup):
                 issues.append('TAG_MISMATCH')
+            src_unbalanced, tgt_unbalanced = _unbalanced_pairs(src), _unbalanced_pairs(tgt)
+            if src_unbalanced or tgt_unbalanced:
+                issues.append('PUNCTUATION_UNBALANCED')
+                u.meta.setdefault('qa_details', {})['PUNCTUATION_UNBALANCED'] = {
+                    'src': src_unbalanced, 'tgt': tgt_unbalanced,
+                }
+            src_mixed, tgt_mixed = _width_mixing(src), _width_mixing(tgt)
+            if src_mixed or tgt_mixed:
+                issues.append('WIDTH_MIXING')
+                u.meta.setdefault('qa_details', {})['WIDTH_MIXING'] = {
+                    'src': sorted(src_mixed), 'tgt': sorted(tgt_mixed),
+                }
         if len(src_to_targets.get(src, ())) > 1:
             issues.append('SOURCE_CONFLICT')
         if len(tgt_to_sources.get(tgt, ())) > 1:

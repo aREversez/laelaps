@@ -454,7 +454,7 @@ class TermEntry:
 - 双语对照审阅文档导出（QA 命中高亮的 HTML 页，供客户/审校看，`reports/render.py` 基础设施已有，只加一种报告类型）
 - 批量预检（preflight）：批量转换前体检 docx 版式置信度、合并单元格、空表格、语言方向异常
 - 语料资产盘点增强：`stats` 加按 `modified_at` 的语料新旧分布（aging）、语言对 × 领域交叉表
-- 标点规范专项 QA：括号/引号/书名号配对、全半角混用、首尾空格——现有 QA 覆盖数字/占位符/URL，标点类目前是漏网的
+- **标点规范专项 QA** ✅（2026-09）：`language_tools/qa.py` 新增三项检查，走既有 `qa.run()` 管线——PUNCTUATION_UNBALANCED（括号/引号/书名号配对，覆盖 ASCII 括号、CJK 书名号《》『』方括号【】、智能引号“”‘’；直引号 `"`/`'` 故意不检，因为英文里同一个字形既当开也当关，`'` 还兼职撇号，"don't" 这种正常句子会被误判）、WIDTH_MIXING（同一段落里同一个标点的半角/全角同时出现，如 `!` 和 `！` 都在；逗号句号故意排除在外，两者是千分位/小数点/缩写里的常客，跟数字混在一起会撞上 NUMBER_MISMATCH 早就绕开过的那类假阳性）、LEADING_TRAILING_SPACE（原文/译文首尾空白，含容易被忽略的 CJK 全角空格 U+3000）。三项都是 count-based/单段自查，不是 src/tgt 语义比对，判定标准延续 TAG_MISMATCH"只比数量不比顺序"的克制原则。落地是纯粹的现有基础设施复用：`tm/qa_report.py` 的 `ISSUE_TYPES`、CLI `--type`、CSV 导出、报告 adapter、【QA 检查】页过滤下拉框和结果表都是通用遍历 `ISSUE_TYPES`/`ISSUE_LABELS`，加两个字典条目就自动接入，没有新增专门的接线代码。GUI 高亮延续"标红全部涉及字符，人工判断哪个是问题"的既有套路（`find_punctuation_pair_spans`/`find_width_mixing_spans`，与 `find_number_spans` 等同一思路）；LEADING_TRAILING_SPACE 不参与高亮——空白字符标红也看不见，没有意义。测试见 `tests/test_qa.py`。
 - 导出 JSONL 训练格式：csv_writer 旁加一个 writer，纯本地格式转换，不违反"不上传文件"定位
 
 **第三优先（战略性，需要单独权衡工作量或产品定位）**：
