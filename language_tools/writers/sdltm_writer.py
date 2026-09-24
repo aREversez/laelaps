@@ -1,17 +1,32 @@
 """Write a Trados Studio .sdltm translation memory (SQLite).
 
 Compatibility target: **Level 2 — Studio-readable**, not Level 3.
-Studio can open, browse, and edit a TM written by this module. The
-``fuzzy_data`` table is deliberately left empty; Studio recomputes its own
-fuzzy-match index the first time the TM is used (it is not designed to be
-populated by third-party writers, and Trados' actual per-segment hashing
-algorithm for that index is private/undocumented). ``source_hash`` /
-``target_hash`` here are a deterministic FNV-1a64 stand-in good enough for
-this writer's own bookkeeping, not a reproduction of Trados' real hash.
+Studio can open, browse, and edit a TM written by this module. Since the
+round-2/3 findings (compatibility/studio-readable.md) the DDL emits the
+**post-FGA-upgrade schema** — `fga_support`/`data_version`/
+`text_context_match_type`/`id_context_match` on `translation_memories`,
+the 9 FGA columns on `translation_units`, the 7 fragment/model tables, and
+the `TokenDataVersion`/`AlignmentDataVersion`/`VERSION_CREATED`
+parameters — all captured verbatim from a Studio-2024-upgraded fixture.
+That state is what Studio accepts as fully upgraded: TU edits commit
+normally (verified at 1000 TUs with empty FGA tables), so the writer does
+not need to fabricate Trados-private token/model data (upgraded TUs keep
+those NULL until Studio itself edits a row).
 
-DDL and insert logic are unchanged from the seed script -- this is schema
-fidelity to the real Trados format, not something to improve on without a
-concrete, tested reason.
+Caveats that remain Studio-side, not writer bugs: the "An upgrade is
+available" prompt on File → Open Translation Memory appears even for
+fully-upgraded TMs (confirmed against a Studio-upgraded native fixture),
+and clicking Yes on a ≥1,000-TU TM still dies in "Build Translation
+Model" ("The TM does not support FGA") — advise clicking No; commits
+work regardless once this schema is present.
+
+The ``fuzzy_data`` table is deliberately left empty; Studio recomputes its
+own fuzzy-match index the first time the TM is used (it is not designed to
+be populated by third-party writers, and Trados' actual per-segment
+hashing algorithm for that index is private/undocumented).
+``source_hash`` / ``target_hash`` here are a deterministic FNV-1a64
+stand-in good enough for this writer's own bookkeeping, not a reproduction
+of Trados' real hash.
 """
 import datetime
 import os
@@ -27,7 +42,10 @@ DDL = [
 \tcreation_date DATETIME NOT NULL, expiration_date DATETIME,
 \tfuzzy_indexes INT NOT NULL, last_recompute_date DATETIME,
 \tlast_recompute_size INT, flags INT NOT NULL DEFAULT 0,
-\ttucount INT NOT NULL DEFAULT 0)""",
+\ttucount INT NOT NULL DEFAULT 0, fga_support int not null default 1,
+\tdata_version INTEGER NOT NULL DEFAULT 1,
+\ttext_context_match_type INTEGER NOT NULL DEFAULT 1,
+\tid_context_match BIT DEFAULT 0)""",
     """CREATE TABLE translation_units(
 \tid INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, guid BLOB NOT NULL,
 \ttranslation_memory_id INT NOT NULL CONSTRAINT FK_tu_tm REFERENCES translation_memories(id) ON DELETE CASCADE,
@@ -35,7 +53,10 @@ DDL = [
 \ttarget_segment TEXT, creation_date DATETIME NOT NULL, creation_user TEXT NOT NULL,
 \tchange_date DATETIME NOT NULL, change_user TEXT NOT NULL,
 \tlast_used_date DATETIME NOT NULL, last_used_user TEXT NOT NULL,
-\tusage_counter INT NOT NULL, flags INT)""",
+\tusage_counter INT NOT NULL, flags INT,
+\tsource_token_data BLOB, target_token_data BLOB, alignment_data BLOB,
+\talign_model_date DATETIME, insert_date DATETIME, tokenization_sig_hash INTEGER,
+\tsource_tags BLOB, target_tags BLOB, fragment_hash integer)""",
     """CREATE TABLE attributes(id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
 \tguid BLOB NOT NULL, name TEXT NOT NULL, type INT NOT NULL, tm_id INT NOT NULL,
 CONSTRAINT CK_a UNIQUE (name, tm_id))""",
@@ -63,6 +84,24 @@ CONSTRAINT PK_tr PRIMARY KEY (tm_id, resource_id))""",
 CONSTRAINT PK_fi1 PRIMARY KEY (translation_memory_id, translation_unit_id))""",
     """CREATE TABLE parameters(translation_memory_id INT NULL CONSTRAINT FK_p_tm REFERENCES translation_memories ON DELETE CASCADE,
 \tname TEXT NOT NULL, value TEXT NOT NULL)""",
+    # --- FGA / upLIFT structures, verbatim from a Studio 2024-upgraded TM
+    # (round-2 schema research, compatibility/studio-readable.md). Studio
+    # treats their presence — even fully empty — as "upgraded".
+    """CREATE TABLE translation_unit_fragments(translation_unit_id INT NOT NULL
+\tCONSTRAINT FK_tuf_tu REFERENCES translation_units(id) ON DELETE CASCADE,
+\tfragment_hash INTEGER NOT NULL)""",
+    """CREATE TABLE translation_unit_idcontexts(
+\ttranslation_unit_id INT NOT NULL
+\t\tCONSTRAINT FK_translation_unit_idcontexts REFERENCES translation_units(id) ON DELETE CASCADE,
+\tidcontext TEXT NOT NULL,
+\tCONSTRAINT PK_tuidc PRIMARY KEY (translation_unit_id, idcontext))""",
+    """CREATE TABLE trans_model(id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+\tsourcekey INTEGER NOT NULL, targetkey INTEGER NOT NULL, floatval REAL NOT NULL)""",
+    """CREATE TABLE trans_model_rev(id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+\tsourcekey INTEGER NOT NULL, targetkey INTEGER NOT NULL, floatval REAL NOT NULL)""",
+    """CREATE TABLE vocab_src(id INT NOT NULL, vocab TEXT NOT NULL, freq INT NOT NULL)""",
+    """CREATE TABLE vocab_trg(id INT NOT NULL, vocab TEXT NOT NULL, freq INT NOT NULL)""",
+    """CREATE TABLE vocabfilter(token TEXT NOT NULL)""",
     "CREATE INDEX idx_Resources1 ON resources (type, language)",
     "CREATE INDEX idx_Resources2 ON resources (id)",
     "CREATE INDEX idx_attributes1 ON attributes (tm_id)",
@@ -73,6 +112,16 @@ CONSTRAINT PK_fi1 PRIMARY KEY (translation_memory_id, translation_unit_id))""",
     "CREATE INDEX idx_string_attributes ON string_attributes (translation_unit_id, attribute_id)",
     "CREATE INDEX idx_tus_hashes ON translation_units(translation_memory_id, source_hash, target_hash)",
     "CREATE INDEX p_main ON parameters(translation_memory_id, name)",
+    "CREATE INDEX idx_tufragments_ids ON translation_unit_fragments(translation_unit_id)",
+    "CREATE INDEX idx_tufragments_hashes ON translation_unit_fragments(fragment_hash)",
+    "CREATE INDEX idx_tus_idcontexts ON translation_unit_idcontexts(translation_unit_id, idcontext)",
+    "CREATE INDEX idx_trans_model_sourcekey ON trans_model (sourcekey)",
+    "CREATE INDEX idx_trans_model_targetkey ON trans_model (targetkey)",
+    "CREATE INDEX idx_trans_model_rev_sourcekey ON trans_model_rev (sourcekey)",
+    "CREATE INDEX idx_trans_model_rev_targetkey ON trans_model_rev (targetkey)",
+    "CREATE INDEX idx_vocab_src ON vocab_src (vocab)",
+    "CREATE INDEX idx_vocab_trg ON vocab_trg (vocab)",
+    "CREATE INDEX idx_vocabfilter ON vocabfilter (token)",
 ]
 
 
@@ -121,6 +170,14 @@ def write(path, units, src_lang, tgt_lang, name):
                  'laelaps', now, '9999-12-31 23:59:59', 9, None, None, 0, 0))
     for k, v in (('VERSION', '8.06'), ('FREQUENCYTOP', '1000'), ('LAST_ANALYZE', '0')):
         con.execute('INSERT INTO parameters VALUES(?,?,?)', (1, k, v))
+    # FGA-era markers written by Studio's upgrade; NULL tm_id as observed.
+    # Deliberately NOT writing TranslationModelName/Version — those appear
+    # only when a model is actually built, and a half-populated model is
+    # what poisoned the round-3 manual fixture ("only supports 1
+    # translation model").
+    for k, v in (('TokenDataVersion', '1'), ('AlignmentDataVersion', '1'),
+                 ('VERSION_CREATED', '8.12')):
+        con.execute('INSERT INTO parameters VALUES(?,?,?)', (None, k, v))
     con.execute('INSERT INTO attributes(guid,name,type,tm_id) VALUES(?,?,?,?)',
                 (uuid.uuid4().bytes, 'StructureContext', 2, 1))
     n = 0
