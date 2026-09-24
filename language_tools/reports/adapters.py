@@ -190,3 +190,34 @@ def from_compare_report(report):
             for entry in report['conflicts']]
     table = ReportTable(columns=['Source'] + labels, rows=rows) if rows else None
     return Report(title='TM Comparison', summary_lines=lines, table=table)
+
+
+def from_stats_summary(s):
+    """Adapts ``tm.stats.compute()``'s full stats dict (DESIGN.md 15.2's
+    "语料资产盘点增强" included -- ``aging``/``lang_pair_by_domain``, see
+    ``stats.py``'s module docstring for what those actually measure) into
+    one inventory report.
+
+    One table with a leading "Breakdown" category column, not three
+    separate tables: ``render.Report`` only holds one ``ReportTable``, and
+    three clearly-labeled row groups in one table is simpler for a reader
+    to scan than juggling three separate report files would be.
+    """
+    lines = [
+        'Total segments: %d' % s['total'],
+        'Unique pairs: %d' % s['unique_pairs'],
+        'Duplicates: %d (%.1f%%)' % (s['duplicate_pairs'], s['duplicate_rate'] * 100),
+        'Empty source: %d' % s['empty_source'],
+        'Empty target: %d' % s['empty_target'],
+        'Length ratio (src/tgt chars): %.3f' % s['length_ratio'],
+    ]
+    rows = []
+    for pair, count in sorted(s['lang_pairs'].items()):
+        rows.append(['Language pair', pair, str(count)])
+    for year, count in sorted(s['aging'].items()):
+        rows.append(['Aging (modified_at year)', year, str(count)])
+    for pair in sorted(s['lang_pair_by_domain']):
+        for domain, count in sorted(s['lang_pair_by_domain'][pair].items()):
+            rows.append(['Language pair x domain', '%s / %s' % (pair, domain), str(count)])
+    table = ReportTable(columns=['Breakdown', 'Key', 'Count'], rows=rows) if rows else None
+    return Report(title='Corpus Inventory', summary_lines=lines, table=table)

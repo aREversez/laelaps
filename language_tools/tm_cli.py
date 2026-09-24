@@ -159,7 +159,9 @@ def _cmd_compare(args):
 
 
 def _cmd_stats(args):
-    units = tm_io.read_corpus(args.input)
+    units = []
+    for path in args.inputs:
+        units.extend(tm_io.read_corpus(path))
     s = stats_module.compute(units)
     print('Total=%d Unique=%d Duplicates=%d (%.1f%%)' % (
         s['total'], s['unique_pairs'], s['duplicate_pairs'], s['duplicate_rate'] * 100))
@@ -167,6 +169,17 @@ def _cmd_stats(args):
         s['empty_source'], s['empty_target'], s['length_ratio']))
     for pair, count in sorted(s['lang_pairs'].items()):
         print('  %s: %d' % (pair, count))
+    print('Aging (by modified_at year):')
+    for year, count in sorted(s['aging'].items()):
+        print('  %s: %d' % (year, count))
+    print('Language pair x domain:')
+    for pair in sorted(s['lang_pair_by_domain']):
+        for domain, count in sorted(s['lang_pair_by_domain'][pair].items()):
+            print('  %s / %s: %d' % (pair, domain, count))
+    if args.report:
+        rc = _write_report(args.report, report_adapters.from_stats_summary(s))
+        if rc:
+            return rc
     return 0
 
 
@@ -443,7 +456,18 @@ def build_parser():
     compare_p.set_defaults(func=_cmd_compare)
 
     stats_p = sub.add_parser('stats', help='print corpus statistics')
-    stats_p.add_argument('input', help='input .tmx or .sdltm file')
+    stats_p.add_argument('inputs', nargs='+',
+                          help='one or more .tmx/.sdltm files -- stats are computed over all '
+                               'of them combined (a plain union, not deduplicated -- run merge '
+                               'first for that). Multiple inputs is what makes lang-pair x '
+                               'domain actually useful from the CLI: TMX/SDLTM don\'t carry '
+                               'per-unit provenance across a save, so a single already-merged '
+                               'file has lost which project each segment came from -- see '
+                               'tm/stats.py\'s module docstring')
+    stats_p.add_argument('--report', metavar='PATH',
+                          help='write a summary report (totals, lang-pair breakdown, aging by '
+                               'modified_at year, lang-pair x domain cross-tab) to PATH as HTML '
+                               'or PDF, by extension')
     stats_p.set_defaults(func=_cmd_stats)
 
     qa_p = sub.add_parser('qa', help='run QA checks against a corpus file')

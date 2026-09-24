@@ -5,10 +5,11 @@ from language_tools.reports import adapters
 from language_tools.tm import compare as compare_module
 from language_tools.tm import leverage as leverage_module
 from language_tools.tm import qa_report as qa_report_module
+from language_tools.tm import stats as stats_module
 
 
-def _u(src, tgt, src_lang='en-US', tgt_lang='zh-CN'):
-    return TranslationUnit(src_lang=src_lang, tgt_lang=tgt_lang, src_text=src, tgt_text=tgt)
+def _u(src, tgt, src_lang='en-US', tgt_lang='zh-CN', **kw):
+    return TranslationUnit(src_lang=src_lang, tgt_lang=tgt_lang, src_text=src, tgt_text=tgt, **kw)
 
 
 def test_from_qa_summary_includes_total_and_flagged_pct():
@@ -174,3 +175,30 @@ def test_from_bilingual_review_truncates_past_row_cap(monkeypatch):
     report = adapters.from_bilingual_review(units)
     assert len(report.table.rows) == 2
     assert any('Showing first 2 of 3 flagged segments' in line for line in report.summary_lines)
+
+
+def test_from_stats_summary_includes_totals_in_lines():
+    units = [_u('A', 'a'), _u('A', 'a')]
+    s = stats_module.compute(units)
+    report = adapters.from_stats_summary(s)
+    assert report.title == 'Corpus Inventory'
+    assert any('Total segments: 2' in line for line in report.summary_lines)
+    assert any('Unique pairs: 1' in line for line in report.summary_lines)
+
+
+def test_from_stats_summary_table_has_lang_pair_aging_and_domain_rows():
+    units = [
+        _u('A', 'a', source_file='acme.tmx', modified_at='2024-01-01 00:00:00'),
+        _u('B', 'b', source_file='acme.tmx', modified_at='2025-01-01 00:00:00'),
+    ]
+    s = stats_module.compute(units)
+    report = adapters.from_stats_summary(s)
+    categories = {row[0] for row in report.table.rows}
+    assert categories == {'Language pair', 'Aging (modified_at year)', 'Language pair x domain'}
+    assert ['Language pair x domain', 'en-US-zh-CN / acme.tmx', '2'] in report.table.rows
+
+
+def test_from_stats_summary_no_table_for_empty_corpus():
+    s = stats_module.compute([])
+    report = adapters.from_stats_summary(s)
+    assert report.table is None

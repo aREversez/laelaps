@@ -388,6 +388,56 @@ def test_stats_end_to_end(qtbot, tmp_path):
     assert rows['去重后条数'] == '2'
     assert '语言对 en-US-zh-CN' in rows
     assert rows['语言对 en-US-zh-CN'] == '3 条'
+    assert rows['更新年份 未知'] == '3 条'  # tmx_reader doesn't populate modified_at
+
+
+def test_stats_export_report_disabled_until_a_run_succeeds(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    assert not page.stats_export_report_btn.isEnabled()
+    page.stats_input_edit.setText(str(src))
+    page.stats_btn.click()
+    qtbot.waitUntil(lambda: page.stats_btn.isEnabled(), timeout=5000)
+    assert page.stats_export_report_btn.isEnabled()
+
+
+def test_stats_export_report_disabled_again_after_a_failed_rerun(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.stats_input_edit.setText(str(src))
+    page.stats_btn.click()
+    qtbot.waitUntil(lambda: page.stats_btn.isEnabled(), timeout=5000)
+    assert page.stats_export_report_btn.isEnabled()
+
+    src.unlink()
+    page.stats_btn.click()
+    qtbot.waitUntil(lambda: page.stats_btn.isEnabled(), timeout=5000)
+    assert not page.stats_export_report_btn.isEnabled()
+
+
+def test_stats_export_report_writes_html(qtbot, tmp_path, monkeypatch):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好'), _u('Bye', '再见')])
+    out = tmp_path / 'report.html'
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.stats_input_edit.setText(str(src))
+    page.stats_btn.click()
+    qtbot.waitUntil(lambda: page.stats_btn.isEnabled(), timeout=5000)
+
+    monkeypatch.setattr(
+        'toolbox.tools.tm_maintenance.page.QFileDialog.getSaveFileName',
+        lambda *a, **kw: (str(out), 'HTML (*.html)'))
+    page.stats_export_report_btn.click()
+    assert '<title>Corpus Inventory</title>' in out.read_text(encoding='utf-8')
+    assert '已导出报告' in page.log.toPlainText()
 
 
 def test_stats_table_is_cleared_before_a_new_run(qtbot, tmp_path):

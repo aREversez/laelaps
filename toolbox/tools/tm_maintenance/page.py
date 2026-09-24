@@ -33,11 +33,14 @@ the whole point of comparing N files is that N isn't fixed. Clean/merge
 stay log-based: each produces one outcome (how many were removed/merged/
 resolved), which a single log line already states clearly.
 
-leverage/compare/qa_check are the three ``tmtool`` subcommands with a
-``--report`` (HTML/PDF summary export, see ``language_tools/reports/``) --
-here that's a second export button next to the existing CSV one,
-``_export_report()`` shared by both tabs (only the adapter call and the
-source data differ) rather than one copy per tab.
+``tmtool``'s leverage/compare/qa_check/stats subcommands all have a
+``--report`` flag (HTML/PDF summary export, see ``language_tools/
+reports/``); of those, leverage/compare/stats are tabs in this file, and
+each gets a "导出报告…" button wired to the shared
+``_start_export_report()`` (only the adapter call and the source data
+differ per tab) -- a second export button next to the existing CSV one
+for leverage/compare, and the only export button for stats, which has
+no CSV export of its own.
 
 Settings persistence: implements the optional ``restore_settings()``/
 ``save_settings()`` hooks ``main_window.py`` checks for (see
@@ -145,6 +148,7 @@ class TmMaintenancePage(QWidget):
         self._stats_worker = None
         self._leverage_units = None    # last leverage analyze() result, for export
         self._compare_report = None    # last compare() result, for export
+        self._last_stats = None        # last stats.compute() result, for export
         self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         self._build_ui()
 
@@ -459,8 +463,13 @@ class TmMaintenancePage(QWidget):
         self.stats_btn = QPushButton('查看统计')
         self.stats_btn.setObjectName('primaryButton')
         self.stats_btn.clicked.connect(self._start_stats)
+        self.stats_export_report_btn = QPushButton('导出报告…')
+        self.stats_export_report_btn.setEnabled(False)
+        self.stats_export_report_btn.setToolTip('导出为 HTML 或 PDF，适合给非技术干系人看')
+        self.stats_export_report_btn.clicked.connect(self._export_stats_report)
         btn_row = QHBoxLayout()
         btn_row.addWidget(self.stats_btn)
+        btn_row.addWidget(self.stats_export_report_btn)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
 
@@ -873,6 +882,8 @@ class TmMaintenancePage(QWidget):
 
     def _start_stats(self):
         self._set_stats_table_rows([])
+        self._last_stats = None
+        self.stats_export_report_btn.setEnabled(False)
         error = self._validate_stats()
         if error:
             self._log(error, 'error')
@@ -888,6 +899,8 @@ class TmMaintenancePage(QWidget):
 
     def _on_stats_ok(self, s):
         self.stats_btn.setEnabled(True)
+        self._last_stats = s
+        self.stats_export_report_btn.setEnabled(True)
         rows = [
             ('总条数', str(s['total'])),
             ('去重后条数', str(s['unique_pairs'])),
@@ -898,6 +911,11 @@ class TmMaintenancePage(QWidget):
         ]
         for pair, count in sorted(s['lang_pairs'].items()):
             rows.append(('语言对 %s' % pair, '%d 条' % count))
+        for year, count in sorted(s['aging'].items()):
+            rows.append(('更新年份 %s' % ('未知' if year == 'unknown' else year), '%d 条' % count))
+        for pair in sorted(s['lang_pair_by_domain']):
+            for domain, count in sorted(s['lang_pair_by_domain'][pair].items()):
+                rows.append(('%s / %s' % (pair, domain), '%d 条' % count))
         self._set_stats_table_rows(rows)
         self._log('统计完成', 'success')
 
@@ -905,3 +923,8 @@ class TmMaintenancePage(QWidget):
         self.stats_btn.setEnabled(True)
         self._set_stats_table_rows([])
         self._log('出错了：%s' % message, 'error')
+
+    def _export_stats_report(self):
+        if not self._last_stats:
+            return
+        self._start_export_report(report_adapters.from_stats_summary(self._last_stats), '语料统计报告')

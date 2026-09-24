@@ -152,6 +152,43 @@ def test_stats_prints_summary(tmp_path):
     assert 'en-US-zh-CN' in result.stdout
 
 
+def test_stats_combines_multiple_inputs(tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Bye', '再见'), _u('Hi', '嗨')])
+    result = _run(['stats', str(a), str(b)])
+    assert result.returncode == 0, result.stderr
+    assert 'Total=3' in result.stdout
+
+
+def test_stats_prints_aging_and_domain_cross_tab(tmp_path):
+    a = tmp_path / 'projA.tmx'
+    b = tmp_path / 'projB.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Bye', '再见')])
+
+    result = _run(['stats', str(a), str(b)])
+    assert result.returncode == 0, result.stderr
+    assert 'Total=2' in result.stdout
+    assert 'Aging (by modified_at year):' in result.stdout
+    assert 'unknown: 2' in result.stdout  # tmx_reader doesn't populate modified_at
+    assert 'Language pair x domain:' in result.stdout
+    assert 'projA.tmx' in result.stdout
+    assert 'projB.tmx' in result.stdout
+
+
+def test_stats_report_writes_html(tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好'), _u('Bye', '再见')])
+    out = tmp_path / 'inventory.html'
+    result = _run(['stats', str(src), '--report', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Corpus Inventory</title>' in content
+
+
 def test_unsupported_format_errors_cleanly(tmp_path):
     bad = tmp_path / 'in.txt'
     bad.write_text('not a corpus file')
