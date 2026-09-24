@@ -56,3 +56,34 @@ def test_explicit_layout_override():
     import pytest
     with pytest.raises(ValueError):
         docx.read(fixture_path('table_layout.docx'), layout='numbered')
+
+
+def test_sample_column_text_returns_src_and_tgt_samples():
+    src_sample, tgt_sample = docx_table.sample_column_text(fixture_path('table_layout.docx'))
+    assert 'Dr. Smith arrived at 9 a.m.' in src_sample
+    assert '史密斯博士上午9点到达' in tgt_sample
+
+
+def test_sample_column_text_empty_when_no_qualifying_table():
+    src_sample, tgt_sample = docx_table.sample_column_text(fixture_path('basic.docx'))
+    assert (src_sample, tgt_sample) == ('', '')
+
+
+def test_sample_column_text_caps_at_max_chars():
+    src_sample, _ = docx_table.sample_column_text(fixture_path('table_layout.docx'), max_chars=10)
+    assert len(src_sample) <= 10
+
+
+def test_iter_body_tables_with_merge_flags_counts_merged_header_cell():
+    from language_tools.readers._ooxml import iter_body_tables_with_merge_flags
+    tables = list(iter_body_tables_with_merge_flags(fixture_path('table_merged_header.docx')))
+    assert len(tables) == 1
+    rows, merged = tables[0]
+    assert merged == 1
+    assert len(rows) == 5  # merged header row + 4 data rows
+
+
+def test_iter_body_tables_with_merge_flags_zero_for_clean_table():
+    from language_tools.readers._ooxml import iter_body_tables_with_merge_flags
+    tables = list(iter_body_tables_with_merge_flags(fixture_path('table_layout.docx')))
+    assert all(merged == 0 for _rows, merged in tables)

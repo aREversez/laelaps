@@ -85,6 +85,34 @@ def read(path, src_col_index=None, tgt_col_index=None, header=None, **opts):
                       '>=2 columns and at least one fully-populated data row).')
 
 
+def sample_column_text(path, max_chars=500):
+    """Return ``(src_sample, tgt_sample)``: the concatenated text of the
+    picked source/target columns from the first qualifying table (same
+    column-picking logic as ``read()``, via ``pick_src_tgt_columns()``),
+    each capped at ``max_chars``. For ``docx_preflight.py``'s language-
+    direction sanity check (DESIGN.md 15.2) -- a cheap-enough sample for
+    a script-ratio heuristic without extracting the whole table into
+    pairs. Returns ``('', '')`` if there's no qualifying table at all
+    (same definition ``confidence()``/``read()`` use).
+    """
+    for rows in _qualifying_tables(path):
+        has_header = looks_like_header(rows[0])
+        data_rows = rows[1:] if has_header else rows
+        ncols = max((len(r) for r in rows), default=0)
+        s_idx, t_idx = pick_src_tgt_columns(ncols, None, None)
+        src_parts, tgt_parts = [], []
+        for r in data_rows:
+            if r and s_idx < len(r) and r[s_idx].strip():
+                src_parts.append(r[s_idx].strip())
+            if r and t_idx < len(r) and r[t_idx].strip():
+                tgt_parts.append(r[t_idx].strip())
+            if (sum(len(p) for p in src_parts) >= max_chars
+                    and sum(len(p) for p in tgt_parts) >= max_chars):
+                break
+        return ' '.join(src_parts)[:max_chars], ' '.join(tgt_parts)[:max_chars]
+    return '', ''
+
+
 def _read_table(rows, src_col_index, tgt_col_index, header):
     if not rows:
         return []

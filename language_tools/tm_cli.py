@@ -1,6 +1,6 @@
 """``tmtool`` -- CLI for corpus-level TM maintenance (clean/merge/compare/
-stats/qa/leverage/term-check) and bilingual-source alignment checking
-(align).
+stats/qa/leverage/term-check) and bilingual-source diagnostics (align,
+preflight).
 
 Kept as a separate entry point from ``biconvert`` (see DESIGN.md section
 12 for why ``biconvert`` itself stays a thin wrapper with no pipeline
@@ -31,6 +31,16 @@ alignment needs to locate the same source/target columns and docx layout
 that converting it would, so the flags for "which cells/columns are
 source vs. target" shouldn't need to be relearned between the two
 commands.
+
+``preflight`` is narrower and docx-only (see ``language_tools.readers.
+docx_preflight``'s module docstring for what it checks and why): unlike
+``align``, which needs the full read+align pipeline to diagnose sentence-
+level gaps, preflight's checks (layout confidence, merged cells, empty
+tables, language-direction sanity) are all cheap structural probes that
+don't require picking a layout or extracting any pairs first -- the point
+is to catch a doc that auto-detection will likely mis-handle *before*
+running a whole batch through it unattended, not to fully validate one
+already-converted result.
 """
 import argparse
 import os
@@ -38,6 +48,7 @@ import sys
 
 from language_tools import align_report
 from language_tools.cli import _build_reader_opts
+from language_tools.readers import docx_preflight
 from language_tools.reports import adapters as report_adapters
 from language_tools.reports import render as report_render
 from language_tools.terms import check as term_check_module
@@ -341,6 +352,31 @@ def _cmd_align(args):
     return 0
 
 
+def _cmd_preflight(args):
+    ext = os.path.splitext(args.input)[1].lower()
+    if ext != '.docx':
+        print('error: `preflight` only supports .docx input (layout-confidence/merged-cell/'
+              'empty-table checks are docx-specific); got %r' % ext, file=sys.stderr)
+        return 1
+
+    result = docx_preflight.check(args.input, src_lang=args.src, tgt_lang=args.tgt)
+    print('Best layout: %s (%.2f)%s' % (
+        result['best_layout'], result['best_score'],
+        ' [ambiguous]' if result['layout_ambiguous'] else ''))
+    for layout in sorted(result['layout_confidence']):
+        print('  %s: %.2f' % (layout, result['layout_confidence'][layout]))
+    if result['issues']:
+        print('Issues:')
+        for issue in result['issues']:
+            print('  - %s' % issue)
+    else:
+        print('No issues found.')
+
+    if args.fail_on_issues and result['issues']:
+        return 2
+    return 0
+
+
 def build_parser():
     p = argparse.ArgumentParser(
         prog='tmtool', description='Translation-memory maintenance: clean, merge, '
@@ -616,6 +652,25 @@ def build_parser():
                          help='write a summary report (totals plus a per-move-type breakdown) '
                               'to PATH as HTML or PDF, by extension')
     align_p.set_defaults(func=_cmd_align)
+
+    preflight_p = sub.add_parser(
+        'preflight', help='cheap structural/heuristic checks on a DOCX file before batch '
+                           'conversion -- layout-detection confidence, merged table cells, '
+                           'empty tables, and a language-direction sanity check (DESIGN.md 15.2)')
+    preflight_p.add_argument('input', help='DOCX source file')
+    preflight_p.add_argument('--src', help='declared source language code, e.g. en-US -- '
+                                            'enables the language-direction sanity check; '
+                                            'optional, the other checks run either way')
+    preflight_p.add_argument('--tgt', help='declared target language code, e.g. zh-CN -- same '
+                                            'as --src')
+    preflight_p.add_argument('--fail-on-issues', action='store_true',
+                              help='exit with status 2 if any issue was found -- off by '
+                                   'default (a successful run always exits 0 otherwise, same '
+                                   'as every other tmtool subcommand); turn this on when '
+                                   'scripting a batch preflight over many files, e.g.: '
+                                   'for f in *.docx; do tmtool preflight "$f" --src en-US '
+                                   '--tgt zh-CN --fail-on-issues || echo "check: $f"; done')
+    preflight_p.set_defaults(func=_cmd_preflight)
 
     return p
 

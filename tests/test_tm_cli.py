@@ -406,6 +406,71 @@ def test_align_unsupported_format_errors_cleanly(tmp_path):
     assert 'unsupported bilingual source format' in result.stderr
 
 
+_DOCX_FIXTURE_DIR = os.path.join(_REPO_ROOT, 'tests', 'fixtures', 'docx')
+
+
+def test_preflight_reports_layout_confidence_and_no_issues():
+    docx_path = os.path.join(_DOCX_FIXTURE_DIR, 'table_layout.docx')
+    result = _run(['preflight', docx_path, '--src', 'en-US', '--tgt', 'zh-CN'])
+    assert result.returncode == 0, result.stderr
+    assert 'Best layout: table' in result.stdout
+    assert 'No issues found.' in result.stdout
+
+
+def test_preflight_flags_reversed_language_direction():
+    docx_path = os.path.join(_DOCX_FIXTURE_DIR, 'table_layout_reversed.docx')
+    result = _run(['preflight', docx_path, '--src', 'en-US', '--tgt', 'zh-CN'])
+    assert result.returncode == 0, result.stderr
+    assert '方向可能反了' in result.stdout
+
+
+def test_preflight_flags_merged_cells():
+    docx_path = os.path.join(_DOCX_FIXTURE_DIR, 'table_merged_header.docx')
+    result = _run(['preflight', docx_path])
+    assert result.returncode == 0, result.stderr
+    assert '合并单元格' in result.stdout
+
+
+def test_preflight_flags_empty_table():
+    docx_path = os.path.join(_DOCX_FIXTURE_DIR, 'table_with_empty_table.docx')
+    result = _run(['preflight', docx_path])
+    assert result.returncode == 0, result.stderr
+    assert '空表格' in result.stdout
+
+
+def test_preflight_works_without_declared_langs():
+    docx_path = os.path.join(_DOCX_FIXTURE_DIR, 'table_layout.docx')
+    result = _run(['preflight', docx_path])
+    assert result.returncode == 0, result.stderr
+    assert 'No issues found.' in result.stdout
+
+
+def test_preflight_fail_on_issues_is_off_by_default():
+    docx_path = os.path.join(_DOCX_FIXTURE_DIR, 'table_layout_reversed.docx')
+    result = _run(['preflight', docx_path, '--src', 'en-US', '--tgt', 'zh-CN'])
+    assert result.returncode == 0, result.stderr
+
+
+def test_preflight_fail_on_issues_exits_2_when_flagged():
+    docx_path = os.path.join(_DOCX_FIXTURE_DIR, 'table_layout_reversed.docx')
+    result = _run(['preflight', docx_path, '--src', 'en-US', '--tgt', 'zh-CN', '--fail-on-issues'])
+    assert result.returncode == 2
+
+
+def test_preflight_fail_on_issues_exits_0_when_clean():
+    docx_path = os.path.join(_DOCX_FIXTURE_DIR, 'table_layout.docx')
+    result = _run(['preflight', docx_path, '--src', 'en-US', '--tgt', 'zh-CN', '--fail-on-issues'])
+    assert result.returncode == 0, result.stderr
+
+
+def test_preflight_rejects_non_docx_input(tmp_path):
+    src = tmp_path / 'in.csv'
+    _write_bilingual_csv(src, [('Hello there.', '你好。')])
+    result = _run(['preflight', str(src)])
+    assert result.returncode != 0
+    assert 'only supports .docx' in result.stderr
+
+
 def test_leverage_reports_exact_and_no_match_word_counts(tmp_path):
     tm = tmp_path / 'tm.tmx'
     _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。')])
