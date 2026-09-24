@@ -692,6 +692,28 @@ def test_qa_report_writes_html(tmp_path):
     assert '<title>QA Report</title>' in content
 
 
+def test_qa_review_writes_bilingual_html(tmp_path):
+    input_ = tmp_path / 'in.tmx'
+    _write_tmx(input_, [_u('There are 5 apples.', '有3个苹果。'), _u('Bye', '再见')])
+    out = tmp_path / 'review.html'
+    result = _run(['qa', str(input_), '--review', str(out)])
+    assert result.returncode == 0, result.stderr
+    assert 'Wrote %s' % out in result.stdout
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Bilingual Review</title>' in content
+    assert 'Flagged: 1' in content
+
+
+def test_qa_review_rejects_pdf_extension(tmp_path):
+    input_ = tmp_path / 'in.tmx'
+    _write_tmx(input_, [_u('There are 5 apples.', '有3个苹果。')])
+    out = tmp_path / 'review.pdf'
+    result = _run(['qa', str(input_), '--review', str(out)])
+    assert result.returncode != 0
+    assert 'raw_html' in result.stderr
+    assert not out.exists()
+
+
 def test_leverage_report_writes_html(tmp_path):
     tm = tmp_path / 'tm.tmx'
     _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])

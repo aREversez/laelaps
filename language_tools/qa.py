@@ -478,6 +478,45 @@ def _has_leading_trailing_ws(text):
     return bool(_LEADING_TRAILING_WS_RE.search(text))
 
 
+# Issue code -> span finder, for every check that highlights a literal
+# substring rather than being a whole-segment property (see
+# toolbox/tools/qa_check/page.py's module docstring for which checks are
+# excluded and why). Single source of truth: the QA-check GUI page and
+# the bilingual-review HTML export (reports/adapters.py) both highlight
+# off this same mapping rather than keeping their own copies that could
+# drift out of sync with each other or with qa.py's actual check set --
+# same reasoning as ISSUE_LABELS/ISSUE_TYPES already being centralized.
+SPAN_FINDERS = {
+    'NUMBER_MISMATCH': find_number_spans,
+    'PLACEHOLDER_MISMATCH': find_placeholder_spans,
+    'URL_MISMATCH': find_url_spans,
+    'PUNCTUATION_UNBALANCED': find_punctuation_pair_spans,
+    'WIDTH_MIXING': find_width_mixing_spans,
+}
+
+
+def merged_highlight_spans(text, issues):
+    """Merge the spans every code in ``issues`` that has a
+    ``SPAN_FINDERS`` entry contributes into one sorted, non-overlapping
+    list of (start, end) spans over ``text``. Shared span-selection/merge
+    logic for every highlighting consumer; each consumer still owns its
+    own markup (Qt rich-text style string, HTML CSS class, ...) since
+    that part is genuinely renderer-specific.
+    """
+    spans = []
+    for code, finder in SPAN_FINDERS.items():
+        if code in issues:
+            spans.extend(finder(text))
+    spans.sort()
+    merged = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 # Human-readable (Chinese) label per issue code, for any presentation
 # layer that shouldn't show the raw code to a non-technical reviewer --
 # the CSV export (csv_writer.py) and the QA-check GUI page both import

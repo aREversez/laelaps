@@ -119,3 +119,58 @@ def test_from_term_summary_no_hits_has_no_table():
     units = [_term_u('clean.', '干净。')]
     report = adapters.from_term_summary({'total': 1, 'flagged': 0, 'by_status': {}}, units)
     assert report.table is None
+
+
+def test_from_bilingual_review_includes_only_flagged_segments():
+    units = [_u('Hello', ''), _u('Clean sentence.', '干净的句子。')]
+    qa_module.run(units, length_ratio=1.0)
+    report = adapters.from_bilingual_review(units)
+    assert report.title == 'Bilingual Review'
+    assert any('Total segments: 2' in line for line in report.summary_lines)
+    assert any('Flagged: 1' in line for line in report.summary_lines)
+    assert len(report.table.rows) == 1
+
+
+def test_from_bilingual_review_table_is_raw_html():
+    units = [_u('Hello', '')]
+    qa_module.run(units, length_ratio=1.0)
+    report = adapters.from_bilingual_review(units)
+    assert report.table.raw_html is True
+    assert report.table.columns == ['Source', 'Target', 'Issues']
+
+
+def test_from_bilingual_review_highlights_matching_number_spans():
+    units = [_u('There are 5 apples.', '有5个苹果，还有3个梨。')]
+    qa_module.run(units, length_ratio=1.0)
+    report = adapters.from_bilingual_review(units)
+    src_cell, tgt_cell, issues = report.table.rows[0]
+    assert '<span class="hl">5</span>' in src_cell
+    assert '<span class="hl">5</span>' in tgt_cell
+    assert '<span class="hl">3</span>' in tgt_cell
+    assert 'NUMBER_MISMATCH' in issues
+
+
+def test_from_bilingual_review_escapes_plain_text_content():
+    units = [_u('A <b>tag</b> & Co', '')]
+    qa_module.run(units, length_ratio=1.0)
+    report = adapters.from_bilingual_review(units)
+    src_cell = report.table.rows[0][0]
+    assert '<b>tag</b>' not in src_cell
+    assert '&lt;b&gt;tag&lt;/b&gt;' in src_cell
+    assert '&amp; Co' in src_cell
+
+
+def test_from_bilingual_review_no_flagged_segments_has_no_table():
+    units = [_u('Clean.', '干净。')]
+    qa_module.run(units, length_ratio=1.0)
+    report = adapters.from_bilingual_review(units)
+    assert report.table is None
+
+
+def test_from_bilingual_review_truncates_past_row_cap(monkeypatch):
+    monkeypatch.setattr(adapters, '_BILINGUAL_REVIEW_ROW_CAP', 2)
+    units = [_u('Hello', ''), _u('Hi', ''), _u('Hey', '')]
+    qa_module.run(units, length_ratio=1.0)
+    report = adapters.from_bilingual_review(units)
+    assert len(report.table.rows) == 2
+    assert any('Showing first 2 of 3 flagged segments' in line for line in report.summary_lines)

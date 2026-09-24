@@ -3,7 +3,10 @@
 module + function whose output it adapts, so it's obvious at a glance
 which upstream shape each adapter depends on and needs updating alongside.
 """
+import html as _html
+
 from language_tools import align_report as align_report_module
+from language_tools import qa as qa_module
 from language_tools.reports.render import Report, ReportTable
 from language_tools.tm import leverage as leverage_module
 from language_tools.tm import qa_report as qa_report_module
@@ -18,6 +21,75 @@ def from_qa_summary(summary):
              if summary['by_type'].get(t)]
     table = ReportTable(columns=['Issue type', 'Count'], rows=rows) if rows else None
     return Report(title='QA Report', summary_lines=lines, table=table)
+
+
+# Cap on rows in from_bilingual_review()'s table -- see that function's
+# docstring for why a row-level report needs one where the other,
+# whole-corpus-summary report types here don't.
+_BILINGUAL_REVIEW_ROW_CAP = 500
+
+
+def from_bilingual_review(units):
+    """Adapts a QA-checked unit list (``tm.qa_report.run()``'s output,
+    ``meta['qa_issues']`` already populated) into a client/reviewer-facing
+    bilingual side-by-side report -- DESIGN.md 15.2's "双语对照审阅文档导出".
+
+    One row per *flagged* segment only, not every segment: an unflagged
+    segment is the overwhelming majority of a healthy TM and gives a
+    reviewer nothing to look at (the unfiltered, all-segments export is
+    ``csv_writer.write(..., include_qa=True)``, which this deliberately
+    does not duplicate -- same "CSV for the full dump, report for what a
+    human should look at" split every other adapter here follows). Source
+    and target cells have the literal spans that triggered a highlightable
+    check (``qa.SPAN_FINDERS``) wrapped in a `<span class="hl">` -- the
+    same span-selection logic the QA-check GUI page highlights with
+    (``qa.merged_highlight_spans()``), so a segment reads the same way in
+    both places.
+
+    This is a deliberate, narrow exception to ``render.py``'s own "not a
+    row-per-segment data dump" principle (see its module docstring):
+    unlike every other report type in this module, a document meant for
+    line-by-line src/tgt cross-checking is inherently row-level -- that's
+    the point of this specific report, not an accident. Capped at
+    ``_BILINGUAL_REVIEW_ROW_CAP`` rows (first N flagged segments in
+    original corpus order) so it stays something a person can actually
+    open and read through rather than an unbounded dump for a
+    pathologically large TM; a truncation is called out in
+    ``summary_lines``, not silently dropped. HTML only (see
+    ``render.write_pdf()``'s ``raw_html`` guard) -- DESIGN.md's own
+    request was specifically an HTML page.
+    """
+    flagged = [u for u in units if u.meta.get('qa_issues')]
+    lines = ['Total segments: %d' % len(units), 'Flagged: %d' % len(flagged)]
+    shown = flagged[:_BILINGUAL_REVIEW_ROW_CAP]
+    if len(flagged) > _BILINGUAL_REVIEW_ROW_CAP:
+        lines.append('Showing first %d of %d flagged segments (see CSV export for the full list)'
+                      % (_BILINGUAL_REVIEW_ROW_CAP, len(flagged)))
+    rows = [[_highlighted_cell(u.src_text, u.meta['qa_issues']),
+             _highlighted_cell(u.tgt_text, u.meta['qa_issues']),
+             ', '.join(u.meta['qa_issues'])]
+            for u in shown]
+    table = ReportTable(columns=['Source', 'Target', 'Issues'], rows=rows, raw_html=True) if rows else None
+    return Report(title='Bilingual Review', summary_lines=lines, table=table)
+
+
+def _highlighted_cell(text, issues):
+    """Escape ``text`` and wrap the spans ``qa.merged_highlight_spans()``
+    selects for ``issues`` in a `.hl` span (styled in render.py's shared
+    stylesheet) -- the ``ReportTable.raw_html`` cell-building counterpart
+    to the QA-check GUI page's ``_highlighted_html()`` (same span logic,
+    different markup: CSS class here vs. a Qt rich-text style string
+    there, since each renderer needs its own markup dialect).
+    """
+    spans = qa_module.merged_highlight_spans(text, issues)
+    out = []
+    pos = 0
+    for start, end in spans:
+        out.append(_html.escape(text[pos:start]))
+        out.append('<span class="hl">%s</span>' % _html.escape(text[start:end]))
+        pos = end
+    out.append(_html.escape(text[pos:]))
+    return ''.join(out)
 
 
 def from_leverage_summary(summary):

@@ -176,6 +176,10 @@ def _cmd_qa(args):
         rc = _write_report(args.report, report_adapters.from_qa_summary(s))
         if rc:
             return rc
+    if args.review:
+        rc = _write_report(args.review, report_adapters.from_bilingual_review(units))
+        if rc:
+            return rc
     return 0
 
 
@@ -414,6 +418,10 @@ def build_parser():
     qa_p.add_argument('--report', metavar='PATH',
                        help='write a summary report (totals plus a by-issue-type breakdown) to '
                             'PATH as HTML or PDF, by extension')
+    qa_p.add_argument('--review', metavar='PATH',
+                       help='write a bilingual side-by-side review page (flagged segments only, '
+                            'with the problem spans highlighted) to PATH as HTML -- for handing '
+                            'to a client/proofreader, not the same as --report\'s stats summary')
     qa_p.set_defaults(func=_cmd_qa)
 
     leverage_p = sub.add_parser(

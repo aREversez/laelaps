@@ -177,6 +177,24 @@ rather than a CSV to filter in Excel. Synchronous, unlike CSV export's
 thread for. tm_maintenance/page.py's leverage/compare tabs are the other
 two ``tmtool`` subcommands with a ``--report``, and use the identical
 ``report_render.write()``/extension-dispatch pattern.
+
+导出审阅文档 (``_start_export_review()``) is a third export button,
+going through the same ``report_render``/``report_adapters`` machinery
+as 导出报告 but a different adapter (``from_bilingual_review()``): a
+bilingual side-by-side HTML page listing only the *flagged* segments,
+with the exact spans a highlightable check caught marked red the same
+way this page's own results table does (``qa.merged_highlight_spans()``
+is the shared logic both draw on -- see that function's docstring). For
+handing to a client or proofreader to work through line by line, not
+for a stakeholder wanting totals -- that's still 导出报告's job. HTML
+only, no PDF option in its file dialog filter (``_REVIEW_FILTER``):
+reportlab can't render the adapter's HTML-highlight markup, and
+``report_render.write_pdf()`` raises rather than attempting it if a
+`.pdf` path is typed in anyway. Also synchronous despite iterating
+``self._last_units`` rather than one summary dict: the adapter's own
+row cap (``_BILINGUAL_REVIEW_ROW_CAP`` in reports/adapters.py) keeps
+this to at most a few hundred cheap regex passes, well under what would
+justify a background thread.
 """
 import html
 import os
@@ -203,6 +221,7 @@ from toolbox.workers import CallableWorker, wait_for_running
 
 _CSV_FILTER = 'CSV (*.csv)'
 _REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
+_REVIEW_FILTER = 'HTML (*.html)'  # HTML only -- see report_render.write_pdf()'s raw_html guard
 _SETTINGS_PREFIX = 'qa_check/'
 
 # Opt-in diagnostic logging for the wrap-mode row-height/resize path,
@@ -248,13 +267,7 @@ _HIGHLIGHT_HINT = (
     '提示：红色文字为"数字不匹配/占位符不匹配/URL 不匹配/括号引号不成对/'
     '全半角混用"检测涉及的内容，请核对原文与译文是否一致')
 
-_SPAN_FINDERS = {
-    'NUMBER_MISMATCH': qa_module.find_number_spans,
-    'PLACEHOLDER_MISMATCH': qa_module.find_placeholder_spans,
-    'URL_MISMATCH': qa_module.find_url_spans,
-    'PUNCTUATION_UNBALANCED': qa_module.find_punctuation_pair_spans,
-    'WIDTH_MIXING': qa_module.find_width_mixing_spans,
-}
+_SPAN_FINDERS = qa_module.SPAN_FINDERS  # single source of truth -- see qa.py
 
 _ISSUE_TOOLTIPS = {
     'EMPTY_SOURCE': '这一条的原文是空的',
@@ -278,18 +291,7 @@ def _issue_label(issue_code):
 
 def _relevant_spans(text, issues):
     """Return merged highlight spans for the row's applicable checks."""
-    spans = []
-    for code, finder in _SPAN_FINDERS.items():
-        if code in issues:
-            spans.extend(finder(text))
-    spans.sort()
-    merged = []
-    for start, end in spans:
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
-    return merged
+    return qa_module.merged_highlight_spans(text, issues)
 
 
 def _highlighted_html(text, spans):
@@ -490,9 +492,15 @@ class QaCheckPage(QWidget):
         self.export_report_btn.setToolTip(
             '导出为 HTML 或 PDF 的汇总报告（总数/问题占比/按类型统计），适合给非技术干系人看')
         self.export_report_btn.clicked.connect(self._start_export_report)
+        self.export_review_btn = QPushButton('导出审阅文档…')
+        self.export_review_btn.setEnabled(False)
+        self.export_review_btn.setToolTip(
+            '导出为双语对照 HTML 页（只含有问题的条目，问题相关内容已标红），适合发给客户/审校逐条核对')
+        self.export_review_btn.clicked.connect(self._start_export_review)
         action_row.addWidget(self.check_btn)
         action_row.addWidget(self.export_btn)
         action_row.addWidget(self.export_report_btn)
+        action_row.addWidget(self.export_review_btn)
         action_row.addStretch(1)
         outer.addLayout(action_row)
 
@@ -625,6 +633,7 @@ class QaCheckPage(QWidget):
         self.summary_label.setText('')
         self.export_btn.setEnabled(False)
         self.export_report_btn.setEnabled(False)
+        self.export_review_btn.setEnabled(False)
         self.highlight_hint_label.setVisible(False)
 
         error = self._validate_check()
@@ -649,6 +658,7 @@ class QaCheckPage(QWidget):
             '共 %d 条，%d 条有问题（%.1f%%）' % (s['total'], s['flagged'], rate))
         self.export_btn.setEnabled(bool(units))
         self.export_report_btn.setEnabled(bool(units))
+        self.export_review_btn.setEnabled(bool(units))
         self._refresh_table()
         self._log('检查完成', 'success')
 
@@ -854,3 +864,20 @@ class QaCheckPage(QWidget):
             self._log('出错了：%s' % e, 'error')
             return
         self._log('已导出报告到 %s' % path, 'success')
+
+    def _start_export_review(self):
+        if not self._last_units:
+            return
+        path, _selected_filter = QFileDialog.getSaveFileName(
+            self, '导出审阅文档', os.path.join(self._last_dir, '双语审阅文档'), _REVIEW_FILTER)
+        if not path:
+            return
+        if '.' not in os.path.basename(path):
+            path += '.html'
+        self._last_dir = os.path.dirname(path)
+        try:
+            report_render.write(path, report_adapters.from_bilingual_review(self._last_units))
+        except (ValueError, ImportError) as e:
+            self._log('出错了：%s' % e, 'error')
+            return
+        self._log('已导出审阅文档到 %s' % path, 'success')

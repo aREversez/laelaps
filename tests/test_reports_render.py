@@ -66,6 +66,29 @@ def test_write_unsupported_extension_raises(tmp_path):
         write(str(out), report)
 
 
+def test_render_html_does_not_double_escape_raw_html_table():
+    report = Report(title='Review', table=ReportTable(
+        columns=['Source'], rows=[['plain &amp; <span class="hl">bit</span>']], raw_html=True))
+    out = render_html(report)
+    assert '<td>plain &amp; <span class="hl">bit</span></td>' in out
+
+
+def test_render_html_escapes_normal_table_even_with_html_looking_content():
+    report = Report(title='Review', table=ReportTable(
+        columns=['Source'], rows=[['<b>not markup</b>']]))
+    out = render_html(report)
+    assert '&lt;b&gt;not markup&lt;/b&gt;' in out
+
+
+def test_write_pdf_rejects_raw_html_table(tmp_path):
+    pytest.importorskip('reportlab')
+    report = Report(title='Review', table=ReportTable(
+        columns=['Source'], rows=[['<span class="hl">x</span>']], raw_html=True))
+    out = tmp_path / 'r.pdf'
+    with pytest.raises(ValueError, match='raw_html'):
+        write_pdf(str(out), report)
+
+
 def test_write_pdf_produces_valid_pdf_with_table(tmp_path):
     pytest.importorskip('reportlab')
     report = Report(title='Leverage Analysis', summary_lines=['Total segments: 3'],
