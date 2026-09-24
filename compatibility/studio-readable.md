@@ -55,10 +55,11 @@ Pick fixtures that exercise distinct code paths in `sdltm_writer`:
 | Fixture             | Last verified | Studio version | biconvert commit | Status    |
 |---------------------|---------------|----------------|-------------------|-----------|
 | `basic.sdltm`        | 2026-09-22    | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
-| `special_chars.sdltm` | 2026-09-22   | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
+| `special_chars.sdltm` | 2026-09-24   | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
 | `numbering_mismatch.sdltm` | 2026-09-22 | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
-| `large.sdltm`        | 2026-09-22    | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
+| `large.sdltm`        | 2026-09-24    | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
 | `reversed.sdltm`    | 2026-09-22    | Studio 2024 (build 18.0.2.3255) | `a6580b3` | PASS-WITH-CAVEATS |
+| `large_unique.sdltm` | 2026-09-24   | Studio 2024 (build 18.0.2.3255) | `a6580b3` | FAIL (upgrade at 1000 TUs) |
 
 Replace `UNKNOWN` with `PASS` / `FAIL` / `PASS-WITH-CAVEATS` as entries are
 added below. A `FAIL` row should link to an issue and to a verification
@@ -213,6 +214,52 @@ cause, fix = dedupe guidance + writer-side duplicate handling; if 2
 passes and 3 fails → size is the cause after all; if 4 passes this time
 → round-1 failure was environmental, chase the lock instead.
 
+### Round-2 final results (2026-09-24) — root cause identified
+
+**Neither branch of the decision table won outright — the real rule is
+narrower than any candidate, and the duplicate-segment suspect is dead.**
+
+| Test | Result | Key evidence |
+|------|--------|--------------|
+| 1 upgraded-basic reopen | PASS | No prompt, edit commits work → "structures present but empty" counts as fully upgraded; writer fix is purely additive DDL |
+| 2 special_chars + upgrade | PASS | 3-step wizard, `fga_support` → 1; then Edit→Commit persisted (round-1's `translation_unit_fragments` failure gone) |
+| 3 large_unique + upgrade | **FAIL** | 5-step wizard (adds Build Translation Model + Align TUs); dies at Upgrade step with `The TM does not support FGA`; leaves `fga_support=3` + empty structures → subsequent commits **fail silently** (no dialog, `Last modified` unchanged) |
+| 4 large retest | PASS (this time) | 3-step wizard, `fga_support` → 1, Reindex logs **999** TUs |
+
+The smoking gun: **`large` failed round 1 at exactly 1000 TUs and succeeded
+round 2 at 999** — it lost one TU to round 1's edit/`TMTUDuplicate`
+churn, accidentally crossing the threshold. Combined with test 3 (1000
+*unique* segments still fails) the rule is:
+
+> **Upgrade TMs with < 1,000 TUs succeed (3-step wizard). At ≥ 1,000 TUs
+> Studio adds the "Build Translation Model"/"Align Translation Units"
+> steps, and that step throws `LanguagePlatformException: The TM does not
+> support FGA` on `AbstractLocalTranslationMemory.Save` against any
+> writer-produced file — duplicate content irrelevant.**
+
+So the original published "needs ≥1,000 segments for the model build"
+guidance was directionally right, but inverted in effect: the prompt
+loop is *caused by* the model-build step being attempted, not by the TM
+being too small to bother. Why the model-build Save rejects our files is
+the next open question (candidates: missing per-TU tokenization data,
+`attributes`/`settings` contents, TU `flags` value).
+
+**Proposed fix (round-3 validation pending)**: writer emits the full
+post-upgrade schema — 4 extra `translation_memories` columns with
+`fga_support=1`, 9 extra `translation_units` columns, the 7 FGA tables,
+3 extra `parameters` rows (exact diff in the schema research above) — so
+Studio never offers the upgrade at all. Validation probe: flip
+`large_unique`'s `fga_support` 3→1 in raw SQLite, reopen in Studio;
+expect no prompt and working commits. If Studio instead re-derives
+something at open, the writer fix needs the model-build precondition
+found first.
+
+Also from this round: for already-registered TMs, double-click does not
+re-trigger the upgrade prompt — only first-open via File → Open
+Translation Memory does (used for all three round-2 upgrades; the
+"Batch Tasks → Update Translation Memories" path was not reachable in
+this Studio's TM-view ribbon/context menus).
+
 ### Round-2 partial results (paused 2026-09-23, tests 2–4 not yet run)
 
 - **Test 1 PASS — the upgraded-basic probe confirms the fix direction**:
@@ -307,6 +354,10 @@ with local paths normalized to `<TESTDIR>`.
 - Notes: upgrade prompt appeared but **No** was clicked deliberately, to
   keep this as the un-upgraded esc-correctness case. Retest *with*
   Upgrade clicked to help isolate the `large` upgrade failure.
+  **Round 2 (2026-09-24): upgraded cleanly (3-step wizard,
+  `fga_support` → 1), then Edit→Commit persisted with no error — hand-built
+  API path exonerated; the fragments-table failure is purely a consequence
+  of the un-upgraded state, not of `esc()` or the API route.**
 
 ### numbering_mismatch.sdltm
 
@@ -345,6 +396,34 @@ with local paths normalized to `<TESTDIR>`.
   progress dialog hangs "in progress" 12+ min. This disproves the
   <1,000-segment threshold hypothesis for the upgrade loop (see Known
   issue above). Duplicate-segment content is the leading new suspect.
+  → **Round 2 (2026-09-24): upgrade SUCCEEDED — at 999 TUs** (one TU lost
+  to round 1's edit/`TMTUDuplicate` churn), 3-step wizard, `fga_support`
+  → 1, Reindex logs 999. Combined with `large_unique` failing at 1000
+  *unique* TUs, the real rule is the ≥1,000 model-build step, not
+  duplicates — see Round-2 final results above. This file's on-disk state
+  is now upgraded and 999 TUs; the pristine 1000-TU original regenerates
+  from the fixtures README recipe.
+
+### large_unique.sdltm
+
+- Studio version: Trados Studio 2024 (build 18.0.2.3255)
+- biconvert commit: `a6580b3` (hand-built via API, 1000 **unique** TUs)
+- TU count exported: 1000
+- Open: OK
+- Browse: OK — 1000 TUs (page x of 20), CJK clean
+- Search: OK — `Record 0500` → 1 hit via Source Text filter (note: the
+  TM-maintenance view offers no Concordance mode; only "Search entire
+  TM" / "potential duplicates")
+- Edit: **FAIL — silent** — after the failed upgrade, commits produce no
+  dialog, no `Last modified` refresh, nothing persists (worse
+  diagnostics than round 1's explicit `translation_unit_fragments`
+  error: an upgrade-failed TM swallows commits silently)
+- Notes: **the disproving case** — upgrade dies at the 5-step wizard's
+  Upgrade step with `The TM does not support FGA`
+  (`TranslationMemoryUpgrade-20260924-201159.log`, paths sanitized),
+  leaving `fga_support=3` + all 7 FGA tables created-but-empty on disk.
+  Kills the duplicate-segment hypothesis; pins the failure to TU count
+  ≥1,000 triggering Build Translation Model.
 
 ### reversed.sdltm
 
