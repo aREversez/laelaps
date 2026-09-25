@@ -458,6 +458,7 @@ class QaCheckPage(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         outer, _, _ = page_shell(
+            self,
             'QA 检查',
             '对已有的翻译记忆库（tmx/sdltm）跑质量检查，生成审阅报告',
             spacing=18,

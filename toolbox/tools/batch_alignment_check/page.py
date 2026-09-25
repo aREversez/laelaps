@@ -127,6 +127,7 @@ class BatchAlignmentCheckPage(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         outer, _, _ = page_shell(
+            self,
             '批量对齐检查',
             '一次性检查多个双语文档的句子对齐结果，不生成任何文件',
             spacing=18,

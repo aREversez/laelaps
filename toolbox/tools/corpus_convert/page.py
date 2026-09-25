@@ -124,6 +124,7 @@ class CorpusConvertPage(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         outer, _, _ = page_shell(
+            self,
             '语料转换',
             '双语文档转翻译记忆库，支持 sdltm/tmx 互转',
             spacing=18,

@@ -30,7 +30,12 @@ class ToolSpec:
     # and over alphabetical-by-id because that interleaves group members
     # into non-contiguous runs of one section name. Ties keep discovery
     # order (Python's sort is stable). Home uses order=0 to head the list.
-    order: int = 0
+    # The default is 999, not 0: every ToolSpec today sets order explicitly,
+    # but a new one that forgets to would collide with home's 0 under a 0
+    # default and land wherever discovery order happened to put it -- 999
+    # instead sorts a forgotten order to the very end, visibly out of place
+    # rather than silently first.
+    order: int = 999
 
 
 TOOLS: list[ToolSpec] = []

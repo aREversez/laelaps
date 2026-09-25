@@ -20,6 +20,14 @@ def test_register_rejects_duplicate_id():
         TOOLS.pop()
 
 
+def test_toolspec_order_defaults_high_not_zero():
+    # A forgotten `order=` must sort to the very end, not collide with
+    # home's explicit order=0 and land wherever discovery order happens
+    # to put it.
+    spec = ToolSpec(id='__no_order__', name='X', description='', icon='', page_factory=lambda: None)
+    assert spec.order == 999
+
+
 def test_discover_includes_corpus_convert():
     from toolbox.registry import discover
     tools = discover()

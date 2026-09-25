@@ -123,6 +123,7 @@ class AlignmentCheckPage(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         outer, _, _ = page_shell(
+            self,
             '对齐检查',
             '预览双语文档的句子对齐结果，不生成任何文件',
             spacing=12,

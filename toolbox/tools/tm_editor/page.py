@@ -408,6 +408,7 @@ class TmEditorPage(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         outer, _, _ = page_shell(
+            self,
             '条目编辑',
             '打开或新建翻译记忆库，浏览、增删改单条记录',
             spacing=18,

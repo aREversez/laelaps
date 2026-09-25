@@ -126,6 +126,7 @@ class BatchPreflightPage(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         outer, _, _ = page_shell(
+            self,
             '批量预检',
             '批量转换前先体检：版式置信度、合并单元格、空表格、语言方向是否对',
             spacing=18,

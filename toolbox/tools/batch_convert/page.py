@@ -157,6 +157,7 @@ class BatchConvertPage(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         outer, _, _ = page_shell(
+            self,
             '批量转换',
             '一次性转换多个文件，每个结果保存在各自源文件旁边',
             spacing=18,

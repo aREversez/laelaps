@@ -158,6 +158,7 @@ class TmMaintenancePage(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         outer, _, _ = page_shell(
+            self,
             '语料维护',
             '清理、合并、统计翻译记忆库文件（tmx/sdltm）',
             spacing=18,

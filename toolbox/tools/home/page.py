@@ -246,12 +246,18 @@ class HomePage(QWidget):
         self._cols = cols
         for i, tile in enumerate(self._tiles):
             self._grid.addWidget(tile, i // cols, i % cols)
-        # Equal-width tiles, left-packed: every used column stretches the same,
-        # unused columns get 0, so a partially-filled last row leaves its gap
-        # on the right instead of stretching its couple of tiles across the page.
+        # Equal-width tiles, left-packed: every column in the current layout
+        # (0..cols-1) stretches the same, columns beyond that stay 0. A
+        # partially-filled last row falls out of this for free -- its unused
+        # columns still carry stretch (nothing else uses them either, this
+        # being the last row), so they just hold blank space on the right
+        # instead of a tile stretching across it. This must NOT be scoped to
+        # "however many columns the last row happens to fill": a QGridLayout
+        # column's width is shared by every row, so giving only the last
+        # row's used columns any stretch starves that same column's tiles in
+        # every *earlier*, fully-packed row too -- verified: with 9 tiles at
+        # cols=2 (a 4-full-rows + 1 lone last row shape), scoping stretch to
+        # the last row's single column left column 0 at 190px and column 1 at
+        # 280px, visibly uneven, in rows that both had a tile.
         for c in range(_MAX_TILE_COLUMNS + 1):
-            self._grid.setColumnStretch(c, 0)
-        if self._tiles:
-            last_used_col = (len(self._tiles) - 1) % cols
-            for c in range(last_used_col + 1):
-                self._grid.setColumnStretch(c, 1)
+            self._grid.setColumnStretch(c, 1 if c < cols else 0)

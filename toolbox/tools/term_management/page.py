@@ -246,6 +246,7 @@ class TermManagementPage(QWidget):
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
         outer, _, _ = page_shell(
+            self,
             '术语管理',
             '维护双语术语表，并对照已有翻译记忆库检查禁用译法',
             spacing=18,

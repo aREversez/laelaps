@@ -50,7 +50,14 @@ header (objectName-styled, no more per-page hex codes) above a single
 white content card inside a ``QScrollArea``, with the page's one light
 elevation shadow applied here so no tool page reaches for
 ``QGraphicsDropShadowEffect`` itself -- per DESIGN.md §13, shadows are
-reserved for this card and the home-page tiles, nothing else.
+reserved for this card and the home-page tiles, nothing else. Takes the
+calling page's ``self`` explicitly (``page_shell(self, title, subtitle)``)
+rather than inferring it by walking the call stack for a QWidget-typed
+local named ``self`` -- an earlier version did that, and it happened to
+work for every call site that existed at the time, but nothing about it
+was actually guaranteed to find the right widget once a page was built
+from a nested helper or while another widget's own ``__init__`` was still
+on the stack.
 """
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor
@@ -276,13 +283,24 @@ def tinted_icon_pixmap(icon_path, size):
     return QPixmap.fromImage(image)
 
 
-def page_shell(title, subtitle, spacing=18, max_width=960):
+def page_shell(page, title, subtitle, spacing=18, max_width=960):
     """The standard skeleton for a tool page's ``_build_ui()``: a page
     header (20px title + muted subtitle, styled via objectName in
     style.qss -- never inline setStyleSheet here) above one white content
     card wrapped in a ``QScrollArea`` (short pages never scroll, tall ones
     no longer clip at small window sizes), the card carrying the app's
     only per-page elevation shadow.
+
+    ``page`` is the ``QWidget`` calling this from its own ``_build_ui()``
+    (pass ``self``) -- the layout this builds gets installed on it via a
+    plain ``page.setLayout(root)``. This used to be inferred by walking
+    the call stack for a local named ``self`` typed as a ``QWidget``,
+    which happened to work for every current call site (`_build_ui()`
+    called directly from `__init__`) but was never guaranteed to: a page
+    built from a nested helper, or constructed while another widget's own
+    `__init__` is still on the stack, could have silently attached the
+    layout to the wrong widget with no error. An explicit parameter can't
+    misattach.
 
     The header + card live in a column capped to ``max_width`` and
     *centered* horizontally (2026-09 layout pass): on a wide window the
@@ -369,12 +387,11 @@ def page_shell(title, subtitle, spacing=18, max_width=960):
     hwrap.addStretch(1)
     root.addLayout(hwrap, 1)
 
-    # The caller's page widget gets the root layout installed here -- pages
-    # keep adding sections to the returned `outer` (the card's layout) with
-    # no other change to their _build_ui() bodies.
-    caller = _current_page_parent()
-    if caller is not None:
-        caller.setLayout(root)
+    # `page` (the caller's `self`, passed in explicitly -- see docstring)
+    # gets the root layout installed here -- pages keep adding sections to
+    # the returned `outer` (the card's layout) with no other change to
+    # their _build_ui() bodies.
+    page.setLayout(root)
     return outer, title_label, subtitle_label
 
 
@@ -418,19 +435,3 @@ class CurrentPageTabWidget(QTabWidget):
 
     def minimumSizeHint(self):
         return self._current_page_hint('min')
-
-
-def _current_page_parent():
-    """Best-effort: the QWidget whose __init__ is currently running (i.e.
-    the page calling page_shell()). Walks the CPython call stack one
-    frame out; returns None if nothing widget-shaped is found, in which
-    case the caller keeps ownership of `root` unchanged.
-    """
-    import sys
-    frame = sys._getframe(2)
-    while frame is not None:
-        candidate = frame.f_locals.get('self')
-        if isinstance(candidate, QWidget):
-            return candidate
-        frame = frame.f_back
-    return None

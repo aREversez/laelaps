@@ -68,5 +68,34 @@ def test_home_selecting_tile_navigates_main_window(qtbot):
         if item.data(Qt.UserRole) == current:
             assert item.text() == 'QA 检查'
             break
-    else:
-        raise AssertionError('current stack page has no sidebar row')
+def test_reflow_gives_every_used_column_equal_stretch(qtbot):
+    """Regression test: _reflow() must not scope column stretch to however
+    many columns the *last* row happens to fill. A QGridLayout column's
+    width is shared by every row, so with a tile count that doesn't divide
+    evenly by the column count (9 tiles is not a multiple of 2), scoping
+    stretch to the last row's lone used column previously starved that same
+    column's tiles in the earlier, fully-packed rows -- visibly unequal
+    widths even though every column in those rows held a tile."""
+    page = HomePage()
+    qtbot.addWidget(page)
+    assert len(page._tiles) % 2 != 0  # otherwise this case can't reproduce the bug
+
+    # Force the 2-column breakpoint (see _TILE_MIN_WIDTH/_columns_for).
+    page._grid_scroll.resize(500, 600)
+    page._reflow()
+    assert page._cols == 2
+    stretches = [page._grid.columnStretch(c) for c in range(page._cols)]
+    assert len(set(stretches)) == 1 and stretches[0] > 0
+
+    # Same invariant at the 1-column breakpoint.
+    page._grid_scroll.resize(250, 600)
+    page._reflow()
+    assert page._cols == 1
+    assert page._grid.columnStretch(0) > 0
+
+    # And back at 3 columns (the currently-full-dividing case) for good measure.
+    page._grid_scroll.resize(900, 600)
+    page._reflow()
+    assert page._cols == 3
+    stretches = [page._grid.columnStretch(c) for c in range(page._cols)]
+    assert len(set(stretches)) == 1 and stretches[0] > 0
