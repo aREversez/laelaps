@@ -163,6 +163,37 @@ def unesc(t):
     return t.replace('&lt;', '<').replace('&gt;', '>').replace('&amp;', '&')
 
 
+# Timestamp strings reach a writer from two places with two different
+# shapes: an SDLTM column ('2024-01-05 08:09:10') or a TMX attribute
+# ('20240105T080910Z'). Writers must re-render the *instant* into their
+# own format rather than stamp datetime.now() over it -- otherwise a
+# round-trip silently resets every TU's provenance (P0-4 of the 2026-09
+# fix list). Anything unrecognized falls back to the caller's default.
+_INPUT_TS_FORMATS = (
+    '%Y-%m-%d %H:%M:%S',
+    '%Y-%m-%d %H:%M:%S.%f',
+    '%Y-%m-%dT%H:%M:%S',
+    '%Y-%m-%dT%H:%M:%SZ',
+    '%Y-%m-%dT%H:%M:%S%z',
+    '%Y-%m-%dT%H:%M:%S.%f',
+    '%Y%m%dT%H%M%SZ',
+)
+
+
+def normalize_ts(value, out_fmt, fallback):
+    if not value:
+        return fallback
+    s = str(value).strip()
+    if not s:
+        return fallback
+    for fmt in _INPUT_TS_FORMATS:
+        try:
+            return datetime.datetime.strptime(s, fmt).strftime(out_fmt)
+        except ValueError:
+            continue
+    return fallback
+
+
 def seg_xml(text, culture):
     return ('<Segment xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
             'xmlns:xsd="http://www.w3.org/2001/XMLSchema"><Elements><Text><Value>%s</Value>'
@@ -202,12 +233,14 @@ def write(path, units, src_lang, tgt_lang, name):
         src_text, tgt_text = u.src_text.strip(), u.tgt_text.strip()
         if not src_text or not tgt_text:
             continue
+        created = normalize_ts(getattr(u, 'created_at', None), '%Y-%m-%d %H:%M:%S', now)
+        changed = normalize_ts(getattr(u, 'modified_at', None), '%Y-%m-%d %H:%M:%S', created)
         con.execute('INSERT INTO translation_units(guid,translation_memory_id,source_hash,'
                     'source_segment,target_hash,target_segment,creation_date,creation_user,'
                     'change_date,change_user,last_used_date,last_used_user,usage_counter,flags) '
                     'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                     (uuid.uuid4().bytes, 1, fnv1a64(src_text), seg_xml(src_text, src_lang),
-                     fnv1a64(tgt_text), seg_xml(tgt_text, tgt_lang), now, 'laelaps', now, 'laelaps',
+                     fnv1a64(tgt_text), seg_xml(tgt_text, tgt_lang), created, 'laelaps', changed, 'laelaps',
                      now, 'laelaps', 0, 131073))
         n += 1
     con.execute('UPDATE translation_memories SET tucount=? WHERE id=1', (n,))

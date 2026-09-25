@@ -141,6 +141,58 @@ def test_sdltm_to_tmx_to_sdltm_round_trip_preserves_text(tmp_path):
            [(u.src_text, u.tgt_text) for u in original]
 
 
+def test_writers_preserve_unit_timestamps_instead_of_stamping_now(tmp_path):
+    # P0-4: both writers ignored u.created_at/u.modified_at and stamped
+    # datetime.now(), so a TMX<->SDLTM round-trip reset every TU's
+    # provenance to the moment of writing -- aging reports, merge
+    # 'prefer-newer' conflict resolution and audit history all keyed off
+    # dates that no longer meant anything.
+    units = [TranslationUnit(
+        src_lang='en-US', tgt_lang='zh-CN', src_text='Hello there.', tgt_text='你好。',
+        created_at='2019-03-04 05:06:07', modified_at='2020-07-08 09:10:11')]
+
+    sdltm = str(tmp_path / 'ts.sdltm')
+    sdltm_writer.write(sdltm, units, 'en-US', 'zh-CN', 'test')
+    back = sdltm_reader.read(sdltm)
+    assert back[0].created_at == '2019-03-04 05:06:07'
+    assert back[0].modified_at == '2020-07-08 09:10:11'
+
+    tmx = str(tmp_path / 'ts.tmx')
+    tmx_writer.write(tmx, units, 'en-US', 'zh-CN')
+    back = tmx_reader.read(tmx)
+    # TMX renders the same instants in its compact UTC attribute format
+    assert back[0].created_at == '20190304T050607Z'
+    assert back[0].modified_at == '20200708T091011Z'
+
+
+def test_writer_preserves_timestamps_across_formats(tmp_path):
+    # An SDLTM column date must land in TMX's compact form and back again
+    # without drifting -- normalize_ts re-renders the instant per format.
+    units = [TranslationUnit(
+        src_lang='en-US', tgt_lang='zh-CN', src_text='Cross format.', tgt_text='跨格式。',
+        created_at='2021-12-25 13:14:15', modified_at='2022-01-01 00:00:00')]
+    tmx = str(tmp_path / 'cross.tmx')
+    tmx_writer.write(tmx, units, 'en-US', 'zh-CN')
+    sdltm = str(tmp_path / 'cross.sdltm')
+    sdltm_writer.write(sdltm, tmx_reader.read(tmx), 'en-US', 'zh-CN', 'test')
+    back = sdltm_reader.read(sdltm)
+    assert back[0].created_at == '2021-12-25 13:14:15'
+    assert back[0].modified_at == '2022-01-01 00:00:00'
+
+
+def test_tmx_writer_omits_changedate_when_unit_has_no_modification(tmp_path):
+    # Absence must stay absence, not echo the creation stamp: TMX files
+    # with no changedate read back modified_at=None so stats aging can
+    # still bucket them as 'unknown'.
+    units = [TranslationUnit(
+        src_lang='en-US', tgt_lang='zh-CN', src_text='x', tgt_text='x')]
+    tmx = str(tmp_path / 'plain.tmx')
+    tmx_writer.write(tmx, units, 'en-US', 'zh-CN')
+    back = tmx_reader.read(tmx)
+    assert back[0].created_at  # creationdate always present
+    assert back[0].modified_at is None
+
+
 def test_sdltm_reader_handles_entities_beyond_our_own_writer(tmp_path):
     # Our own writer only ever produces &amp;/&lt;/&gt; (the 3 entities its
     # hand-rolled esc() emits), and the old unesc() only reversed exactly

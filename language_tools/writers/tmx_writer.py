@@ -1,7 +1,7 @@
 """Write a TMX 1.4 interchange file."""
 import datetime
 
-from language_tools.writers.sdltm_writer import esc
+from language_tools.writers.sdltm_writer import esc, normalize_ts
 
 
 def _seg_body(unit_text, unit_markup):
@@ -41,7 +41,16 @@ def write(path, units, src_lang, tgt_lang):
             src_text, tgt_text = u.src_text.strip(), u.tgt_text.strip()
             if not src_text or not tgt_text:
                 continue
-            f.write('    <tu creationdate="%s" creationid="laelaps">\n' % stamp)
+            created = normalize_ts(getattr(u, 'created_at', None), '%Y%m%dT%H%M%SZ', stamp)
+            # changedate is only meaningful when the unit actually carries a
+            # modification stamp; omitting it (rather than echoing creation)
+            # keeps "no known modified_at" distinguishable downstream, e.g.
+            # stats aging routes such TUs to the 'unknown' bucket.
+            attrs = 'creationdate="%s"' % created
+            if getattr(u, 'modified_at', None):
+                attrs += ' changedate="%s"' % normalize_ts(
+                    u.modified_at, '%Y%m%dT%H%M%SZ', created)
+            f.write('    <tu %s creationid="laelaps">\n' % attrs)
             f.write('      <tuv xml:lang="%s"><seg>%s</seg></tuv>\n'
                     % (src_lang, _seg_body(src_text, getattr(u, 'src_markup', None))))
             f.write('      <tuv xml:lang="%s"><seg>%s</seg></tuv>\n'

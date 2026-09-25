@@ -179,7 +179,8 @@ def read(path, src_lang=None, tgt_lang=None, **opts):
             src_lang=_tuv_lang(src_tuv), tgt_lang=_tuv_lang(tgt_tuv),
             src_text=src_text, tgt_text=tgt_text,
             src_markup=src_markup, tgt_markup=tgt_markup,
-            created_at=tu.get('creationdate'), source_file=path,
+            created_at=tu.get('creationdate'), modified_at=tu.get('changedate'),
+            source_file=path,
         ))
 
     if skipped_lang_mismatch:
