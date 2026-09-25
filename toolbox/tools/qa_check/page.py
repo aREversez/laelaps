@@ -27,10 +27,11 @@ display-only filters over data already in memory (``self._last_units``)
 
 A third control, "自动换行" (unchecked by default), trades that compact
 one-row-per-item layout for readability: the default single-line view
-elides long 原文/译文 text with "…", which is the right call for scanning
-a punch list quickly but means a long sentence can't actually be read
-without opening the exported CSV. Checking it switches those two columns
-to word-wrapped, auto-growing rows instead.
+elides long 原文/译文 text with "…" (always keeping every highlighted
+span intact -- see ``_elide_keeping_spans()``), which is the right call
+for scanning a punch list quickly but means a long sentence can't
+actually be read without opening the exported CSV. Checking it switches
+those two columns to word-wrapped, auto-growing rows instead.
 
 For a row with NUMBER_MISMATCH, PLACEHOLDER_MISMATCH, URL_MISMATCH,
 PUNCTUATION_UNBALANCED, or WIDTH_MIXING, every relevant span
@@ -304,6 +305,70 @@ def _highlighted_html(text, spans):
         pos = end
     out.append(html.escape(text[pos:]))
     return ''.join(out)
+
+
+def _elide_keeping_spans(fm, text, spans, width):
+    """Single-line-elide ``text`` to ``width`` px, never inside a span
+    from ``spans`` -- every highlight span stays verbatim, only the
+    unhighlighted gaps between/around them get shortened (head kept,
+    tail replaced by "…").
+
+    ``QFontMetrics.elidedText(ElideRight)`` alone can't be used on this
+    path: when the highlighted substring sits past the elide point -- a
+    URL at the end of the sentence is the ordinary case -- ElideRight
+    truncates exactly the one part the red highlight exists to show, so
+    the row "highlights" nothing. Which spans are highlighted is
+    issue-dependent and orthogonal to where they land in the sentence,
+    so the failure is silent per-row and scales with whatever the local
+    font metrics happen to be (short sentences pass, longer ones don't).
+
+    Every elided gap always leaves *some* mark (never a bare splice):
+    dropping a gap entirely would fuse the surrounding text, and
+    fusing two highlighted spans ("42 … 43" -> "4243") actively corrupts
+    what the highlight is supposed to show. In the extreme (no room
+    left at all) that makes the result exceed ``width`` by one "…" --
+    QLabel clips at the cell edge anyway, and the tooltip carries the
+    full original.
+    """
+    segments = []  # (text, keep_whole)
+    pos = 0
+    for start, end in spans:
+        if start > pos:
+            segments.append((text[pos:start], False))
+        segments.append((text[start:end], True))
+        pos = end
+    if pos < len(text):
+        segments.append((text[pos:], False))
+    if not any(keep for _seg, keep in segments):  # no spans -- nothing to protect
+        return fm.elidedText(text, Qt.ElideRight, width)
+
+    # Pixel-exact cumulative measurement (same horizontalAdvance the
+    # final paint uses), not a char-count heuristic -- 'm'-vs-'i'
+    # average-width estimates cut the budget far too loose on prose.
+    ellipsis_w = fm.horizontalAdvance('…')
+    parts = []
+    used = 0
+    truncated = False
+    for seg, keep in segments:
+        if keep:
+            parts.append(seg)
+            used += fm.horizontalAdvance(seg)
+            continue
+        seg_w = fm.horizontalAdvance(seg)
+        if truncated or used + seg_w > width:
+            truncated = True
+            head = ''
+            for ch in seg:
+                if used + fm.horizontalAdvance(ch) + ellipsis_w > width:
+                    break
+                head += ch
+                used += fm.horizontalAdvance(ch)
+            parts.append(head + '…')
+            used += fm.horizontalAdvance(head) + ellipsis_w
+        else:
+            parts.append(seg)
+            used += seg_w
+    return ''.join(parts)
 
 
 class _QaTextDelegate(QStyledItemDelegate):
@@ -799,13 +864,16 @@ class QaCheckPage(QWidget):
         # highlightable issue (see caller), which needs highlighting a
         # plain QTableWidgetItem can't render -- so it still needs its
         # own "…" elide, which a rich-text QLabel doesn't do
-        # automatically. Elide the plain text first, then highlight
-        # *that* (spans recomputed against the now-shorter elided
-        # string, so offsets line up with what's actually visible), and
-        # keep the untruncated original one hover away via the tooltip.
+        # automatically. The elide goes through _elide_keeping_spans()
+        # so truncation can never cut into the highlighted spans
+        # themselves; spans are then recomputed against the elided
+        # string (whichever survive offset-wise get the <b>, e.g. a
+        # "…" glued to a URL's tail falls outside _URL_RE), and the
+        # untruncated original stays one hover away via the tooltip.
         fm = self.results_table.fontMetrics()
         width = max(self.results_table.columnWidth(column) - 12, 10)
-        elided = fm.elidedText(text, Qt.ElideRight, width)
+        spans = _relevant_spans(text, issues)
+        elided = _elide_keeping_spans(fm, text, spans, width)
         spans = _relevant_spans(elided, issues)
         label.setText(_highlighted_html(elided, spans) if spans else html.escape(elided))
         if elided != text:

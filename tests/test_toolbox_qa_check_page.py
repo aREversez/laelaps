@@ -475,7 +475,75 @@ def test_url_mismatch_row_highlights_the_url(qtbot, tmp_path):
 
     assert not page.wrap_chk.isChecked()
     src_html = page.results_table.cellWidget(0, 1).text()
-    assert '<b style="color:#B23B3B; font-weight:600;">https://example.com/docs</b>' in src_html
+    # Prefix-tolerant, not the exact full URL: an un-shown page's column
+    # width is a Qt default (~100px), so how much of the sentence font
+    # metrics can fit before eliding varies by platform -- the invariant
+    # is that the highlight markup opens ON the URL (old behavior could
+    # elide past the URL before spans were computed, highlighting
+    # nothing). Full-span correctness is pinned font-independently in
+    # test_non_wrap_elision_never_cuts_into_a_highlighted_span.
+    assert '<b style="color:#B23B3B; font-weight:600;">https://ex' in src_html
+
+
+def test_non_wrap_elision_never_cuts_into_a_highlighted_span():
+    # Unit-level guard for the ElideRight-vs-highlight interaction: the
+    # old non-wrap path ran QFontMetrics.elidedText(ElideRight) *before*
+    # computing spans, so a highlighted substring past the elide point
+    # (a URL near the end of a sentence is the ordinary case) silently
+    # lost its highlight entirely -- and at intermediate widths the <b>
+    # content itself got chopped mid-URL. Deterministic 1-char-10px
+    # stub font rather than real fontMetrics: which rows an *un-shown*
+    # window elides at all is a font-metrics detail (already acknowledged
+    # in test_non_wrap_highlighted_row_re_elides_when_window_is_widened),
+    # so asserting over layouts would just move the platform
+    # dependency around rather than remove it.
+    from toolbox.tools.qa_check.page import _elide_keeping_spans
+
+    class _StubFm:
+        def horizontalAdvance(self, s):
+            return len(s) * 10
+
+        def elidedText(self, text, mode, width):  # Qt.ElideRight, as used
+            n = max(width // 10 - 1, 0)
+            return text[:n] + '…' if n < len(text) else text
+
+    fm = _StubFm()
+    text = 'See https://example.com/docs for details.'
+    url_span = [(4, 28)]
+
+    # Roomy cell (and any cell wide enough for the full pixel width,
+    # 41 chars * 10px here): untouched.
+    assert _elide_keeping_spans(fm, text, url_span, 1000) == text
+
+    # Elide point lands mid-URL under plain ElideRight -- the exact old
+    # failure: the kept span comes out verbatim even though it + the
+    # leading gap already exceed the cell (spill-over beats dropping
+    # the highlight), only the (invisible, one-space) tail gap is left
+    # before the "…" (plain ElideRight cut at 26 chars, inside the URL).
+    out = _elide_keeping_spans(fm, text, url_span, 260)
+    assert 'https://example.com/docs' in out
+    assert out == 'See https://example.com/docs…'
+
+    # No room left beside the span at all: it STILL survives whole,
+    # every elided gap keeps its one-"…" mark, and the result spills
+    # past the cell rather than bare-splicing text together (QLabel
+    # clips, the tooltip carries the original). Gaps that fit outright
+    # ('See ' = 40px < 100px) are still kept.
+    out = _elide_keeping_spans(fm, text, url_span, 100)
+    assert out == 'See https://example.com/docs…'
+
+    # Two highlighted spans separated by a wide gap: eliding must never
+    # fuse them ("42 … 43" collapsing to a highlighted "4243").
+    text2 = 'x42aaaaaaaaaaaaaaaaaaaaaaaaa43y'
+    out = _elide_keeping_spans(fm, text2, [(1, 3), (28, 30)], 120)
+    assert '42' in out and '43' in out
+    assert '4243' not in out
+    assert '…' in out
+
+    # No spans at all behaves exactly like plain ElideRight.
+    out = _elide_keeping_spans(fm, text, [], 200)
+    assert out.endswith('…')
+    assert not text.startswith('…')
 
 
 def test_row_with_both_number_and_placeholder_mismatch_highlights_both(qtbot):
