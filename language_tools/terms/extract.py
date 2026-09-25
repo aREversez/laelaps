@@ -197,7 +197,10 @@ def extract_candidates(units, lang, *, side='src', min_freq=2, min_ngram=1, max_
     candidates.sort(key=lambda c: (-c['score'], -c['freq'], -c['length']))
     candidates = _drop_nested(candidates)
     candidates = [{k: v for k, v in c.items() if k != 'cjk'} for c in candidates]
-    return candidates[:top_n] if top_n else candidates
+    # ``is not None`` (not a bare truthiness check): top_n=0 is a legitimate
+    # request for "no candidates", but `if top_n` treats 0 as falsy and
+    # returns the full list instead.
+    return candidates[:top_n] if top_n is not None else candidates
 
 
 def suggest_bilingual_candidates(units, src_lang, tgt_lang, *, min_freq=2, max_ngram=4,

@@ -79,6 +79,15 @@ def test_extract_candidates_top_n_limits_results():
     assert len(candidates) == 2
 
 
+def test_extract_candidates_top_n_zero_returns_nothing():
+    # top_n=0 means "no candidates", not "unlimited" -- the old `if top_n`
+    # truthiness check treated 0 as falsy and returned the whole list.
+    units = [_u('Alpha bravo. Charlie delta. Echo foxtrot.', '')]
+    candidates = extract_module.extract_candidates(units, 'en-US', min_freq=1, max_ngram=1,
+                                                     top_n=0)
+    assert candidates == []
+
+
 def test_extract_candidates_empty_units_returns_empty_list():
     assert extract_module.extract_candidates([], 'en-US') == []
 
