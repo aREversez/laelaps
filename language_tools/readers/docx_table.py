@@ -9,14 +9,22 @@ from language_tools.readers._ooxml import iter_body_tables
 from language_tools.readers._rowreader import looks_like_header, pick_src_tgt_columns, rows_to_pairs
 
 
-def _qualifying_tables(path):
+def _qualifying_tables(path, src_col_index=None, tgt_col_index=None):
     """Yield each <w:tbl> in the document that has >=2 columns and at
     least one fully-populated data row (both target columns non-empty).
 
-    Used by both confidence() and read(): confidence() counts qualifying
-    tables to score how "table-shaped" the document is, read() picks the
-    first qualifying table to extract pairs from. Sharing the predicate
-    keeps the two views of "what counts as a bilingual table" in sync.
+    Used by confidence()/sample_column_text() (no override) and read()
+    (which forwards the caller's explicit column indices). ``src_col_index``
+    /``tgt_col_index`` decide *which* two columns the "fully populated"
+    test looks at: read() must qualify a table on the columns it will
+    actually extract, otherwise an explicit override can never rescue a
+    table the default (last-two) columns deem unqualified -- e.g. a
+    3-column EN/ZH/empty-Notes table passed src=0,tgt=1 was still judged on
+    columns (1,2)=ZH,Notes and rejected, so the user's override did nothing
+    and read() raised 'No usable bilingual table found' (the unnumbered
+    docx-table row of P2 in the 2026-09 fix list). confidence() keeps the
+    default probe: it runs before any CLI overrides are parsed and only
+    needs to gauge how table-shaped the document is.
     """
     for rows in iter_body_tables(path):
         if not rows:
@@ -26,13 +34,7 @@ def _qualifying_tables(path):
             continue
         has_header = looks_like_header(rows[0])
         data_rows = rows[1:] if has_header else rows
-        # A row is "fully populated" if both picked columns have non-empty
-        # text. Default picks the last two columns (see pick_src_tgt_columns);
-        # we don't honor src_col_index/tgt_col_index here because confidence()
-        # is meant to be a cheap probe without parsing CLI overrides. This
-        # is conservative -- a user who overrides columns for read() is
-        # expected to also pass --layout table, skipping auto-detection.
-        s_idx, t_idx = pick_src_tgt_columns(ncols, None, None)
+        s_idx, t_idx = pick_src_tgt_columns(ncols, src_col_index, tgt_col_index)
         qualified = False
         for r in data_rows:
             src = (r[s_idx] if s_idx < len(r) else '').strip() if r else ''
@@ -90,7 +92,7 @@ def read(path, src_col_index=None, tgt_col_index=None, header=None, **opts):
     still yields no pairs is warned about rather than silently skipped.
     """
     pairs = []
-    for table_no, rows in enumerate(_qualifying_tables(path), 1):
+    for table_no, rows in enumerate(_qualifying_tables(path, src_col_index, tgt_col_index), 1):
         table_pairs = _read_table(rows, src_col_index, tgt_col_index, header,
                                   key_prefix='' if table_no == 1 else 't%d:' % table_no)
         if not table_pairs and pairs:

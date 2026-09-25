@@ -31,6 +31,51 @@ def _write_two_table_docx(path):
         z.writestr('word/document.xml', document)
 
 
+def _write_three_column_docx(path):
+    """Minimal .docx with one 3-column table: EN | ZH | empty Notes.
+    The default (last-two-columns) probe judges it on ZH + empty Notes and
+    finds it unqualified, so only an explicit src=0/tgt=1 override can read
+    it -- the docx-table column-override case from P2.
+    """
+    import zipfile
+
+    def row(en, zh):
+        return ('<w:tr>'
+                '<w:tc><w:p><w:r><w:t>%s</w:t></w:r></w:p></w:tc>'
+                '<w:tc><w:p><w:r><w:t>%s</w:t></w:r></w:p></w:tc>'
+                '<w:tc><w:p/></w:tc>'
+                '</w:tr>' % (en, zh))
+
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body><w:tbl>'
+        + row('Hello there.', '你好。')
+        + row('Good morning.', '早上好。')
+        + '</w:tbl></w:body></w:document>')
+    with zipfile.ZipFile(str(path), 'w') as z:
+        z.writestr('[Content_Types].xml',
+                   '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        z.writestr('_rels/.rels',
+                   '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+        z.writestr('word/document.xml', document)
+
+
+def test_explicit_column_override_rescues_a_table_the_default_rejects(tmp_path):
+    # P2 (docx-table row): read() qualified each table on the DEFAULT last-
+    # two columns while extracting on the caller's override, so an explicit
+    # src/tgt could never rescue a table the default deemed unqualified --
+    # it raised 'No usable bilingual table found' despite valid EN/ZH data.
+    path = tmp_path / 'three_col.docx'
+    _write_three_column_docx(path)
+    import pytest
+    with pytest.raises(ValueError):
+        docx_table.read(str(path))  # default (1,2)=ZH,empty Notes -> no table
+    pairs = docx_table.read(str(path), src_col_index=0, tgt_col_index=1)
+    assert [(p.src_text, p.tgt_text) for p in pairs] == [
+        ('Hello there.', '你好。'), ('Good morning.', '早上好。')]
+
+
 def test_read_collects_every_qualifying_table_not_just_the_first(tmp_path):
     # Regression: read() returned on the first table that produced pairs
     # and silently dropped the rest of the document -- while
