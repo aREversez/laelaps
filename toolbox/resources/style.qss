@@ -116,7 +116,8 @@ QWidget#pageCard {
     border: 1px solid #E3E6EB;
     border-radius: 10px;
 }
-QScrollArea#pageScroll, QScrollArea#pageScroll > QWidget {
+QScrollArea#pageScroll, QScrollArea#pageScroll > QWidget,
+QScrollArea#homeScroll, QScrollArea#homeScroll > QWidget {
     background: transparent;
     border: none;
 }

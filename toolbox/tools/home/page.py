@@ -21,20 +21,24 @@ permanently. Icons are the sidebar glyphs re-rendered big and tinted
 indigo via ``widgets.tinted_icon_pixmap()`` (gray-at-32px would read as
 disabled next to the interactive-card affordance).
 """
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QGraphicsDropShadowEffect, QGridLayout, QHBoxLayout, QLabel,
-    QSizePolicy, QVBoxLayout, QWidget,
+    QGraphicsDropShadowEffect, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from toolbox import registry
 from toolbox.widgets import tinted_icon_pixmap
 
-# Tiles per row. 3 keeps description text (one short line, elided by
-# word-wrap at tile width) readable at the 1280px default window width
-# without horizontal scrolling ever being needed.
-_TILE_COLUMNS = 3
+# Responsive tile grid: up to 3 columns on a wide window, dropping to 2/1 as
+# the window narrows so tiles keep a readable width and are never clipped on
+# the right -- HomePage._reflow recomputes the column count on every resize
+# (reflow, not a horizontal scrollbar, is the intended narrow-window behaviour).
+_MAX_TILE_COLUMNS = 3
+# A tile narrower than this is too cramped to read its wrapped description,
+# so a column is dropped before tiles get squeezed below it.
+_TILE_MIN_WIDTH = 200
 
 _TILE_ICON_PX = 32
 
@@ -62,11 +66,16 @@ class _ToolTile(QWidget):
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setCursor(Qt.PointingHandCursor)
         self.setFocusPolicy(Qt.StrongFocus)
-        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Horizontal Expanding (fill the grid column), vertical Minimum: the
+        # tile grows to whatever height its word-wrapped description needs at
+        # the current width. A Fixed vertical height locked the tile to its
+        # initial one/two-line hint, so narrowing the window made the
+        # description overflow past the bottom border into the row below.
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
-        layout.setSpacing(6)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(8)
 
         icon_label = QLabel()
         if spec.icon:
@@ -84,6 +93,10 @@ class _ToolTile(QWidget):
         desc = QLabel(spec.description)
         desc.setObjectName('homeTileDesc')
         desc.setWordWrap(True)
+        # Preferred/Minimum so the label drives the tile's height-for-width:
+        # the layout asks heightForWidth() at the tile's actual width and the
+        # tile grows to fit every wrapped line instead of clipping.
+        desc.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         layout.addWidget(desc)
 
     def mouseReleaseEvent(self, event):
@@ -147,26 +160,98 @@ class HomePage(QWidget):
         root.addWidget(greeting)
         root.addWidget(tagline)
 
-        grid_host = QWidget()
-        grid = QGridLayout(grid_host)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(14)
+        self._grid_host = QWidget()
+        # Maximum (not Preferred) vertically: inside a widgetResizable scroll
+        # area this keeps the grid at its natural height instead of stretching
+        # rows to fill the viewport (which left tall gaps inside every tile).
+        # The scroll area only kicks in when the natural height already exceeds
+        # the viewport (narrow window -> taller wrapped tiles).
+        self._grid_host.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        self._grid = QGridLayout(self._grid_host)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        # Roomier vertical gap than horizontal, so rows read as a calm grid
+        # rather than tiles pressed against each other.
+        self._grid.setHorizontalSpacing(16)
+        self._grid.setVerticalSpacing(24)
 
         specs = [spec for spec in registry.discover() if spec.id != 'home']
         specs.sort(key=lambda s: s.order)  # same order the sidebar uses
-        for i, spec in enumerate(specs):
+        self._tiles = []
+        for spec in specs:
             tile = _ToolTile(spec)
             tile.clicked.connect(lambda id_=spec.id: self.toolRequested.emit(id_))
-            grid.addWidget(tile, i // _TILE_COLUMNS, i % _TILE_COLUMNS)
-        # Equal-width tiles, left-packed: every used column stretches the
-        # same, and a zero-width spacer column absorbs whatever width is
-        # left over, so a partially-filled last row leaves a gap on the
-        # right instead of stretching its couple of tiles across the page.
-        if specs:
-            last_used_col = (len(specs) - 1) % _TILE_COLUMNS
-            for col in range(last_used_col + 1):
-                grid.setColumnStretch(col, 1)
-            grid.setColumnStretch(_TILE_COLUMNS, 0)
+            self._tiles.append(tile)
 
-        root.addWidget(grid_host)
-        root.addStretch(1)
+        self._grid_scroll = QScrollArea()
+        self._grid_scroll.setObjectName('homeScroll')
+        self._grid_scroll.setWidgetResizable(True)
+        self._grid_scroll.setFrameShape(QFrame.NoFrame)
+        # No horizontal scrollbar by design: as the window narrows the grid
+        # reflows to fewer columns (see _reflow) so tiles keep a readable width
+        # and are never clipped on the right -- reflow, not a scroll bar.
+        self._grid_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._grid_scroll.setWidget(self._grid_host)
+        # Watch the scroll area's own resizes (not HomePage's): its width is
+        # stable against the vertical scrollbar toggling, which keeps _reflow
+        # from feeding a resize -> column -> height -> scrollbar -> resize loop.
+        self._grid_scroll.installEventFilter(self)
+
+        # Debounced reflow: rebuilding the grid (moving every tile + resetting
+        # column stretches) on *every* Resize event thrashes the layout for the
+        # whole duration of an interactive drag, and Qt/Windows paints
+        # inconsistent ghost frames mid-drag (the sidebar region not yet
+        # repainted, a stale column count). Restarting a short single-shot timer
+        # on each resize means the grid is rebuilt once, just after the drag
+        # settles, instead of continuously during it.
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.setInterval(70)
+        self._reflow_timer.timeout.connect(self._reflow)
+
+        root.addWidget(self._grid_scroll, 1)
+
+        self._cols = 0  # 0 = nothing placed yet; first _reflow lays out
+        self._reflow()
+
+    def eventFilter(self, obj, event):
+        if obj is self._grid_scroll and event.type() == QEvent.Resize:
+            self._reflow_timer.start()
+        return super().eventFilter(obj, event)
+
+    def _columns_for(self, avail_width):
+        """Widest column count (up to ``_MAX_TILE_COLUMNS``) that still leaves
+        every tile at least ``_TILE_MIN_WIDTH``; drop a column before tiles get
+        squeezed past readable rather than clipping the rightmost one.
+        """
+        gap = self._grid.horizontalSpacing()
+        for cols in range(_MAX_TILE_COLUMNS, 1, -1):
+            needed = cols * _TILE_MIN_WIDTH + (cols - 1) * gap
+            if avail_width >= needed:
+                return cols
+        return 1
+
+    def _reflow(self):
+        """Re-place the tiles for the current width. A no-op unless the column
+        count actually changes, so dragging the window edge only rebuilds the
+        grid at the 3 -> 2 -> 1 thresholds.
+        """
+        # Read the scroll area's width (viewport + any vertical scrollbar),
+        # reserving a scrollbar's worth so a column is dropped just before the
+        # bar would appear. This width doesn't move when the scrollbar toggles,
+        # which is what keeps the reflow stable.
+        avail = self._grid_scroll.width() - 16
+        cols = self._columns_for(avail)
+        if cols == self._cols:
+            return
+        self._cols = cols
+        for i, tile in enumerate(self._tiles):
+            self._grid.addWidget(tile, i // cols, i % cols)
+        # Equal-width tiles, left-packed: every used column stretches the same,
+        # unused columns get 0, so a partially-filled last row leaves its gap
+        # on the right instead of stretching its couple of tiles across the page.
+        for c in range(_MAX_TILE_COLUMNS + 1):
+            self._grid.setColumnStretch(c, 0)
+        if self._tiles:
+            last_used_col = (len(self._tiles) - 1) % cols
+            for c in range(last_used_col + 1):
+                self._grid.setColumnStretch(c, 1)
