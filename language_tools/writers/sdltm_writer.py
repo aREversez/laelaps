@@ -201,50 +201,72 @@ def seg_xml(text, culture):
 
 
 def write(path, units, src_lang, tgt_lang, name):
-    """list[TranslationUnit] -> .sdltm file. Returns the number of TUs written."""
-    if os.path.exists(path):
-        os.remove(path)
-    con = sqlite3.connect(path)
-    con.execute('pragma page_size=8192')
-    con.execute('pragma encoding="UTF-8"')
-    for d in DDL:
-        con.execute(d)
-    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    con.execute('INSERT INTO translation_memories(guid,name,source_language,target_language,'
-                'copyright,description,settings,creation_user,creation_date,expiration_date,'
-                'fuzzy_indexes,last_recompute_date,last_recompute_size,flags,tucount) '
-                'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                (uuid.uuid4().bytes, name, src_lang, tgt_lang, None, None, 127,
-                 'laelaps', now, '9999-12-31 23:59:59', 9, None, None, 0, 0))
-    for k, v in (('VERSION', '8.06'), ('FREQUENCYTOP', '1000'), ('LAST_ANALYZE', '0')):
-        con.execute('INSERT INTO parameters VALUES(?,?,?)', (1, k, v))
-    # FGA-era markers written by Studio's upgrade; NULL tm_id as observed.
-    # Deliberately NOT writing TranslationModelName/Version — those appear
-    # only when a model is actually built, and a half-populated model is
-    # what poisoned the round-3 manual fixture ("only supports 1
-    # translation model").
-    for k, v in (('TokenDataVersion', '1'), ('AlignmentDataVersion', '1'),
-                 ('VERSION_CREATED', '8.12')):
-        con.execute('INSERT INTO parameters VALUES(?,?,?)', (None, k, v))
-    con.execute('INSERT INTO attributes(guid,name,type,tm_id) VALUES(?,?,?,?)',
-                (uuid.uuid4().bytes, 'StructureContext', 2, 1))
-    n = 0
-    for u in units:
-        src_text, tgt_text = u.src_text.strip(), u.tgt_text.strip()
-        if not src_text or not tgt_text:
-            continue
-        created = normalize_ts(getattr(u, 'created_at', None), '%Y-%m-%d %H:%M:%S', now)
-        changed = normalize_ts(getattr(u, 'modified_at', None), '%Y-%m-%d %H:%M:%S', created)
-        con.execute('INSERT INTO translation_units(guid,translation_memory_id,source_hash,'
-                    'source_segment,target_hash,target_segment,creation_date,creation_user,'
-                    'change_date,change_user,last_used_date,last_used_user,usage_counter,flags) '
-                    'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                    (uuid.uuid4().bytes, 1, fnv1a64(src_text), seg_xml(src_text, src_lang),
-                     fnv1a64(tgt_text), seg_xml(tgt_text, tgt_lang), created, 'laelaps', changed, 'laelaps',
-                     now, 'laelaps', 0, 131073))
-        n += 1
-    con.execute('UPDATE translation_memories SET tucount=? WHERE id=1', (n,))
-    con.commit()
-    con.execute('VACUUM')
-    con.close()
-    return n
+    """list[TranslationUnit] -> .sdltm file. Returns the number of TUs written.
+
+    Builds the whole database into a sibling ``.tmp`` file and only
+    ``os.replace()``s it onto ``path`` after a clean commit. The old version
+    deleted ``path`` up front and left the connection open if anything
+    raised in between, so a mid-write failure destroyed the previous file
+    and leaked the handle (P2-8 of the 2026-09 fix list). ``os.replace`` is
+    atomic within a filesystem on both Windows and POSIX, so a reader either
+    sees the old file or the fully-written new one, never a half-built or
+    missing TM.
+    """
+    tmp = path + '.tmp'
+    if os.path.exists(tmp):
+        os.remove(tmp)
+    con = None
+    try:
+        con = sqlite3.connect(tmp)
+        con.execute('pragma page_size=8192')
+        con.execute('pragma encoding="UTF-8"')
+        for d in DDL:
+            con.execute(d)
+        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        con.execute('INSERT INTO translation_memories(guid,name,source_language,target_language,'
+                    'copyright,description,settings,creation_user,creation_date,expiration_date,'
+                    'fuzzy_indexes,last_recompute_date,last_recompute_size,flags,tucount) '
+                    'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (uuid.uuid4().bytes, name, src_lang, tgt_lang, None, None, 127,
+                     'laelaps', now, '9999-12-31 23:59:59', 9, None, None, 0, 0))
+        for k, v in (('VERSION', '8.06'), ('FREQUENCYTOP', '1000'), ('LAST_ANALYZE', '0')):
+            con.execute('INSERT INTO parameters VALUES(?,?,?)', (1, k, v))
+        # FGA-era markers written by Studio's upgrade; NULL tm_id as observed.
+        # Deliberately NOT writing TranslationModelName/Version — those appear
+        # only when a model is actually built, and a half-populated model is
+        # what poisoned the round-3 manual fixture ("only supports 1
+        # translation model").
+        for k, v in (('TokenDataVersion', '1'), ('AlignmentDataVersion', '1'),
+                     ('VERSION_CREATED', '8.12')):
+            con.execute('INSERT INTO parameters VALUES(?,?,?)', (None, k, v))
+        con.execute('INSERT INTO attributes(guid,name,type,tm_id) VALUES(?,?,?,?)',
+                    (uuid.uuid4().bytes, 'StructureContext', 2, 1))
+        n = 0
+        for u in units:
+            src_text, tgt_text = u.src_text.strip(), u.tgt_text.strip()
+            if not src_text or not tgt_text:
+                continue
+            created = normalize_ts(getattr(u, 'created_at', None), '%Y-%m-%d %H:%M:%S', now)
+            changed = normalize_ts(getattr(u, 'modified_at', None), '%Y-%m-%d %H:%M:%S', created)
+            con.execute('INSERT INTO translation_units(guid,translation_memory_id,source_hash,'
+                        'source_segment,target_hash,target_segment,creation_date,creation_user,'
+                        'change_date,change_user,last_used_date,last_used_user,usage_counter,flags) '
+                        'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                        (uuid.uuid4().bytes, 1, fnv1a64(src_text), seg_xml(src_text, src_lang),
+                         fnv1a64(tgt_text), seg_xml(tgt_text, tgt_lang), created, 'laelaps', changed, 'laelaps',
+                         now, 'laelaps', 0, 131073))
+            n += 1
+        con.execute('UPDATE translation_memories SET tucount=? WHERE id=1', (n,))
+        con.commit()
+        con.execute('VACUUM')
+        con.close()
+        con = None
+        os.replace(tmp, path)
+        return n
+    finally:
+        # Close the handle on any failure path, and never leave the scratch
+        # file behind. After a successful os.replace() tmp no longer exists.
+        if con is not None:
+            con.close()
+        if os.path.exists(tmp):
+            os.remove(tmp)

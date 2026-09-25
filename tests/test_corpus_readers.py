@@ -2,6 +2,8 @@ from language_tools.corpus_readers import sdltm_reader, tmx_reader
 from language_tools.writers import sdltm_writer, tmx_writer
 from language_tools.model import TranslationUnit
 
+import os
+
 import pytest
 
 
@@ -52,6 +54,27 @@ def test_sdltm_reader_raises_loudly_on_unparseable_segment_xml(tmp_path):
 
     with pytest.raises(ValueError, match='unparseable segment XML'):
         sdltm_reader.read(path)
+
+
+def test_sdltm_write_failure_preserves_existing_file_and_leaves_no_scratch(tmp_path, monkeypatch):
+    # P2-8: write() used to os.remove() the target up front and left the
+    # sqlite connection open if any later step raised -- a mid-write failure
+    # destroyed the previous TM and leaked the handle. It now builds into a
+    # .tmp sibling and only os.replace()s on success, with a finally that
+    # closes and removes the scratch file.
+    path = str(tmp_path / 'x.sdltm')
+    sdltm_writer.write(path, _sample_units()[:1], 'en-US', 'zh-CN', 'orig')
+    before = open(path, 'rb').read()
+
+    def boom(*a, **k):
+        raise RuntimeError('injected mid-write failure')
+    monkeypatch.setattr(sdltm_writer, 'seg_xml', boom)
+
+    with pytest.raises(RuntimeError, match='injected mid-write failure'):
+        sdltm_writer.write(path, _sample_units(), 'en-US', 'zh-CN', 'new')
+
+    assert open(path, 'rb').read() == before        # original untouched
+    assert not os.path.exists(path + '.tmp')        # no scratch file left behind
 
 
 def _sample_units():
