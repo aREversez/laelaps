@@ -316,6 +316,39 @@ def test_url_mismatch_flags_dropped_url():
     assert 'URL_MISMATCH' in units[0].meta['qa_issues']
 
 
+def test_url_mismatch_detects_uppercase_scheme():
+    # RFC 3986 makes the scheme case-insensitive; _URL_RE used to be
+    # case-sensitive, so an all-caps "HTTPS://..." slipped past detection.
+    units = [_tu('Visit HTTPS://EXAMPLE.COM/docs now.', '立即访问。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'URL_MISMATCH' in units[0].meta['qa_issues']
+
+
+def test_no_placeholder_mismatch_for_bracketed_cjk_prose():
+    # {文件} is glossed prose, not a Python/printf code placeholder. The old
+    # \{[^{}\s]\} body matched any non-space run, so a target that didn't
+    # repeat the braces was wrongly flagged as having dropped a placeholder.
+    units = [_tu('请按{文件}选择模板。', '请根据文件选择模板。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PLACEHOLDER_MISMATCH' not in units[0].meta['qa_issues']
+
+
+def test_currency_code_not_stripped_inside_a_word():
+    # IGNORECASE made "EUR" match inside "European"; word-boundary anchoring
+    # keeps the alphabetic codes matching only as standalone tokens.
+    assert qa._CURRENCY_RE.findall('European union') == []
+    assert qa._CURRENCY_RE.findall('EUR 50') != []
+
+
+def test_period_not_swallowed_as_thousands_separator():
+    # A period before three digits is far more often a version/decimal
+    # fragment than a continental thousands mark -- only comma (and the CJK
+    # fullwidth comma) count as thousands separators now.
+    assert qa._THOUSANDS_RE.sub('', '1.234') == '1.234'   # version/decimal kept
+    assert qa._THOUSANDS_RE.sub('', '1,234') == '1234'     # comma thousands stripped
+    assert qa._THOUSANDS_RE.sub('', '1，234') == '1234'     # CJK fullwidth comma
+
+
 def test_no_url_mismatch_when_url_matches():
     units = [_tu('See https://example.com/docs for details.', '详情见 https://example.com/docs。')]
     qa.run(units, length_ratio=1.0)

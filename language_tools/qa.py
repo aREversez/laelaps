@@ -41,8 +41,12 @@ like ``$1,000`` vs ``1000 dollars`` (the thousands-separator comma makes
 the regex see "1,000" vs "1000" as different numbers). We now normalize
 before comparison:
 
-- Strip thousands separators (`,` and `.` between groups of 3 digits when
-  both sides are 4+ digits; CJK fullwidth comma `，` too)
+- Strip thousands separators (`,` between groups of 3 digits when both
+  sides are 4+ digits; CJK fullwidth comma `，` too). A `.` is deliberately
+  NOT treated as a thousands separator -- it's far more often a decimal
+  point or a version-number fragment, and swallowing those did more harm
+  than the rare continental `.`-thousands false positive it costs us
+  (en-US<->zh-CN, this package's domain, never uses `.` for thousands).
 - Treat `.` and `,` decimal separators as equivalent
 - Drop trailing-zero decimals (``1.20`` == ``1.2``)
 - Strip currency symbols and the surrounding letters ``$``, ``€``, ``¥``,
@@ -139,16 +143,24 @@ _RAW_DIGIT_RE = re.compile(r'\d+(?:[.,]\d+)?')
 # Currency-prefix stripper: matched greedily, kept narrow on purpose.
 # Adding every ISO currency code would balloon this list without a real
 # false-positive reduction -- the most common offenders ($, €, ¥, USD,
-# RMB, CNY) cover the vast majority of real-world bilingual TMs.
+# RMB, CNY) cover the vast majority of real-world bilingual TMs. The
+# alphabetic codes are word-boundary anchored so they only match as
+# standalone tokens, never inside a longer identifier/word (IGNORECASE
+# made "USD" match inside "MUSD"-style tokens otherwise); the symbols are
+# punctuation and need no boundary.
 _CURRENCY_RE = re.compile(
-    r'(?:USD|EUR|CNY|RMB|GBP|JPY|\$|€|¥|£)\s*', re.IGNORECASE)
+    r'(?:\b(?:USD|EUR|CNY|RMB|GBP|JPY)\b|[\$€¥£])\s*', re.IGNORECASE)
 
-# Thousands-separator: a comma or period (or CJK fullwidth comma) between
-# two groups of exactly 3 digits, where the left group has at least one
-# more digit ahead of it. Anchored so it doesn't misfire inside "1,234"
-# style dates or versions that aren't actually thousands separators.
+# Thousands-separator: a comma (or CJK fullwidth comma) between two groups
+# of digits where the right group is exactly 3 digits. Deliberately NOT
+# matching '.' here: a period followed by three digits is far more often a
+# decimal fraction ("3.142") or a version fragment ("2.1.153") than a
+# continental thousands mark, and swallowing it silently mangles those.
+# en-US<->zh-CN (this package's domain) never uses '.' as a thousands
+# separator, so dropping it trades a rare locale false-positive for
+# correctly-handled version numbers.
 _THOUSANDS_RE = re.compile(
-    r'(?<=\d)[.,，](?=\d{3}(?:\D|$))')
+    r'(?<=\d)[,，](?=\d{3}(?:\D|$))')
 
 # Decimal-separator normalizer: turns both "1.5" and "1,5" into "1.5" so
 # the rest of the comparison can treat them as the same number. Doesn't
@@ -158,18 +170,22 @@ _THOUSANDS_RE = re.compile(
 _DECIMAL_RE = re.compile(r'(\d),(\d)')
 
 # Placeholder tokens: Python-style ``{name}``/``{0}``, printf-style
-# ``%s``/``%d``/``%(name)s``. Curly-brace token body excludes braces/
-# whitespace and is capped at 50 chars so a stray unmatched "{" in prose
-# text can't run the match on for the rest of the string.
-_PLACEHOLDER_RE = re.compile(r'\{[^{}\s]{1,50}\}|%\(\w+\)[sdfgxX]|%[sdfgxX]')
+# ``%s``/``%d``/``%(name)s``. The curly-brace body is restricted to ASCII
+# format-field characters (word chars plus '.', for attribute/index access
+# like ``{user.name}``) so CJK prose wrapped in braces -- ``{文件}`` in a
+# glossed UI string -- is not mistaken for a code placeholder. Body is
+# capped at 50 chars so a stray unmatched "{" in prose can't run the match
+# on for the rest of the string.
+_PLACEHOLDER_RE = re.compile(r'\{[A-Za-z0-9_.]{1,50}\}|%\(\w+\)[sdfgxX]|%[sdfgxX]')
 
 # URL matcher: greedy up to whitespace, then trailing punctuation commonly
 # adjacent to a URL in prose (closing parens/quotes, sentence-ending
 # punctuation incl. CJK) is stripped off in _extract_urls rather than
 # excluded from the character class here, since excluding them from the
 # class would also wrongly truncate URLs that legitimately contain them
-# (e.g. a query string with a literal ')').
-_URL_RE = re.compile(r'https?://\S+')
+# (e.g. a query string with a literal ')'). IGNORECASE because RFC 3986
+# makes the scheme case-insensitive -- "HTTPS://..." is still a URL.
+_URL_RE = re.compile(r'https?://\S+', re.IGNORECASE)
 _URL_TRAILING_PUNCT = '.,;:!?)\'"\u3001\u3002\uff0c\uff1b\uff1a\uff01\uff1f\uff09'
 
 # Inline-tag element-name extractor: pulls "bpt" out of a raw XML fragment
