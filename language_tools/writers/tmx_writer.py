@@ -32,7 +32,12 @@ def _seg_body(unit_text, unit_markup):
 
 def write(path, units, src_lang, tgt_lang):
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    with open(path, 'w', encoding='utf-8') as f:
+    # newline='\n': without it Python translates every '\n' to os.linesep on
+    # write, so on Windows a segment containing a literal '\r\n' becomes
+    # '\r\r\n' in the file, which ET.parse then normalizes to two newlines --
+    # the text mutates on round-trip. LF-only output keeps the file
+    # byte-identical across platforms and stops embedded newlines doubling.
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tmx version="1.4">\n')
         f.write('  <header creationtool="laelaps" creationtoolversion="1.0" o-tmf="SDLTM" '
                 'adminlang="en-US" srclang="%s" datatype="unknown" segtype="sentence" '

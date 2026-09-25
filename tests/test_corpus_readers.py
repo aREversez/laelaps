@@ -30,6 +30,20 @@ def test_illegal_xml_control_chars_survive_round_trip_in_both_formats(tmp_path):
     assert back[0].src_text == text.replace('\x0c', '\ufffd').replace('\x01', '\ufffd').replace('\x1f', '\ufffd')
 
 
+def test_tmx_writer_emits_lf_only_line_endings(tmp_path):
+    # The writer must not let Python translate structural or content '\n' to
+    # os.linesep (CRLF on Windows): that made the file platform-dependent and
+    # doubled any embedded newline once ET re-normalized '\r\r\n' on read.
+    units = [TranslationUnit(src_lang='en-US', tgt_lang='zh-CN',
+                             src_text='First line\nSecond line', tgt_text='第一行\n第二行')]
+    path = str(tmp_path / 'nl.tmx')
+    tmx_writer.write(path, units, 'en-US', 'zh-CN')
+    with open(path, 'rb') as fh:
+        assert b'\r' not in fh.read()
+    back = tmx_reader.read(path)
+    assert back[0].src_text == 'First line\nSecond line'
+
+
 def test_sdltm_reader_raises_loudly_on_unparseable_segment_xml(tmp_path):
     # A corrupt/foreign Segment blob must not read back as an empty
     # unit -- '' is indistinguishable from a genuinely empty segment, so
