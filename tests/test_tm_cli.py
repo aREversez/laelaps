@@ -557,6 +557,25 @@ def test_quote_reports_weighted_words_across_a_batch(tmp_path):
     assert 'Files=2 Segments=2 Words=8 WeightedWords=4.0' in result.stdout
 
 
+def test_quote_two_same_named_files_in_different_dirs_counts_both(tmp_path):
+    # P0-3: batch labels were plain basenames, so q1/same.tmx + q2/same.tmx
+    # collided in the {label: units} dict and the second file silently
+    # overwrote the first -- Files=1 for two real inputs, one file's content
+    # unpriced with no warning. make_labels() now disambiguates to
+    # same.tmx / same-2.tmx.
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。')])
+    d1 = tmp_path / 'q1'
+    d2 = tmp_path / 'q2'
+    d1.mkdir()
+    d2.mkdir()
+    _write_tmx(d1 / 'same.tmx', [_u('Click OK to continue.', '点击确定继续。')])  # exact
+    _write_tmx(d2 / 'same.tmx', [_u('Totally unrelated content here.', '完全无关的内容。')])  # no_match
+    result = _run(['quote', str(d1 / 'same.tmx'), str(d2 / 'same.tmx'), '--tm', str(tm)])
+    assert result.returncode == 0, result.stderr
+    assert 'Files=2 Segments=2 Words=8' in result.stdout
+
+
 def test_quote_accepts_a_mixed_batch_of_bilingual_source_and_corpus(tmp_path):
     # tmx_writer filters empty-source-or-target pairs on write (same
     # behavior csv_writer.py's own docstring notes for the corpus
@@ -741,6 +760,24 @@ def test_compare_reports_unique_shared_and_conflicts(tmp_path):
     assert 'a.tmx: 2 segments, 1 unique to this TM' in result.stdout
     assert 'b.tmx: 1 segments, 0 unique to this TM' in result.stdout
     assert 'Shared=0 Conflicts=1' in result.stdout
+
+
+def test_compare_two_same_named_files_gets_disambiguated_labels(tmp_path):
+    # P0-3: two dirs each holding a.tmx used to collapse to one label, so
+    # compare's per-label dicts silently merged them. make_labels() gives
+    # them a.tmx / a-2.tmx and compare() now guards against any residual
+    # duplicate label raising instead of merging.
+    d1 = tmp_path / 'r1'
+    d2 = tmp_path / 'r2'
+    d1.mkdir()
+    d2.mkdir()
+    _write_tmx(d1 / 'a.tmx', [_u('Hello', '你好'), _u('Only in first', '仅第一份')])
+    _write_tmx(d2 / 'a.tmx', [_u('Hello', '您好')])
+    result = _run(['compare', str(d1 / 'a.tmx'), str(d2 / 'a.tmx')])
+    assert result.returncode == 0, result.stderr
+    assert 'Inputs=2' in result.stdout
+    assert 'a.tmx: 2 segments, 1 unique to this TM' in result.stdout
+    assert 'a-2.tmx: 1 segments, 0 unique to this TM' in result.stdout
 
 
 def test_compare_export_writes_conflicts_csv(tmp_path):

@@ -1,5 +1,6 @@
 from language_tools.model import TranslationUnit
 from language_tools.tm import compare as compare_module
+from language_tools.tm import io as tm_io
 
 
 def _u(src, tgt, src_lang='en-US', tgt_lang='zh-CN'):
@@ -91,3 +92,28 @@ def test_write_conflicts_csv_blanks_labels_that_do_not_own_the_source(tmp_path):
     lines = out.read_text(encoding='utf-8-sig').strip().splitlines()
     assert lines[0] == 'source,a,b,c'
     assert lines[1] == 'Hello,你好,您好,'
+
+
+def test_compare_rejects_duplicate_labels_instead_of_merging():
+    # P0-3: every report dict is keyed by label, so a duplicate label would
+    # silently merge two inputs under one key rather than error. compare()
+    # now raises; callers avoid duplicates by building labels via make_labels.
+    try:
+        compare_module.compare([('a', [_u('Hello', '你好')]),
+                                ('a', [_u('Bye', '再见')])])
+        assert False, 'expected ValueError'
+    except ValueError as e:
+        assert 'share a label' in str(e)
+
+
+def test_make_labels_disambiguates_same_basename_across_dirs():
+    labels = tm_io.make_labels(['q1/same.tmx', 'q2/same.tmx', 'q3/same.tmx'])
+    assert labels == ['same.tmx', 'same-2.tmx', 'same-3.tmx']
+
+
+def test_make_labels_handles_backslash_paths_and_real_dash_number_collisions():
+    # Windows-style separators must not come back as one giant basename on
+    # POSIX; and a genuine 'a-2.tmx' input must not be clobbered by the
+    # generated suffix of a colliding 'a.tmx' (the while-loop keeps bumping).
+    labels = tm_io.make_labels(['\\dir\\a-2.tmx', 'y/a.tmx', 'z/a.tmx'])
+    assert labels == ['a-2.tmx', 'a.tmx', 'a-3.tmx']

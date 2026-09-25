@@ -137,7 +137,8 @@ def _leverage_job(candidate_path, tm_path):
 
 
 def _compare_job(input_paths):
-    named = [(os.path.basename(p), tm_io.read_corpus(p)) for p in input_paths]
+    labels = tm_io.make_labels(input_paths)
+    named = list(zip(labels, (tm_io.read_corpus(p) for p in input_paths)))
     return compare_module.compare(named)
 
 

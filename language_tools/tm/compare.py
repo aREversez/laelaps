@@ -45,8 +45,13 @@ def compare(named_unit_lists):
     named_unit_lists = list(named_unit_lists)
     if len(named_unit_lists) < 2:
         raise ValueError('compare requires at least 2 inputs, got %d' % len(named_unit_lists))
-
     labels = [label for label, _ in named_unit_lists]
+    if len(set(labels)) != len(labels):
+        # Every result dict below is keyed by label -- a duplicate
+        # wouldn't fail, it would silently merge two inputs' numbers
+        # under one key. Callers build labels via tm/io.make_labels().
+        raise ValueError('compare inputs share a label: %s' % labels)
+
     totals = {label: len(units) for label, units in named_unit_lists}
 
     per_label = {label: {} for label in labels}  # label -> {src: {tgt, ...}}

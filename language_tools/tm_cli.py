@@ -141,7 +141,8 @@ def _cmd_merge(args):
 
 
 def _cmd_compare(args):
-    named = [(os.path.basename(p), tm_io.read_corpus(p)) for p in args.inputs]
+    labels = tm_io.make_labels(args.inputs)
+    named = list(zip(labels, (tm_io.read_corpus(p) for p in args.inputs)))
     report = compare_module.compare(named)
     print('Inputs=%d' % len(named))
     for label in report['labels']:
@@ -337,9 +338,8 @@ def _read_batch_units(paths, src_lang, tgt_lang, args):
     accepts.
     """
     file_units = {}
-    for path in paths:
+    for label, path in zip(tm_io.make_labels(paths), paths):
         ext = os.path.splitext(path)[1].lower()
-        label = os.path.basename(path)
         if ext in _BILINGUAL_EXTS:
             if not src_lang or not tgt_lang:
                 raise ValueError(

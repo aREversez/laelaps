@@ -28,6 +28,36 @@ def read_corpus(path):
     return READERS[ext](path)
 
 
+def make_labels(paths):
+    """One short display label per path (the file's basename), with
+    duplicates disambiguated as ``name.ext``/``name-2.ext``/...
+
+    These labels are used as *dict keys* by quote/term-extract batch
+    results and compare reports -- plain ``os.path.basename`` made two
+    inputs named ``q1/same.tmx`` + ``q2/same.tmx`` collide, and the
+    second file silently overwrote the first (``Files=1`` for two real
+    inputs, one file's content unpriced and unreported with no warning,
+    P0-3 of the 2026-09 fix list). Keep the returned list aligned
+    one-to-one with ``paths`` (index-wise) at every call site.
+    """
+    labels = []
+    taken = set()
+    for path in paths:
+        # Normalize separators first: os.path.basename on Linux does NOT
+        # split on '\\', so a Windows-style path would otherwise yield
+        # the whole path as one giant 'label'.
+        base = os.path.basename(str(path).replace('\\', '/'))
+        label = base
+        n = 1
+        while label in taken:  # also guards a real 'a-2.tmx' input colliding
+            n += 1
+            root, ext = os.path.splitext(base)
+            label = '%s-%d%s' % (root, n, ext)
+        taken.add(label)
+        labels.append(label)
+    return labels
+
+
 def write_corpus(path, units, src_lang, tgt_lang, name=None):
     """``name`` (sdltm database display name) defaults to the output
     filename's stem, truncated to 80 chars -- irrelevant for .tmx.
