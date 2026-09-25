@@ -580,7 +580,11 @@ class QaCheckPage(QWidget):
         self.log.setMinimumHeight(80)
         self.log.setMaximumHeight(120)
         self.log.setPlaceholderText('状态信息会显示在这里')
-        outer.addWidget(self.log)
+        # The log is a status console, not one more form field -- giving it a
+        # 状态 header (via section()) so it reads as an intentional result area
+        # instead of a floating empty box under the results table. Same
+        # treatment corpus_convert/tm_maintenance give their 结果 log.
+        outer.addWidget(section('状态', self.log))
 
     # ------------------------------------------------------------- dialogs
     def _browse_input(self):

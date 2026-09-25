@@ -263,7 +263,12 @@ class TermManagementPage(QWidget):
         self.log.setMinimumHeight(90)
         self.log.setMaximumHeight(120)
         self.log.setPlaceholderText('操作结果会显示在这里')
-        outer.addWidget(self.log)
+        # Shared across all three tabs, this is a status/operation console --
+        # each tab's own table (术语条目/检查结果/候选结果) is the primary result
+        # area, so the log stays a small fixed-height box below them. Giving it
+        # a 状态 header (via section()) so it reads as an intentional area
+        # instead of a floating empty box, matching corpus_convert/tm_maintenance.
+        outer.addWidget(section('状态', self.log))
 
     # ------------------------------------------------------- glossary tab
     def _build_glossary_tab(self):
