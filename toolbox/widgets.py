@@ -52,11 +52,11 @@ elevation shadow applied here so no tool page reaches for
 ``QGraphicsDropShadowEffect`` itself -- per DESIGN.md §13, shadows are
 reserved for this card and the home-page tiles, nothing else.
 """
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QGraphicsDropShadowEffect, QLabel, QScrollArea,
-    QVBoxLayout, QWidget,
+    QComboBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
+    QScrollArea, QSizePolicy, QTabWidget, QVBoxLayout, QWidget,
 )
 
 
@@ -276,13 +276,23 @@ def tinted_icon_pixmap(icon_path, size):
     return QPixmap.fromImage(image)
 
 
-def page_shell(title, subtitle, spacing=18):
+def page_shell(title, subtitle, spacing=18, max_width=960):
     """The standard skeleton for a tool page's ``_build_ui()``: a page
     header (20px title + muted subtitle, styled via objectName in
     style.qss -- never inline setStyleSheet here) above one white content
     card wrapped in a ``QScrollArea`` (short pages never scroll, tall ones
     no longer clip at small window sizes), the card carrying the app's
     only per-page elevation shadow.
+
+    The header + card live in a column capped to ``max_width`` and
+    *centered* horizontally (2026-09 layout pass): on a wide window the
+    page reads as a focused pane instead of a form whose fields stretch
+    edge-to-edge across every pixel. The cap is what keeps a line edit
+    from running 1500px on a maximized monitor; centering is what keeps
+    the leftover space balanced -- a left-aligned capped column dumped
+    every spare pixel into one cavernous band on the right, which read as
+    a layout bug rather than a margin. The column still fills the vertical
+    space so the scroll area grows with the window.
 
     Returns ``(outer_layout, title_label, subtitle_label)``:
     ``outer_layout`` is what a page adds its sections to, exactly like
@@ -293,7 +303,23 @@ def page_shell(title, subtitle, spacing=18):
     """
     root = QVBoxLayout()
     root.setContentsMargins(28, 24, 28, 24)
-    root.setSpacing(14)
+    root.setSpacing(0)
+
+    hwrap = QHBoxLayout()
+    hwrap.setContentsMargins(0, 0, 0, 0)
+    hwrap.setSpacing(0)
+
+    column = QWidget()
+    column.setObjectName('pageColumn')
+    column.setMaximumWidth(max_width)
+    # Expanding (not Preferred) horizontally so the column grows to fill the
+    # window up to ``max_width``; the surrounding stretches then only absorb
+    # the *remaining* slack and center it. With Preferred it would sit at its
+    # content's narrow natural width and leave big blanks on both sides.
+    column.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    col_layout = QVBoxLayout(column)
+    col_layout.setContentsMargins(0, 0, 0, 0)
+    col_layout.setSpacing(14)
 
     header = QWidget()
     header_layout = QVBoxLayout(header)
@@ -305,7 +331,7 @@ def page_shell(title, subtitle, spacing=18):
     subtitle_label.setObjectName('pageSubtitle')
     header_layout.addWidget(title_label)
     header_layout.addWidget(subtitle_label)
-    root.addWidget(header)
+    col_layout.addWidget(header)
 
     card = QWidget()
     card.setObjectName('pageCard')
@@ -321,9 +347,27 @@ def page_shell(title, subtitle, spacing=18):
     scroll.setObjectName('pageScroll')
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.NoFrame)
-    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    # As-needed, not AlwaysOff: a row of inline fields (e.g. corpus_convert's
+    # 原文语言/译文语言/文档排版方式, or a line edit + its 浏览 button) has a
+    # minimum width it can't shrink below. With the bar hard-off, a window
+    # narrower than that silently clipped the rightmost control off-screen
+    # with no way to reach it. AsNeeded keeps wide/maximized windows
+    # scrollbar-free (the common case) while a genuinely narrow window gets a
+    # horizontal bar so nothing is ever unreachable.
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     scroll.setWidget(card)
-    root.addWidget(scroll, 1)
+    col_layout.addWidget(scroll, 1)
+
+    # The column's stretch factor dominates (1000 vs the side stretches' 1),
+    # so it absorbs all slack first and grows to its ``max_width`` cap; the
+    # tiny leftover is then split evenly by the two side stretches, centering
+    # the capped column. (A plain addWidget + equal stretches would instead
+    # leave the column at its narrow natural width with big blanks on both
+    # sides; a lone trailing stretch would pile every spare pixel on the right.)
+    hwrap.addStretch(1)
+    hwrap.addWidget(column, 1000)
+    hwrap.addStretch(1)
+    root.addLayout(hwrap, 1)
 
     # The caller's page widget gets the root layout installed here -- pages
     # keep adding sections to the returned `outer` (the card's layout) with
@@ -332,6 +376,48 @@ def page_shell(title, subtitle, spacing=18):
     if caller is not None:
         caller.setLayout(root)
     return outer, title_label, subtitle_label
+
+
+class CurrentPageTabWidget(QTabWidget):
+    """A ``QTabWidget`` that sizes to its *current* page instead of the
+    tallest one.
+
+    The stock widget reserves room for the largest page so switching tabs
+    never resizes -- but in a page whose tabs hold very different amounts
+    of content (tm_maintenance: a couple of short inputs on 清理 vs a big
+    results table on 统计), that leaves the short tab with a tall empty
+    band under its controls, which reads as a layout bug and fights the
+    results area below for space. Reporting the current page's size lets
+    the surrounding layout hand the freed vertical space to whatever
+    stretches (the shared 结果 log), so no tab shows a void. Re-emits
+    ``updateGeometry`` on tab change so the surrounding layout re-flows
+    the moment the user switches.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.currentChanged.connect(lambda *_: self.updateGeometry())
+
+    def _current_page_hint(self, which):
+        # Keep the stock WIDTH (max over all pages + tab bar) so the tab
+        # bar never gets squeezed into scroller arrows and the surrounding
+        # width-capped column stays its intended width; only the HEIGHT
+        # tracks the current page -- that is the whole point.
+        base = super().sizeHint() if which == 'size' else super().minimumSizeHint()
+        current = self.currentWidget()
+        if current is None:
+            return base
+        page_hint = current.sizeHint() if which == 'size' else current.minimumSizeHint()
+        # + tab-bar height and a few px for the pane border/`top` offset
+        # the QSS gives QTabWidget::pane, so the pane never clips content.
+        bar = self.tabBar().sizeHint().height()
+        return QSize(base.width(), page_hint.height() + bar + 12)
+
+    def sizeHint(self):
+        return self._current_page_hint('size')
+
+    def minimumSizeHint(self):
+        return self._current_page_hint('min')
 
 
 def _current_page_parent():

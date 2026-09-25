@@ -59,7 +59,7 @@ import os
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QCheckBox, QFileDialog,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
-    QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QTextEdit,
+    QPushButton, QTableWidget, QTableWidgetItem, QTextEdit,
     QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt
@@ -74,7 +74,10 @@ from language_tools.tm import merge as merge_module
 from language_tools.tm import stats as stats_module
 from language_tools.writers import csv_writer
 from toolbox import settings
-from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, compact_combo, labeled_field, page_shell, section
+from toolbox.widgets import (
+    CORPUS_FILTER, LOG_COLORS, CurrentPageTabWidget, compact_combo,
+    labeled_field, page_shell, section,
+)
 from toolbox.workers import CallableWorker, wait_for_running
 
 _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
@@ -160,7 +163,7 @@ class TmMaintenancePage(QWidget):
             spacing=18,
         )
 
-        self.tabs = QTabWidget()
+        self.tabs = CurrentPageTabWidget()
         self.tabs.addTab(self._build_clean_tab(), '清理')
         self.tabs.addTab(self._build_merge_tab(), '合并')
         self.tabs.addTab(self._build_leverage_tab(), '杠杆分析')
@@ -173,7 +176,7 @@ class TmMaintenancePage(QWidget):
         self.log.setReadOnly(True)
         self.log.setMinimumHeight(110)
         self.log.setPlaceholderText('操作结果会显示在这里')
-        outer.addWidget(self.log, 1)
+        outer.addWidget(section('结果', self.log), 1)
 
     def _build_clean_tab(self):
         tab = QWidget()
@@ -230,7 +233,6 @@ class TmMaintenancePage(QWidget):
         btn_row.addWidget(self.clean_btn)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
-        layout.addStretch(1)
         return tab
 
     def _build_merge_tab(self):
@@ -302,7 +304,6 @@ class TmMaintenancePage(QWidget):
         btn_row.addWidget(self.merge_btn)
         btn_row.addStretch(1)
         layout.addLayout(btn_row)
-        layout.addStretch(1)
         return tab
 
     def _build_leverage_tab(self):
@@ -353,7 +354,8 @@ class TmMaintenancePage(QWidget):
         self.leverage_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.leverage_table.setShowGrid(False)
         self.leverage_table.setAlternatingRowColors(True)
-        layout.addWidget(section('分析结果', self.leverage_table), 1)
+        self.leverage_table.setMinimumHeight(180)
+        layout.addWidget(section('分析结果', self.leverage_table))
 
         export_row = QHBoxLayout()
         self.leverage_export_csv_btn = QPushButton('导出 CSV')
@@ -421,8 +423,9 @@ class TmMaintenancePage(QWidget):
         self.compare_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.compare_table.setShowGrid(False)
         self.compare_table.setAlternatingRowColors(True)
+        self.compare_table.setMinimumHeight(180)
         self.compare_table.setToolTip('有分歧的原文句段——同一句原文，不同文件里译文不一样')
-        layout.addWidget(section('冲突明细', self.compare_table), 1)
+        layout.addWidget(section('冲突明细', self.compare_table))
 
         export_row = QHBoxLayout()
         self.compare_export_csv_btn = QPushButton('导出冲突 CSV')
@@ -483,7 +486,8 @@ class TmMaintenancePage(QWidget):
         self.stats_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.stats_table.setShowGrid(False)
         self.stats_table.setAlternatingRowColors(True)
-        layout.addWidget(section('统计结果', self.stats_table), 1)
+        self.stats_table.setMinimumHeight(180)
+        layout.addWidget(section('统计结果', self.stats_table))
         return tab
 
     def _set_stats_table_rows(self, rows):

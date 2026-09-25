@@ -205,8 +205,13 @@ class CorpusConvertPage(QWidget):
         self.log = QTextEdit()
         self.log.setObjectName('logConsole')
         self.log.setReadOnly(True)
+        self.log.setMinimumHeight(110)
         self.log.setPlaceholderText('转换结果会显示在这里')
-        outer.addWidget(self.log, 1)
+        # Same上下双区 treatment as tm_maintenance: the log is a result area,
+        # not one more form field -- giving it a 结果 header (via section())
+        # separates it from the inputs above and lets it claim the leftover
+        # vertical space at the bottom of the page.
+        outer.addWidget(_section('结果', self.log), 1)
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
