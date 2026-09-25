@@ -6,7 +6,7 @@ requires-python = ">=3.10"
 dependencies = ["openpyxl>=3.1"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-qt>=4", "reportlab>=4"]
+dev = ["pytest>=8", "pytest-qt>=4", "pytest-timeout>=2", "reportlab>=4"]
 gui = ["PySide6>=6.5"]
 reports = ["reportlab>=4"]
 
@@ -14,6 +14,13 @@ reports = ["reportlab>=4"]
 biconvert = "language_tools.cli:main"
 tmtool = "language_tools.tm_cli:main"
 language-toolbox = "toolbox.main:main"
+
+[tool.pytest.ini_options]
+# No test here should ever hang (file-lock/sdltm/sqlite paths are the
+# plausible candidates) -- 120s is generous headroom over the slowest
+# suite of tests, well under any CI job timeout, so a hang fails loudly
+# with a traceback instead of stalling the job until GitHub kills it.
+addopts = "--timeout=120"
 
 [build-system]
 requires = ["setuptools>=68"]
