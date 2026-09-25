@@ -103,6 +103,12 @@ Then copy the resulting `*.sdltm` files to a Windows machine with Trados
 Studio installed and walk the four-step checklist in
 `compatibility/studio-readable.md`.
 
+> Note (round 4, 2026-09-25): since the round-3 writer fix these recipes
+> produce post-FGA-upgrade-schema files that Studio can edit **without
+> upgrading**. Re-verification rounds used filenames/TM names suffixed
+> `_r4` so they don't collide with TMs already registered in Studio's TM
+> tree from earlier rounds — use a fresh suffix per round.
+
 ## Why these fixtures?
 
 See the "Test matrix" section of `compatibility/studio-readable.md` —
