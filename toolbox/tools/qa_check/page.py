@@ -216,7 +216,7 @@ from language_tools.tm import io as tm_io
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
 from toolbox import settings
-from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, section
+from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, page_shell, section
 from toolbox.workers import CallableWorker, wait_for_running
 
 _CSV_FILTER = 'CSV (*.csv)'
@@ -457,16 +457,11 @@ class QaCheckPage(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(18)
-
-        title = QLabel('QA 检查')
-        title.setStyleSheet('font-size: 20px; font-weight: 600;')
-        outer.addWidget(title)
-        subtitle = QLabel('对已有的翻译记忆库（tmx/sdltm）跑质量检查，生成审阅报告')
-        subtitle.setStyleSheet('color: #6B7280;')
-        outer.addWidget(subtitle)
+        outer, _, _ = page_shell(
+            'QA 检查',
+            '对已有的翻译记忆库（tmx/sdltm）跑质量检查，生成审阅报告',
+            spacing=18,
+        )
 
         file_row = QWidget()
         file_layout = QHBoxLayout(file_row)

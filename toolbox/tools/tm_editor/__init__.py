@@ -11,5 +11,7 @@ register(ToolSpec(
     name='条目编辑',
     description='打开或新建翻译记忆库（tmx/sdltm），浏览、增删改单条记录',
     icon=_ICON,
+    group='术语与记忆库',
+    order=31,
     page_factory=TmEditorPage,
 ))

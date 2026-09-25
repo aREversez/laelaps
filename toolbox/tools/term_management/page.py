@@ -108,7 +108,8 @@ from language_tools.terms.model import STATUSES, TermEntry
 from language_tools.tm import io as tm_io
 from language_tools.writers import csv_writer
 from toolbox import settings
-from toolbox.widgets import CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field
+from toolbox.widgets import (CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo,
+                             labeled_field, page_shell)
 from toolbox.widgets import lang_combo_code, make_lang_combo, section, set_lang_combo_code
 from toolbox.workers import CallableWorker, wait_for_running
 
@@ -244,16 +245,11 @@ class TermManagementPage(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(18)
-
-        title = QLabel('术语管理')
-        title.setStyleSheet('font-size: 20px; font-weight: 600;')
-        outer.addWidget(title)
-        subtitle = QLabel('维护双语术语表，并对照已有翻译记忆库检查禁用译法')
-        subtitle.setStyleSheet('color: #6B7280;')
-        outer.addWidget(subtitle)
+        outer, _, _ = page_shell(
+            '术语管理',
+            '维护双语术语表，并对照已有翻译记忆库检查禁用译法',
+            spacing=18,
+        )
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_glossary_tab(), '术语库')

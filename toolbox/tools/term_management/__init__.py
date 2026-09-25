@@ -11,5 +11,7 @@ register(ToolSpec(
     name='术语管理',
     description='维护双语术语表，并对照已有翻译记忆库检查禁用译法',
     icon=_ICON,
+    group='术语与记忆库',
+    order=30,
     page_factory=TermManagementPage,
 ))

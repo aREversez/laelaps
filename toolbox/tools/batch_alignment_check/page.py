@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 from language_tools import align_report
 from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
-from toolbox.widgets import make_lang_combo, make_layout_combo, set_lang_combo_code
+from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import section as _section
 from toolbox.workers import wait_for_running
 
@@ -126,16 +126,11 @@ class BatchAlignmentCheckPage(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(18)
-
-        title = QLabel('批量对齐检查')
-        title.setStyleSheet('font-size: 20px; font-weight: 600;')
-        outer.addWidget(title)
-        subtitle = QLabel('一次性检查多个双语文档的句子对齐结果，不生成任何文件')
-        subtitle.setStyleSheet('color: #6B7280;')
-        outer.addWidget(subtitle)
+        outer, _, _ = page_shell(
+            '批量对齐检查',
+            '一次性检查多个双语文档的句子对齐结果，不生成任何文件',
+            spacing=18,
+        )
 
         # --- file list (queue + progress display in one table, same as
         # batch_convert's 待转换文件 section) ---

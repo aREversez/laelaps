@@ -11,5 +11,7 @@ register(ToolSpec(
     name='批量转换',
     description='一次性转换多个双语文件/语料库文件为 sdltm/tmx/csv',
     icon=_ICON,
+    group='转换',
+    order=11,
     page_factory=BatchConvertPage,
 ))

@@ -11,5 +11,7 @@ register(ToolSpec(
     name='对齐检查',
     description='对着一个双语文档（docx/xlsx/csv/tsv）预览句子对齐结果，不写文件',
     icon=_ICON,
+    group='检查',
+    order=20,
     page_factory=AlignmentCheckPage,
 ))

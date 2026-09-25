@@ -11,5 +11,7 @@ register(ToolSpec(
     name='批量预检',
     description='批量转换前先体检：版式置信度、合并单元格、空表格、语言方向是否对',
     icon=_ICON,
+    group='检查',
+    order=22,
     page_factory=BatchPreflightPage,
 ))

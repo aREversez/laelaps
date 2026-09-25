@@ -11,5 +11,7 @@ register(ToolSpec(
     name='QA 检查',
     description='对已有的翻译记忆库 (tmx/sdltm) 跑质量检查，生成审阅报告',
     icon=_ICON,
+    group='检查',
+    order=23,
     page_factory=QaCheckPage,
 ))

@@ -41,9 +41,23 @@ picks an existing tmx/sdltm) is the same pattern a fourth time:
 own private ``_CORPUS_FILTER`` copy already -- three, right at the
 promotion line -- and ``tm_editor`` needing the identical string as its
 fourth independent copy is what actually triggered doing it.
+
+``page_shell()`` is the shared page skeleton every tool page's
+``_build_ui()`` starts from (2026-09 UI modernization round): the
+ad-hoc ``outer = QVBoxLayout(self)`` + inline-styled title/subtitle
+labels that all nine pages had individually grown are replaced by one
+header (objectName-styled, no more per-page hex codes) above a single
+white content card inside a ``QScrollArea``, with the page's one light
+elevation shadow applied here so no tool page reaches for
+``QGraphicsDropShadowEffect`` itself -- per DESIGN.md §13, shadows are
+reserved for this card and the home-page tiles, nothing else.
 """
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
+    QComboBox, QFrame, QGraphicsDropShadowEffect, QLabel, QScrollArea,
+    QVBoxLayout, QWidget,
+)
 
 
 # Shared by every tool page's append-only result log (and, from
@@ -226,7 +240,111 @@ def labeled_field(label_text, field_widget):
     box.setContentsMargins(0, 0, 0, 0)
     box.setSpacing(4)
     label = QLabel(label_text)
-    label.setStyleSheet('color: #6B7280; font-size: 12px;')
+    label.setProperty('role', 'fieldLabel')
     box.addWidget(label)
     box.addWidget(field_widget)
     return box
+
+
+# The stroke color every tool sidebar glyph is drawn with; home-page
+# tiles re-render the same SVG with this swapped to the accent indigo
+# (see tinted_icon_pixmap) so the big icons read as actionable without
+# the sidebar set changing character.
+_GLYPH_SLATE = '#6B7280'
+_GLYPH_INDIGO = '#2E4374'
+
+
+def tinted_icon_pixmap(icon_path, size):
+    """Render an icon SVG at ``size`` with its slate stroke swapped to
+    the accent indigo -- home-page tiles only, sidebar glyphs stay quiet.
+    String-level swap on the SVG source (the one documented glyph color,
+    never a color-management surprise) then QSvgRenderer from the edited
+    string keeps anti-aliasing and the two-tone white-fill details.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage, QPainter, QPixmap
+    from PySide6.QtSvg import QSvgRenderer
+
+    with open(icon_path, encoding='utf-8') as f:
+        svg = f.read().replace(_GLYPH_SLATE, _GLYPH_INDIGO)
+
+    image = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    QSvgRenderer(svg.encode('utf-8')).render(painter)
+    painter.end()
+    return QPixmap.fromImage(image)
+
+
+def page_shell(title, subtitle, spacing=18):
+    """The standard skeleton for a tool page's ``_build_ui()``: a page
+    header (20px title + muted subtitle, styled via objectName in
+    style.qss -- never inline setStyleSheet here) above one white content
+    card wrapped in a ``QScrollArea`` (short pages never scroll, tall ones
+    no longer clip at small window sizes), the card carrying the app's
+    only per-page elevation shadow.
+
+    Returns ``(outer_layout, title_label, subtitle_label)``:
+    ``outer_layout`` is what a page adds its sections to, exactly like
+    the ``outer = QVBoxLayout(self)`` it replaced -- except its direct
+    child is now the scroll area's card, so ``addWidget`` keeps working
+    unchanged. The two label references let pages/tests assert on the
+    header without hunting for it by objectName.
+    """
+    root = QVBoxLayout()
+    root.setContentsMargins(28, 24, 28, 24)
+    root.setSpacing(14)
+
+    header = QWidget()
+    header_layout = QVBoxLayout(header)
+    header_layout.setContentsMargins(0, 0, 0, 0)
+    header_layout.setSpacing(2)
+    title_label = QLabel(title)
+    title_label.setObjectName('pageTitle')
+    subtitle_label = QLabel(subtitle)
+    subtitle_label.setObjectName('pageSubtitle')
+    header_layout.addWidget(title_label)
+    header_layout.addWidget(subtitle_label)
+    root.addWidget(header)
+
+    card = QWidget()
+    card.setObjectName('pageCard')
+    outer = QVBoxLayout(card)
+    outer.setContentsMargins(24, 22, 24, 22)
+    outer.setSpacing(spacing)
+
+    shadow = QGraphicsDropShadowEffect(blurRadius=14, xOffset=0, yOffset=2)
+    shadow.setColor(QColor(26, 29, 35, 16))  # ink at ~6% -- see DESIGN.md §13
+    card.setGraphicsEffect(shadow)
+
+    scroll = QScrollArea()
+    scroll.setObjectName('pageScroll')
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+    scroll.setWidget(card)
+    root.addWidget(scroll, 1)
+
+    # The caller's page widget gets the root layout installed here -- pages
+    # keep adding sections to the returned `outer` (the card's layout) with
+    # no other change to their _build_ui() bodies.
+    caller = _current_page_parent()
+    if caller is not None:
+        caller.setLayout(root)
+    return outer, title_label, subtitle_label
+
+
+def _current_page_parent():
+    """Best-effort: the QWidget whose __init__ is currently running (i.e.
+    the page calling page_shell()). Walks the CPython call stack one
+    frame out; returns None if nothing widget-shaped is found, in which
+    case the caller keeps ownership of `root` unchanged.
+    """
+    import sys
+    frame = sys._getframe(2)
+    while frame is not None:
+        candidate = frame.f_locals.get('self')
+        if isinstance(candidate, QWidget):
+            return candidate
+        frame = frame.f_back
+    return None

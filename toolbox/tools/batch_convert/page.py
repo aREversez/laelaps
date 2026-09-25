@@ -58,7 +58,7 @@ from PySide6.QtWidgets import (
 from language_tools import api
 from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
-from toolbox.widgets import make_lang_combo, make_layout_combo, set_lang_combo_code
+from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import section as _section
 from toolbox.workers import wait_for_running
 
@@ -156,16 +156,11 @@ class BatchConvertPage(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(18)
-
-        title = QLabel('批量转换')
-        title.setStyleSheet('font-size: 20px; font-weight: 600;')
-        outer.addWidget(title)
-        subtitle = QLabel('一次性转换多个文件，每个结果保存在各自源文件旁边')
-        subtitle.setStyleSheet('color: #6B7280;')
-        outer.addWidget(subtitle)
+        outer, _, _ = page_shell(
+            '批量转换',
+            '一次性转换多个文件，每个结果保存在各自源文件旁边',
+            spacing=18,
+        )
 
         # --- file list ---
         list_widget = QWidget()

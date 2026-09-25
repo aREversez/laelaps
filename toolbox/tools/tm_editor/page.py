@@ -66,7 +66,8 @@ from language_tools.model import InlineNode, TranslationUnit
 from language_tools.tm import io as tm_io
 from language_tools.tm import near_dup as near_dup_module
 from toolbox import settings
-from toolbox.widgets import CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field
+from toolbox.widgets import (CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo,
+                             labeled_field, page_shell)
 from toolbox.widgets import lang_combo_code, make_lang_combo, set_lang_combo_code
 from toolbox.widgets import section
 
@@ -406,16 +407,11 @@ class TmEditorPage(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(18)
-
-        title = QLabel('条目编辑')
-        title.setStyleSheet('font-size: 20px; font-weight: 600;')
-        outer.addWidget(title)
-        subtitle = QLabel('打开或新建翻译记忆库，浏览、增删改单条记录')
-        subtitle.setStyleSheet('color: #6B7280;')
-        outer.addWidget(subtitle)
+        outer, _, _ = page_shell(
+            '条目编辑',
+            '打开或新建翻译记忆库，浏览、增删改单条记录',
+            spacing=18,
+        )
 
         file_widget = QWidget()
         file_layout = QVBoxLayout(file_widget)

@@ -11,5 +11,7 @@ register(ToolSpec(
     name='语料维护',
     description='翻译记忆库 (tmx/sdltm) 清理、合并、统计',
     icon=_ICON,
+    group='转换',
+    order=12,
     page_factory=TmMaintenancePage,
 ))

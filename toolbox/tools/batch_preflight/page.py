@@ -50,7 +50,7 @@ from PySide6.QtWidgets import (
 from language_tools.readers import docx_preflight
 from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
-from toolbox.widgets import make_lang_combo, set_lang_combo_code
+from toolbox.widgets import make_lang_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import section as _section
 from toolbox.workers import wait_for_running
 
@@ -125,16 +125,11 @@ class BatchPreflightPage(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(18)
-
-        title = QLabel('批量预检')
-        title.setStyleSheet('font-size: 20px; font-weight: 600;')
-        outer.addWidget(title)
-        subtitle = QLabel('批量转换前先体检：版式置信度、合并单元格、空表格、语言方向是否对')
-        subtitle.setStyleSheet('color: #6B7280;')
-        outer.addWidget(subtitle)
+        outer, _, _ = page_shell(
+            '批量预检',
+            '批量转换前先体检：版式置信度、合并单元格、空表格、语言方向是否对',
+            spacing=18,
+        )
 
         # --- file list (queue + progress display in one table, same as
         # batch_alignment_check/batch_convert) ---

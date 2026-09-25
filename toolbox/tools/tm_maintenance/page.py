@@ -74,7 +74,7 @@ from language_tools.tm import merge as merge_module
 from language_tools.tm import stats as stats_module
 from language_tools.writers import csv_writer
 from toolbox import settings
-from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, compact_combo, labeled_field, section
+from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, compact_combo, labeled_field, page_shell, section
 from toolbox.workers import CallableWorker, wait_for_running
 
 _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
@@ -154,16 +154,11 @@ class TmMaintenancePage(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(18)
-
-        title = QLabel('语料维护')
-        title.setStyleSheet('font-size: 20px; font-weight: 600;')
-        outer.addWidget(title)
-        subtitle = QLabel('清理、合并、统计翻译记忆库文件（tmx/sdltm）')
-        subtitle.setStyleSheet('color: #6B7280;')
-        outer.addWidget(subtitle)
+        outer, _, _ = page_shell(
+            '语料维护',
+            '清理、合并、统计翻译记忆库文件（tmx/sdltm）',
+            spacing=18,
+        )
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self._build_clean_tab(), '清理')

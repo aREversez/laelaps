@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QComboBox, QLabel
+from PySide6.QtWidgets import QComboBox, QLabel, QWidget
 
 from language_tools.model import TranslationUnit
 from toolbox.tools.alignment_check.page import AlignmentCheckPage
@@ -347,16 +347,48 @@ def test_results_table_header_is_left_aligned(qtbot):
 # Section titles also dropped their "第一步"/"第二步" numbering -- a fixed
 # sequence of inputs reads as steps on its own, the numbers were just more
 # label text without adding clarity.
+#
+# History note: an earlier revision of this file asserted *zero* scroll
+# areas on the page. The 2026-09 UI round gives every page exactly one
+# widgetResizable QScrollArea (toolbox.widgets.page_shell's #pageScroll)
+# so short windows scroll instead of clipping -- the anti-splitter
+# decision stands, the anti-scroll-area one was consciously replaced, and
+# the tests below now pin what actually must stay true around it.
 
-def test_no_scroll_area_or_splitter_hides_any_controls(qtbot):
-    # The whole point of rejecting the splitter/scroll-area design: every
-    # control, including 开始检查, must be reachable without scrolling or
-    # dragging a divider.
+def test_at_most_one_pagescroll_area_and_no_splitter(qtbot):
+    # The one allowed scroll area is the page shell's, it must resize its
+    # card (a scroll area that hugs a fixed-size card is the old clipping
+    # bug with extra steps), and no splitter may hide anything behind a
+    # draggable divider -- the design rejected back then still is.
     from PySide6.QtWidgets import QScrollArea, QSplitter
     page = AlignmentCheckPage()
     qtbot.addWidget(page)
-    assert page.findChildren(QScrollArea) == []
     assert page.findChildren(QSplitter) == []
+    scrolls = page.findChildren(QScrollArea)
+    assert len(scrolls) <= 1
+    for scroll in scrolls:
+        assert scroll.objectName() == 'pageScroll'
+        # Qt's property, not a Python method -- QScrollArea has no
+        # isWidgetResizable() accessor on any Qt version.
+        assert scroll.property('widgetResizable') is True
+
+
+def test_results_table_still_gets_the_growing_space(qtbot):
+    # The compact input row is what actually fixed the reported bug --
+    # the pageScroll safety net must not become the excuse to let input
+    # sections sprawl again: at a generous height the results table (not
+    # any input) holds the expanding policy, so 开始检查 and the table
+    # both sit in view without scrolling at all.
+    from PySide6.QtWidgets import QSizePolicy
+    page = AlignmentCheckPage()
+    qtbot.addWidget(page)
+    page.resize(1280, 860)
+    expanders = [w for w in page.findChildren(QWidget)
+                 if w.sizePolicy().verticalPolicy() == QSizePolicy.Expanding]
+    assert page.results_table in expanders
+    for input_widget in (page.input_edit, page.src_edit, page.tgt_edit,
+                          page.layout_combo, page.check_btn):
+        assert input_widget.sizePolicy().verticalPolicy() != QSizePolicy.Expanding
 
 
 def test_language_and_layout_combos_size_to_their_own_content(qtbot):
@@ -396,15 +428,17 @@ def test_check_button_is_a_direct_descendant_not_behind_any_container(qtbot):
     page = AlignmentCheckPage()
     qtbot.addWidget(page)
     assert page.check_btn in page.findChildren(type(page.check_btn))
-    # Reachable via the page's own layout, not nested inside a widget
-    # whose visibility/size depends on a splitter position or a scroll
-    # viewport -- walking up from check_btn should hit the page itself
-    # within a couple of plain QWidget/QVBoxLayout hops.
-    from PySide6.QtWidgets import QScrollArea, QSplitter
+    # Walking up from check_btn, the only containers allowed on the path
+    # are the page shell's plain QWidget/QScrollArea plumbing -- a
+    # QSplitter pane never is (a splitter's position decides whether the
+    # button is visible at all, the design rejected back then still is).
+    # The old revision of this test also forbade QScrollArea ancestors;
+    # page_shell() made one an intentional ancestor on every page.
+    from PySide6.QtWidgets import QSplitter
     ancestor = page.check_btn.parentWidget()
     depth = 0
-    while ancestor is not None and ancestor is not page and depth < 6:
-        assert not isinstance(ancestor, (QScrollArea, QSplitter))
+    while ancestor is not None and ancestor is not page and depth < 8:
+        assert not isinstance(ancestor, QSplitter)
         ancestor = ancestor.parentWidget()
         depth += 1
 

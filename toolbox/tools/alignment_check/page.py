@@ -93,7 +93,7 @@ from language_tools.reports import render as report_render
 from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
-from toolbox.widgets import make_lang_combo, make_layout_combo, section, set_lang_combo_code
+from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, section, set_lang_combo_code
 from toolbox.workers import CallableWorker, wait_for_running
 
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
@@ -122,16 +122,11 @@ class AlignmentCheckPage(QWidget):
 
     # ---------------------------------------------------------------- UI
     def _build_ui(self):
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(28, 24, 28, 24)
-        outer.setSpacing(12)
-
-        title = QLabel('对齐检查')
-        title.setStyleSheet('font-size: 20px; font-weight: 600;')
-        outer.addWidget(title)
-        subtitle = QLabel('预览双语文档的句子对齐结果，不生成任何文件')
-        subtitle.setStyleSheet('color: #6B7280;')
-        outer.addWidget(subtitle)
+        outer, _, _ = page_shell(
+            '对齐检查',
+            '预览双语文档的句子对齐结果，不生成任何文件',
+            spacing=12,
+        )
 
         # --- file ---
         file_row = QWidget()
