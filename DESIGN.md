@@ -282,6 +282,9 @@ toolbox/                    # 与 language_tools/ 同仓库同级，GUI层
     ├── alignment_check/      # 第四个工具，包装 language_tools.align_report（对齐诊断预览，不写文件）
     │   ├── __init__.py       # 注册 ToolSpec
     │   └── page.py            # 文件 + 语言/排版三个控件合并成一行（AdjustToContents 让下拉框宽度贴内容，不再被 QFormLayout 撑满一整行）+ 结果表格（拿伸缩空间）+ 筛选 + 导出 CSV——原来三个输入区各占一整行，非全屏窗口下曾把结果表格挤到只剩一两行可见，见该文件 docstring
+    ├── home/                 # 首页（2026-09 UI 现代化轮新增），不是包装器，是 registry 驱动的工具总览页
+    │   ├── __init__.py       # 注册 ToolSpec（order=0 显式置顶，壳层不硬编码它；discover 顺序不可靠，靠 order 保证）
+    │   └── page.py            # 工具卡片网格，点击经 toolRequested(id) 信号 → MainWindow.select_tool() 跳转；页面从不反向引用壳层
     └── <future_tool>/        # 新工具照此结构新增文件夹即可，main_window.py 不用改
 ```
 
@@ -299,9 +302,11 @@ class ToolSpec:
     description: str
     icon: str
     page_factory: Callable[[], QWidget]   # 返回这个工具的一个新页面实例
+    group: str = ''                        # 侧边栏/首页分区（'转换'/'检查'/…），'' 落入「其它」
+    order: int = 0                         # 全局排序键（home=0 置顶）；discover 顺序因首次导入而变，不可靠
 ```
 
-`registry.discover()` 在启动时用 `pkgutil.iter_modules` 扫描 `toolbox/tools/` 下所有子包并 import 一遍（触发各自 `__init__.py` 里的 `register()` 调用），`MainWindow` 只读 `registry.TOOLS` 渲染侧边栏，不硬编码任何具体工具。
+`registry.discover()` 在启动时用 `pkgutil.iter_modules` 扫描 `toolbox/tools/` 下所有子包并 import 一遍（触发各自 `__init__.py` 里的 `register()` 调用），`MainWindow` 只读 `registry.TOOLS` 按 `sorted(key=order)` 渲染侧边栏（分组标题按 `group` 变化插入，order 已让同组成员连续），不硬编码任何具体工具。注意：分区标题也占侧边栏行，**行号 ≠ 页面索引**，行的 `Qt.UserRole` 里存着 stack 索引，切换必须经 `_on_sidebar_row_changed()` 映射。
 
 ### 转换耗时与线程
 
@@ -327,9 +332,13 @@ Design tokens（颜色，命名 hex，别在别处重新定义）：
 
 排版：统一用系统字体（Segoe UI），不引入自定义字体文件——层级完全靠字重/字号区分，这是刻意的选择：桌面工具软件跟着平台走比"用两种字体撑个性"更合适，跟营销页/网站的设计诉求不一样。
 
-布局原则：扁平面板 + 发丝级分隔线，不用 QGroupBox 原生的"盒子套标题"外观（做不出干净的现代感，`toolbox/widgets.py` 里的 `section()` helper 是替代方案：一个小标题 label + 一条分隔线 + 内容），不做千篇一律的"卡片+统一阴影"（SaaS 模板的典型味道）。
+布局原则：扁平面板 + 发丝级分隔线，不用 QGroupBox 原生的"盒子套标题"外观（做不出干净的现代感，`toolbox/widgets.py` 里的 `section()` helper 是替代方案：一个小标题 label + 一条分隔线 + 内容）。
 
-新工具的界面要保持一致性：优先复用 `toolbox/widgets.py` 里 `section()` 这样的现成 helper（以及耗时操作用 `toolbox/workers.py` 的 `CallableWorker`），主按钮统一用 `objectName('primaryButton')`（QSS 已经定义好了这个选择器），日志类输出用 `objectName('logConsole')` 的 `QTextEdit` 走富文本着色（`_log(message, kind='info'|'error'|'success')` 这个模式），不要每个工具各写一套。
+**阴影（2026-09 UI 现代化轮修订）**：早先在这里写的是"不做千篇一律的卡片+统一阴影"，防的是 SaaS 模板味道，但执行过头变成了零层级。现定案为**受控轻投影**：全应用只允许两处阴影，都是 ink 6%~10% 不透明度、≤14px 模糊、2~3px 下偏移（`QGraphicsDropShadowEffect`，QSS 没有 box-shadow）——① 每个工具页唯一的内容卡片（`widgets.page_shell()` 内建的 `#pageCard`）；② 首页工具卡片 **hover 时**（离开即取消）。输入框、按钮、表格、Tab 面板一律不许加阴影，出现第三处即为走偏。
+
+页面骨架：每个工具页的 `_build_ui()` 从 `toolbox.widgets.page_shell(标题, 副标题)` 开始——页头（`#pageTitle`/`#pageSubtitle`，QSS 定样式，不在 page.py 里写 inline setStyleSheet）+ 一张白色内容卡片包在 `QScrollArea` 里（小窗口不再裁切长表单）。返回值第一个元素就是页面往上加内容的 `outer` 布局，接法和旧的 `QVBoxLayout(self)` 一样。
+
+新工具的界面要保持一致性：优先复用 `toolbox/widgets.py` 里 `section()`、`page_shell()` 这样的现成 helper（以及耗时操作用 `toolbox/workers.py` 的 `CallableWorker`），主按钮统一用 `objectName('primaryButton')`（QSS 已经定义好了这个选择器），日志类输出用 `objectName('logConsole')` 的 `QTextEdit` 走富文本着色（`_log(message, kind='info'|'error'|'success')` 这个模式），颜色一律走本文件顶部的 design tokens，不在 page.py 里重新定义 hex 值，不要每个工具各写一套。
 
 ### 打包
 

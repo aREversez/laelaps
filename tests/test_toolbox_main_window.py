@@ -1,21 +1,36 @@
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from language_tools.terms.model import TermEntry
-from toolbox.main_window import MainWindow, _DEFAULT_SIZE
+from toolbox.main_window import MainWindow, _DEFAULT_SIZE, _SECTION_ROLE
+
+
+def _tool_labels(w):
+    """Sidebar texts of actual tool rows only (section headers excluded)."""
+    return [w.sidebar.item(i).text() for i in range(w.sidebar.count())
+            if w.sidebar.item(i).data(_SECTION_ROLE) is None]
+
+
+def _stack_index_for_row(w, row):
+    """The stack page index a given sidebar row maps to via its UserRole
+    data -- the row!=page indirection _on_sidebar_row_changed() uses."""
+    return w.sidebar.item(row).data(Qt.UserRole)
 
 
 def test_main_window_lists_corpus_convert_tool(qtbot):
     w = MainWindow()
     qtbot.addWidget(w)
-    labels = [w.sidebar.item(i).text() for i in range(w.sidebar.count())]
-    assert '语料转换' in labels
+    assert '语料转换' in _tool_labels(w)
 
 
 def test_sidebar_items_have_icons(qtbot):
     w = MainWindow()
     qtbot.addWidget(w)
     for i in range(w.sidebar.count()):
-        assert not w.sidebar.item(i).icon().isNull()
+        item = w.sidebar.item(i)
+        if item.data(_SECTION_ROLE) is not None:
+            continue  # section headers are text-only by design
+        assert not item.icon().isNull()
 
 
 def test_sidebar_has_object_name_for_qss_targeting(qtbot):
@@ -24,13 +39,32 @@ def test_sidebar_has_object_name_for_qss_targeting(qtbot):
     assert w.sidebar.objectName() == 'sidebar'
 
 
+def test_section_headers_are_grouped_and_non_selectable(qtbot):
+    # The 2026-09 sidebar groups tools under section headers; a header
+    # occupies a row (so row numbering can no longer be assumed to line
+    # up with stack page indices) and carries no item flags at all.
+    w = MainWindow()
+    qtbot.addWidget(w)
+    section_rows = [i for i in range(w.sidebar.count())
+                    if w.sidebar.item(i).data(_SECTION_ROLE) is not None]
+    assert section_rows, 'expected at least one section header row'
+    for row in section_rows:
+        assert w.sidebar.item(row).flags() == Qt.NoItemFlags
+    # 'home' heads its own 概览 section: the very first row is a header.
+    assert section_rows[0] == 0
+
+
 def test_selecting_sidebar_item_switches_stack_page(qtbot):
     w = MainWindow()
     qtbot.addWidget(w)
+    # Startup selects the first tool (home), landing on stack index 0.
     assert w.stack.currentIndex() == 0
-    if w.sidebar.count() > 1:
-        w.sidebar.setCurrentRow(1)
-        assert w.stack.currentIndex() == 1
+    tool_rows = [i for i in range(w.sidebar.count())
+                 if w.sidebar.item(i).data(_SECTION_ROLE) is None]
+    if len(tool_rows) > 1:
+        second = tool_rows[1]
+        w.sidebar.setCurrentRow(second)
+        assert w.stack.currentIndex() == _stack_index_for_row(w, second)
 
 
 # --------------------------------------------------------------- geometry
@@ -82,8 +116,11 @@ class _FakeCloseEvent:
 
 
 def _term_management_page(w):
-    labels = [w.sidebar.item(i).text() for i in range(w.sidebar.count())]
-    return w.stack.widget(labels.index('术语管理'))
+    for i in range(w.sidebar.count()):
+        item = w.sidebar.item(i)
+        if item.data(_SECTION_ROLE) is None and item.text() == '术语管理':
+            return w.stack.widget(item.data(Qt.UserRole))
+    raise AssertionError('术语管理 row not found in sidebar')
 
 
 def test_close_with_no_unsaved_changes_accepts_immediately(qtbot):
