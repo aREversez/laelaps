@@ -47,6 +47,38 @@ def test_xlsx_round_trip(tmp_path):
     assert back[0].status == 'forbidden'
 
 
+def test_write_does_not_promote_implicit_approved_on_save(tmp_path):
+    # P1-7: a legacy row with a blank status cell reads back as
+    # status='approved', status_declared=False. Before the fix write() put
+    # the literal 'approved' into the status column, so the next read saw an
+    # *explicit* approved (status_declared=True) -- one open-edit-save in the
+    # GUI silently opted the whole status-less glossary into the approved
+    # check. The synthesized status must not be persisted as a declaration.
+    legacy = tmp_path / 'legacy.csv'
+    legacy.write_text('src_term,tgt_term\ncloud,云\napi,接口\n', encoding='utf-8')
+    entries = glossary.read(str(legacy), 'en-US', 'zh-CN')
+    assert [e.status_declared for e in entries] == [False, False]
+
+    resaved = str(tmp_path / 'resaved.csv')
+    glossary.write(resaved, entries)
+    back = glossary.read(resaved, 'en-US', 'zh-CN')
+    assert [e.status for e in back] == ['approved', 'approved']
+    assert [e.status_declared for e in back] == [False, False]
+
+
+def test_write_preserves_explicit_approved_and_forbidden(tmp_path):
+    # The fix must keep genuine declarations declared.
+    entries = [
+        _entry('cloud', '云', status='approved', status_declared=True),
+        _entry('big data', '大资料', status='forbidden'),
+    ]
+    path = str(tmp_path / 'declared.csv')
+    glossary.write(path, entries)
+    back = glossary.read(path, 'en-US', 'zh-CN')
+    assert [e.status_declared for e in back] == [True, True]
+    assert [e.status for e in back] == ['approved', 'forbidden']
+
+
 def test_empty_entry_list_round_trips_to_empty(tmp_path):
     path = str(tmp_path / 'glossary.csv')
     glossary.write(path, [])

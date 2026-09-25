@@ -204,7 +204,16 @@ def write(path, entries):
         tbx_module.write(path, entries)
         return
     rows = [COLUMNS] + [
-        [e.src_term, e.tgt_term, e.status, e.domain or '', e.note or ''] for e in entries
+        # Only a *declared* status is written back verbatim. An 'approved'
+        # that read() synthesized from a blank/unrecognized status cell
+        # (status_declared=False) must stay blank on disk -- otherwise one
+        # open-edit-save in the GUI promoted every legacy implicit-approved
+        # row to explicitly-approved, and the opt-in approved check would
+        # then sweep the whole glossary into its to-verify list, exactly the
+        # false-positive wall status_declared exists to avoid
+        # (P1-7 of the 2026-09 fix list).
+        [e.src_term, e.tgt_term, e.status if e.status_declared else '',
+         e.domain or '', e.note or ''] for e in entries
     ]
     if ext == '.csv':
         with open(path, 'w', encoding='utf-8-sig', newline='') as f:
