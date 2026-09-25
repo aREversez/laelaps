@@ -4,6 +4,58 @@ from language_tools.readers import docx, docx_table
 from conftest import fixture_path
 
 
+def _write_two_table_docx(path):
+    """Minimal valid .docx whose body holds two qualifying bilingual
+    tables (2 columns, one data row each). Built inline rather than
+    shipped as a fixture blob -- _ooxml only reads word/document.xml, so
+    the three zip entries below are the whole file.
+    """
+    import zipfile
+
+    def tbl(en, zh):
+        return ('<w:tbl><w:tr><w:tc><w:p><w:r><w:t>%s</w:t></w:r></w:p></w:tc>'
+                '<w:tc><w:p><w:r><w:t>%s</w:t></w:r></w:p></w:tc></w:tr></w:tbl>' % (en, zh))
+
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body>'
+        + tbl('First table sentence.', '第一张表的句子。')
+        + tbl('Second table sentence.', '第二张表的句子。')
+        + '</w:body></w:document>')
+    with zipfile.ZipFile(str(path), 'w') as z:
+        z.writestr('[Content_Types].xml',
+                   '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        z.writestr('_rels/.rels',
+                   '<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>')
+        z.writestr('word/document.xml', document)
+
+
+def test_read_collects_every_qualifying_table_not_just_the_first(tmp_path):
+    # Regression: read() returned on the first table that produced pairs
+    # and silently dropped the rest of the document -- while
+    # confidence() scored ">=2 qualifying tables" as its strongest
+    # positive signal (0.95), so the two views actively disagreed.
+    path = tmp_path / 'two_tables.docx'
+    _write_two_table_docx(path)
+    assert docx_table.confidence(str(path)) == 0.95  # the 2-table signal
+    pairs = docx_table.read(str(path))
+    texts = [p.src_text for p in pairs]
+    assert texts == ['First table sentence.', 'Second table sentence.']
+    assert [p.tgt_text for p in pairs] == ['第一张表的句子。', '第二张表的句子。']
+    # Row numbers restart per table -- prefixed from table 2 on so
+    # diagnostic keys stay unique ("row 1" would otherwise be ambiguous).
+    assert [p.key for p in pairs] == ['1', 't2:1']
+
+
+def test_auto_detect_reads_both_tables(tmp_path):
+    # The same data loss applied through docx.read()'s auto-detect path.
+    path = tmp_path / 'two_tables.docx'
+    _write_two_table_docx(path)
+    pairs = docx.read(str(path))
+    assert len(pairs) == 2
+
+
 def test_table_layout_basic():
     pairs = docx_table.read(fixture_path('table_layout.docx'))
     assert len(pairs) == 3

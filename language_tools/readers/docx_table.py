@@ -77,12 +77,31 @@ def confidence(path):
 
 
 def read(path, src_col_index=None, tgt_col_index=None, header=None, **opts):
-    for rows in _qualifying_tables(path):
-        pairs = _read_table(rows, src_col_index, tgt_col_index, header)
-        if pairs:
-            return pairs
-    raise ValueError('No usable bilingual table found (need a table with '
-                      '>=2 columns and at least one fully-populated data row).')
+    """Concatenated pairs from *every* qualifying table in the document.
+
+    Earlier versions returned the first table that produced pairs and
+    silently dropped the rest -- a real data-loss bug on two-table
+    documents (confidence() even scored >=2 qualifying tables as its
+    strongest signal, 0.95, while read() only ever used the first one).
+    Row-number keys restart per table, so table 2+ rows carry a
+    ``t<n>:`` key prefix keeping the diagnostic keys unique (pairs
+    themselves are position-based, not key-looked-up downstream -- see
+    aligner.py's ``ParagraphPair.key`` note). A qualifying table that
+    still yields no pairs is warned about rather than silently skipped.
+    """
+    pairs = []
+    for table_no, rows in enumerate(_qualifying_tables(path), 1):
+        table_pairs = _read_table(rows, src_col_index, tgt_col_index, header,
+                                  key_prefix='' if table_no == 1 else 't%d:' % table_no)
+        if not table_pairs and pairs:
+            print('warning: docx table %d qualified but produced no pairs -- '
+                   'its rows are missing from the output' % table_no)
+            continue
+        pairs.extend(table_pairs)
+    if not pairs:
+        raise ValueError('No usable bilingual table found (need a table with '
+                          '>=2 columns and at least one fully-populated data row).')
+    return pairs
 
 
 def sample_column_text(path, max_chars=500):
@@ -113,7 +132,7 @@ def sample_column_text(path, max_chars=500):
     return '', ''
 
 
-def _read_table(rows, src_col_index, tgt_col_index, header):
+def _read_table(rows, src_col_index, tgt_col_index, header, key_prefix=''):
     if not rows:
         return []
     ncols = max((len(r) for r in rows), default=0)
@@ -126,4 +145,8 @@ def _read_table(rows, src_col_index, tgt_col_index, header):
         numbered_rows = numbered_rows[1:]
 
     s_idx, t_idx = pick_src_tgt_columns(ncols, src_col_index, tgt_col_index)
-    return rows_to_pairs(numbered_rows, s_idx, t_idx, 'table')
+    pairs = rows_to_pairs(numbered_rows, s_idx, t_idx, 'table')
+    if key_prefix:
+        for p in pairs:
+            p.key = key_prefix + p.key
+    return pairs
