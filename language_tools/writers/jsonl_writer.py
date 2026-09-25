@@ -41,6 +41,7 @@ import json
 
 
 def write(path, units, src_lang, tgt_lang):
+    n = 0
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
         for u in units:
             src_text, tgt_text = u.src_text.strip(), u.tgt_text.strip()
@@ -50,3 +51,5 @@ def write(path, units, src_lang, tgt_lang):
                 {'src_lang': src_lang, 'tgt_lang': tgt_lang, 'src': src_text, 'tgt': tgt_text},
                 ensure_ascii=False))
             f.write('\n')
+            n += 1
+    return n

@@ -109,11 +109,13 @@ def convert(input_path, output_base, src_lang=None, tgt_lang=None,
     if 'sdltm' in formats:
         written['sdltm'] = sdltm_writer.write(output_base + '.sdltm', corpus_units, src_lang, tgt_lang, tm_name)
     if 'tmx' in formats:
-        tmx_writer.write(output_base + '.tmx', corpus_units, src_lang, tgt_lang)
-        written['tmx'] = len(corpus_units)
+        # Report the count the writer actually emitted, not len(corpus_units):
+        # tmx_writer drops units with an empty src/tgt (alignment GAPs), so
+        # len() over-reported whenever any GAP unit was present (P3 of the
+        # 2026-09 fix list).
+        written['tmx'] = tmx_writer.write(output_base + '.tmx', corpus_units, src_lang, tgt_lang)
     if 'jsonl' in formats:
-        jsonl_writer.write(output_base + '.jsonl', corpus_units, src_lang, tgt_lang)
-        written['jsonl'] = len(corpus_units)
+        written['jsonl'] = jsonl_writer.write(output_base + '.jsonl', corpus_units, src_lang, tgt_lang)
     if 'csv' in formats:
         csv_writer.write(output_base + '.csv', units, include_qa=run_qa)
         written['csv'] = len(units)

@@ -38,6 +38,7 @@ def write(path, units, src_lang, tgt_lang):
     # the text mutates on round-trip. LF-only output keeps the file
     # byte-identical across platforms and stops embedded newlines doubling.
     with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        n = 0
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tmx version="1.4">\n')
         f.write('  <header creationtool="laelaps" creationtoolversion="1.0" o-tmf="SDLTM" '
                 'adminlang="en-US" srclang="%s" datatype="unknown" segtype="sentence" '
@@ -61,4 +62,6 @@ def write(path, units, src_lang, tgt_lang):
             f.write('      <tuv xml:lang="%s"><seg>%s</seg></tuv>\n'
                     % (tgt_lang, _seg_body(tgt_text, getattr(u, 'tgt_markup', None))))
             f.write('    </tu>\n')
+            n += 1
         f.write('  </body>\n</tmx>\n')
+    return n
