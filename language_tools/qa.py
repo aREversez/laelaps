@@ -110,6 +110,10 @@ src and tgt independently:
   excluded entirely: the same glyph serves as both open and close in
   plain-text English, and ``'`` doubles as an apostrophe (``don't``), so
   counting them would misfire on ordinary prose, not catch real defects.
+  The curly apostrophe ``\u2019`` (U+2019) is treated the same way in one
+  direction only: it doubles as ``don\u2019t``/``users\u2019`` so an excess of
+  ``\u2019`` over ``\u2018`` is ignored, while an unmatched opening ``\u2018``
+  (which is never an apostrophe) still flags.
 - WIDTH_MIXING: a segment uses both the half-width and full-width form of
   the same punctuation mark (e.g. both ``!`` and ``！``). Comma and period
   are deliberately excluded from the checked set -- both are common
@@ -417,16 +421,33 @@ _PAIR_CHARS = {
     '“': '”', '‘': '’',
 }
 
+# Close chars that double as an apostrophe/diacritic in ordinary prose, so
+# an *excess* of them over their open partner is not evidence of a defect.
+# U+2019 is the typographic apostrophe ('don’t', 'users’', French
+# 'l’homme') -- the same glyph as the closing single quote. The open side
+# (U+2018) is never ambiguous, so only 'too many open quotes' is a real
+# finding for this pair. This is the curly counterpart of the straight-'
+# exclusion in the module docstring (P1-5 of the 2026-09 fix list).
+_AMBIGUOUS_CLOSE_CHARS = {'’'}
+
 
 def _unbalanced_pairs(text):
     """Return {open_char: (open_count, close_count)} for every pair in
     ``_PAIR_CHARS`` whose open/close counts disagree in ``text``. Empty
     dict means every pair present is balanced (or absent entirely).
+
+    For a pair whose close char is ambiguous (``_AMBIGUOUS_CLOSE_CHARS``),
+    only the 'more opens than closes' direction counts -- the other
+    direction is indistinguishable from apostrophes and would false-fire
+    on ordinary prose.
     """
     out = {}
     for open_c, close_c in _PAIR_CHARS.items():
         o, c = text.count(open_c), text.count(close_c)
-        if o != c:
+        if close_c in _AMBIGUOUS_CLOSE_CHARS:
+            if o > c:
+                out[open_c] = (o, c)
+        elif o != c:
             out[open_c] = (o, c)
     return out
 

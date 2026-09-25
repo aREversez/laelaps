@@ -401,6 +401,26 @@ def test_punctuation_unbalanced_flags_smart_quote_mismatch():
     assert 'PUNCTUATION_UNBALANCED' in units[0].meta['qa_issues']
 
 
+def test_no_punctuation_unbalanced_for_curly_apostrophe():
+    # P1-5: U+2019 is the typographic apostrophe (don’t / users’ / l’homme),
+    # the same glyph as the closing single quote. A contraction has an
+    # unmatched ’ with no opening ‘, which the naive count check flagged as
+    # a bracket defect on every English source that uses smart quotes.
+    units = [_tu('Don\u2019t stop \u2014 it\u2019s the users\u2019 choice.', '别停。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PUNCTUATION_UNBALANCED' not in units[0].meta['qa_issues']
+
+
+def test_punctuation_unbalanced_still_flags_unclosed_open_single_quote():
+    # The open side U+2018 is never an apostrophe, so a ‘ with no matching
+    # ’ is still a real defect and must keep firing -- the fix only drops
+    # the ambiguous close direction.
+    units = [_tu('He said \u2018hello and walked on.', '他说了声“你好”就走了。')]
+    qa.run(units, length_ratio=1.0)
+    assert 'PUNCTUATION_UNBALANCED' in units[0].meta['qa_issues']
+    assert units[0].meta['qa_details']['PUNCTUATION_UNBALANCED']['src'] == {'\u2018': (1, 0)}
+
+
 def test_find_punctuation_pair_spans_returns_original_substrings():
     text = 'Click (OK to continue.'
     spans = qa.find_punctuation_pair_spans(text)
