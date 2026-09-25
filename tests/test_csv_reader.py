@@ -1,5 +1,6 @@
 from language_tools.align.aligner import align_paragraph_pairs
 from language_tools.readers import csv_bilingual
+from language_tools.readers._rowreader import pick_src_tgt_columns
 
 from conftest import csv_path
 
@@ -49,3 +50,25 @@ def test_csv_multiline_quoted_field_preserved(tmp_path):
     assert pairs[0].key == '2'
     assert pairs[0].src_text == 'line1\nline2'
     assert pairs[0].tgt_text == '第一行\n第二行'
+
+
+def test_pick_src_tgt_columns_honors_a_single_override():
+    # P2-11: a lone --src-col used to be discarded (fell through to the full
+    # default pair). The explicit side must survive; the other fills from the
+    # default.
+    assert pick_src_tgt_columns(3, 0, None) == (0, 2)   # src kept, tgt default
+    assert pick_src_tgt_columns(3, None, 0) == (1, 0)   # tgt kept, src default
+    assert pick_src_tgt_columns(4, 3, None) == (3, 2)   # src=3 collides default_tgt=3 -> tgt=default_src=2
+
+
+def test_pick_src_tgt_columns_single_override_avoids_self_collision():
+    # If filling the other side from the default would put both on the same
+    # column, back off to the default's other slot.
+    assert pick_src_tgt_columns(3, None, 1) == (2, 1)   # default_src==tgt -> use default_tgt for src
+    assert pick_src_tgt_columns(2, 1, None) == (1, 0)   # default_tgt==src -> use default_src for tgt
+
+
+def test_pick_src_tgt_columns_both_or_neither_unchanged():
+    assert pick_src_tgt_columns(3) == (1, 2)            # default: last two
+    assert pick_src_tgt_columns(2) == (0, 1)            # default: 2-col
+    assert pick_src_tgt_columns(3, 0, 1) == (0, 1)      # both explicit

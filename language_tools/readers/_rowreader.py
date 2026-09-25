@@ -27,10 +27,24 @@ def col_letter_to_index(letter):
 
 def pick_src_tgt_columns(ncols, src_index=None, tgt_index=None):
     """Default convention shared by all row-oriented readers: 2 columns ->
-    (0, 1); 3+ columns -> the last two, unless explicitly overridden."""
+    (0, 1); 3+ columns -> the last two, unless explicitly overridden.
+
+    A *single* explicit override must be honored, not dropped: previously
+    passing only ``src_index`` (or only ``tgt_index``) fell through to the
+    full default pair and silently discarded the column the user asked for
+    (P2-11 of the 2026-09 fix list -- ``pick_src_tgt_columns(3, 0, None)``
+    returned ``(1, 2)``). Keep the explicit side and fill the other from the
+    default, backing off to the default's other slot if that would put both
+    indices on the same column.
+    """
+    default_src, default_tgt = (0, 1) if ncols == 2 else (ncols - 2, ncols - 1)
     if src_index is not None and tgt_index is not None:
         return src_index, tgt_index
-    return (0, 1) if ncols == 2 else (ncols - 2, ncols - 1)
+    if src_index is not None:
+        return src_index, (default_tgt if src_index != default_tgt else default_src)
+    if tgt_index is not None:
+        return (default_src if tgt_index != default_src else default_tgt), tgt_index
+    return default_src, default_tgt
 
 
 def rows_to_pairs(numbered_rows, s_idx, t_idx, warn_label):
