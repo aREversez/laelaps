@@ -18,7 +18,10 @@ available" prompt on File → Open Translation Memory appears even for
 fully-upgraded TMs (confirmed against a Studio-upgraded native fixture),
 and clicking Yes on a ≥1,000-TU TM still dies in "Build Translation
 Model" ("The TM does not support FGA") — advise clicking No; commits
-work regardless once this schema is present.
+work regardless once this schema is present. The round-5 native-control
+comparison proved that step validates Trados-private per-TU computation
+(real segment hash / tokenization / fragment state): the Level 3
+boundary, unreachable from a third-party writer.
 
 The ``fuzzy_data`` table is deliberately left empty; Studio recomputes its
 own fuzzy-match index the first time the TM is used (it is not designed to

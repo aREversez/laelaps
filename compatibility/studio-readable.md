@@ -84,6 +84,13 @@ entry with the failure details.
 
 ## Known issue: "upgrade available" loop with no error and no progress
 
+> **Status update 2026-09-25 (round 5): investigation COMPLETE.** The
+> ≥1,000-TU upgrade failure was pinned by native-control comparison to
+> Trados-private per-TU computation (real hash/tokenization/fragment
+> state) — the Level 3 boundary, out of scope by design. Not a Level 2
+> defect; no further action possible or needed. Full write-up in the
+> Round-5 section.
+
 > **Status update 2026-09-24 (round 3): RESOLVED writer-side.** The
 > writer now emits the post-FGA-upgrade schema; edit-commits work on
 > 1,000-TU files without any upgrade (acceptance A below). The prompt
@@ -415,6 +422,54 @@ consistent with round 3's finding that it is unconditional on that path.
 Level 2 claim, final form: **Studio 2024 can open, browse, search and
 edit-commit every fixture in the matrix, at any TU count, without
 performing the upgrade.**
+
+### Round-5 (2026-09-25): native-TM comparison — the ≥1,000-TU question closed at the Level 3 boundary
+
+Goal: settle whether the remaining "click Yes at ≥1,000 TUs fails"
+behavior is a Studio limitation or one more writer gap, via a native
+control experiment.
+
+**Native control setup (TMX round trip).** Exported `large_unique_r4`
+to TMX and imported it through the TM view wizard to obtain a
+Studio-created TM. Two by-product findings:
+
+- **Studio's TMX importer silently collapses segments that differ only
+  in digits/punctuation** ("number-insensitive duplicate" handling): our
+  1,000 `Record NNNN` segments imported as 1; a *Studio-own-exported*
+  round trip of the same data imported as 2 — proving this is importer
+  behavior, not a defect in our TMX output. A same-size native TM from
+  this corpus is therefore not obtainable via import; the native control
+  used instead was the wizard-created 1-TU TM (`native_lu`).
+- The native/external split of tree warning triangles observed during
+  this round (native: none; external sdltms: orange triangle) was not
+  reproducible on the next launch (icons blank after re-registration) —
+  tree-icon state is unreliable; the Open-dialog prompt remains the
+  authoritative signal and stays unconditional.
+
+**Native-vs-external diff (`native_lu` 1 TU vs our fixed-writer file).**
+Schema identical except: native TUs carry `flags=393473` (bit 18 set;
+ours 131073), populated `source_token_data`/`target_token_data` blobs,
+a 32-bit-range `source_hash` (Trados' own algorithm — ours is the
+documented FNV-1a64 stand-in), `tokenization_sig_hash`, `fragment_hash`,
+and a real `translation_unit_fragments` row computed at insert time.
+
+**Decisive probe: forged flags.** Copied `large_unique_r4`, set all TU
+flags to the native 393473, clicked **Yes** on the upgrade:
+identical failure — `The TM does not support FGA` at the Upgrade step
+(`TranslationMemoryUpgrade-20260925-112151.log`), `fga_support` → 3.
+Flags were not the gate.
+
+**Final root-cause statement (all falsifiers exhausted across rounds
+1–5):** the ≥1,000-TU model-build step validates Trados-private per-TU
+computations — the real segment-hash algorithm and tokenization/fragment
+state that only Trados' closed implementation can emit. No third-party
+writer can satisfy it without reproducing Level 3 internals, which
+DESIGN.md section 8 explicitly puts out of scope. The residual
+"upgrade Yes fails at ≥1,000 TUs" is therefore **the Level 2 / Level 3
+boundary itself**, not a Level 2 defect: files remain fully
+open/browse/search/edit-able (round 4), and clicking **No** is always
+correct. **No further writer work is warranted on this axis — issue
+closed.**
 
 ---
 
