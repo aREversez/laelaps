@@ -299,10 +299,22 @@ class FileLock:
             return
         instance_fh, self._instance_fh = self._instance_fh, None
         shared_fh, self._shared_fh = self._shared_fh, None
+        # shared_fh is None when write_around() released the real-file lock
+        # for a save and then failed to reacquire it: the save went through,
+        # the OSError propagated, but the sidecar instance lock is still ours
+        # and must be released when the caller tears down (e.g. __exit__).
+        # The old code unconditionally did _unlock_shared(None) then
+        # None.close(), so release() after a lost-reacquire crashed with
+        # AttributeError (P2-10 of the 2026-09 fix list). The nested finally
+        # keeps guaranteeing the instance lock is freed even if the shared
+        # unlock itself throws.
         try:
-            _unlock_shared(shared_fh)
+            if shared_fh is not None:
+                try:
+                    _unlock_shared(shared_fh)
+                finally:
+                    shared_fh.close()
         finally:
-            shared_fh.close()
             try:
                 _unlock_exclusive(instance_fh)
             finally:

@@ -1,5 +1,6 @@
 import pytest
 
+import language_tools.terms.filelock as filelock_mod
 from language_tools.terms.filelock import FileLock
 
 
@@ -39,3 +40,25 @@ def test_write_around_restores_lock_after_write_failure(tmp_path):
         assert lock.is_held is True
     finally:
         lock.release()
+
+
+def test_release_survives_failed_reacquire_in_write_around(tmp_path, monkeypatch):
+    # P2-10: when write_around() saves fine but cannot reacquire the shared
+    # lock, it raises OSError and leaves _shared_fh None while the sidecar
+    # instance lock is still ours. The follow-up release() (e.g. from
+    # __exit__) used to crash on the absent shared handle (None.close());
+    # it must instead still free the instance lock.
+    path = tmp_path / 'glossary.csv'
+    _write(path)
+    lock = FileLock(str(path))
+    lock.acquire()
+
+    def boom(fh):
+        raise OSError('cannot reacquire')
+    monkeypatch.setattr(filelock_mod, '_lock_shared', boom)
+
+    with pytest.raises(OSError, match='could not be reacquired'):
+        lock.write_around(lambda: path.write_bytes(b'updated\n'))
+    assert lock._shared_fh is None   # shared lock was lost
+    lock.release()                   # must not raise
+    assert lock.is_held is False     # instance lock released cleanly
