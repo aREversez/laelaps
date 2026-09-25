@@ -8,12 +8,12 @@
 - **语料库互转**：tmx ↔ sdltm，语言自动从内容识别
 - 内置 Gale-Church 式句级对齐算法，处理常见缩写（a.m./e.g./U.S. 等）不误切句
 - **对齐检查**：不写文件，单独预览一个双语文档会被怎样对齐——哪些段落被合并/拆分、哪句完全没找到对应（GAP），转换前先心里有数（`tmtool align` / 桌面 GUI「对齐检查」页），命令行版本额外支持 `--fail-on-issues` 退出码，方便脚本批量检查一堆文档
-- QA 检查：空值、长度比异常、重复条目（源冲突/译文冲突）、数字不匹配、占位符不匹配（`{name}`/`%s` 等）、URL 丢失或改动、inline 标签不匹配（TMX 带格式标记时）——转换时可选勾选，也可以单独对着一个已有的 tmx/sdltm 跑（`tmtool qa` / 桌面 GUI「QA 检查」页），支持导出 CSV 审阅报告
+- QA 检查：空值、长度比异常、重复条目（源冲突/译文冲突）、数字不匹配、占位符不匹配（`{name}`/`%s` 等）、URL 丢失或改动、inline 标签不匹配（TMX 带格式标记时）——转换时可选勾选，也可以单独对着一个已有的 tmx/sdltm 跑（`tmtool qa` / 桌面 GUI「QA 检查」页），支持导出 CSV 审阅报告。另有一个**专家级可选外挂**：`tmtool qa --semantic-review` 可注入一个自备的外部语义 reviewer（规则 QA 抓不住的语义错译/漏译一类"待核实提示"）——默认关闭，本仓库不内置任何实现、不含任何模型/网络代码，注入什么由用户自己负责（GUI 刻意没有这个入口），见 [DESIGN.md](./DESIGN.md) 第 15.3 节
 - **TM 维护**（`tmtool` 命令行 + 桌面 GUI「语料维护」页）：清理（去重/去空/normalize）、多文件合并（可选冲突策略）、语料统计、对齐检查
 - **术语管理**（`tmtool term-check` + 桌面 GUI「术语管理」页）：维护双语术语表（csv/xlsx），对照一个已有 tmx/sdltm 检查禁用译法——默认只做"原文出现术语、译文出现明确禁用的错译"这一个方向（几乎不会误报）；`approved` 方向（原文出现术语、译文未用推荐译法）可选开启（`--check-approved` / GUI 复选框），因为同义改写就可能触发，定位为"待核实提示"而非缺陷判定。见 [DESIGN.md](./DESIGN.md) 第 15.1 节为什么范围这么定
 - **报告导出**：对齐检查、QA 检查、杠杆分析、多 TM 对比、术语一致性检查的汇总结果都能导出为 HTML 或 PDF（`tmtool … --report PATH` / 各页"导出报告…"按钮），给非技术干系人看；CSV 导出仍是逐条目审阅的完整报告格式
 - 桌面 GUI（PySide6），也可以纯命令行/脚本调用
-- 打包成本地 Windows exe，不需要联网、不上传文件
+- 打包成本地 Windows exe，不需要联网、不上传文件（这条对核心库 `language_tools` 是有测试守护的不变量，不只是承诺：`tests/test_no_network_in_core.py` 禁止其中出现任何具备网络能力的 import；唯一例外是上面那个必须由用户自己显式注入并自己运行的 reviewer 外挂）
 
 ## 安装
 
@@ -68,6 +68,7 @@ tmtool merge a.tmx b.tmx -o merged.tmx --strategy prefer-newer  # 同源不同�
 tmtool stats a.tmx                                     # 打印条目数/去重率/空段/语言对分布
 tmtool qa a.tmx                                        # 跑全部 QA 检查，打印问题条数和分类统计
 tmtool qa a.tmx --export report.csv                     # 同上，并导出完整 CSV 报告（含未标记问题的条目）
+tmtool qa a.tmx --semantic-review 'mymod:MyReviewer()'  # 可选外挂：注入自备的外部语义 reviewer，结果进 CSV 的 semantic_issues 列（默认不传 = 完全不跑）
 tmtool align input.docx --src en-US --tgt zh-CN         # 对齐检查一个双语文档，打印 GAP/QA 统计，不写任何文件
 tmtool align input.docx --src en-US --tgt zh-CN --export report.csv  # 同上，并导出完整 CSV 报告
 tmtool align input.docx --src en-US --tgt zh-CN --report report.html  # 同上，并导出 HTML/PDF 汇总报告
