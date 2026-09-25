@@ -30,6 +30,7 @@ adversarial literal-&lt; case, which an earlier draft with an added
 html.unescape() call failed.
 """
 import sqlite3
+import os
 import xml.etree.ElementTree as ET
 
 from language_tools.model import TranslationUnit
@@ -58,6 +59,14 @@ def _extract(seg_xml_text, where='segment'):
 
 
 def read(path, **opts):
+    # sqlite3.connect() happily *creates* an empty database for a path that
+    # doesn't exist, so a typo'd/missing file used to be turned into a fresh
+    # 0-byte .sdltm on disk and then die on 'no such table:
+    # translation_memories' -- a confusing error that also littered the
+    # filesystem, and inconsistent with tmx_reader's clean FileNotFoundError
+    # on the same input (P2-9 of the 2026-09 fix list).
+    if not os.path.exists(path):
+        raise FileNotFoundError('sdltm file not found: %s' % path)
     con = sqlite3.connect(path)
     try:
         tm_row = con.execute(

@@ -77,6 +77,16 @@ def test_sdltm_write_failure_preserves_existing_file_and_leaves_no_scratch(tmp_p
     assert not os.path.exists(path + '.tmp')        # no scratch file left behind
 
 
+def test_sdltm_reader_missing_file_raises_filenotfound_and_creates_nothing(tmp_path):
+    # P2-9: reading a nonexistent .sdltm used to let sqlite3.connect() create
+    # a 0-byte file then fail on 'no such table' -- must match tmx_reader's
+    # clean FileNotFoundError and not litter the filesystem.
+    path = str(tmp_path / 'nope.sdltm')
+    with pytest.raises(FileNotFoundError):
+        sdltm_reader.read(path)
+    assert not os.path.exists(path)
+
+
 def _sample_units():
     return [
         TranslationUnit(src_lang='en-US', tgt_lang='zh-CN',
