@@ -95,7 +95,14 @@ def _seg_to_text_and_markup(seg):
         return text, None
 
     markup = []
-    if seg.text and seg.text.strip():
+    # Keep whitespace-only text nodes: a space sitting *between* two inline
+    # tags (``</bpt> <ept>``) is meaningful content that must survive a
+    # rewrite, not be dropped just because it looks like nothing. The
+    # leading/trailing whitespace is still trimmed by the pop loops below,
+    # so this only preserves interior spacing (P2-12 of the 2026-09 fix
+    # list: 'A<b>bold</b> <i>ital</i>B' used to rebuild as 'A<b>bold</b>
+    # <i>ital</i>B' -- the gap between the two tags vanished entirely).
+    if seg.text:
         markup.append(InlineNode(kind='text', content=seg.text))
     for child in seg:
         # Serialize this child element WITHOUT its tail text -- ET.tostring
@@ -109,7 +116,7 @@ def _seg_to_text_and_markup(seg):
         finally:
             child.tail = original_tail
         markup.append(InlineNode(kind='tag', content=fragment))
-        if child.tail and child.tail.strip():
+        if child.tail:
             markup.append(InlineNode(kind='text', content=child.tail))
     # Drop trailing/leading empty-text nodes if any
     while markup and markup[0].kind == 'text' and not markup[0].content.strip():

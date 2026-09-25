@@ -422,6 +422,33 @@ def test_tmx_to_tmx_round_trip_preserves_inline_markup(tmp_path):
     assert any('<ept' in c and 'i="1"' in c for c in tag_contents)
 
 
+def test_whitespace_between_inline_tags_survives_round_trip(tmp_path):
+    # P2-12: a space sitting between two inline runs was dropped when the
+    # reader built the markup list (whitespace-only tails/text nodes were
+    # skipped), so 'A<bpt>..</bpt>bold<ept>..</ept> <bpt>..</bpt>ital
+    # <ept>..</ept>B' rebuilt as '...boldital...' -- the words merged.
+    src_tmx = tmp_path / 'space.tmx'
+    src_tmx.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n<tmx version="1.4">\n'
+        '<header creationtool="Test" creationtoolversion="1.0" adminlang="en-US" '
+        'srclang="en-US" datatype="unknown" segtype="sentence"/>\n'
+        '<body><tu>'
+        '<tuv xml:lang="en-US"><seg>A<bpt i="1">&lt;b&gt;</bpt>bold'
+        '<ept i="1">&lt;/b&gt;</ept> <bpt i="2">&lt;i&gt;</bpt>ital'
+        '<ept i="2">&lt;/i&gt;</ept>B</seg></tuv>'
+        '<tuv xml:lang="zh-CN"><seg>甲乙</seg></tuv>'
+        '</tu></body>\n</tmx>', encoding='utf-8')
+    units_in = tmx_reader.read(str(src_tmx))
+    out_tmx = str(tmp_path / 'round.tmx')
+    tmx_writer.write(out_tmx, units_in, 'en-US', 'zh-CN')
+    units_out = tmx_reader.read(out_tmx)
+    # the interior gap between the two inline runs is preserved (visible
+    # text keeps the unescaped tag content, so 'bold</b> <i>ital' shows the
+    # space; before the fix it collapsed to 'bold</b><i>ital').
+    assert 'bold</b> <i>ital' in units_out[0].src_text
+    assert units_out[0].src_text == units_in[0].src_text
+
+
 def test_text_only_tu_has_none_markup_after_read(tmp_path):
     # The common case: a <seg> with no child elements (just text) must
     # leave src_markup/tgt_markup as None, not as a single-element list
