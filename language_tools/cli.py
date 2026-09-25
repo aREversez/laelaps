@@ -9,6 +9,8 @@ rather than here for that reason).
 import argparse
 import os
 import sys
+import zipfile
+from xml.etree import ElementTree
 
 from language_tools import api
 
@@ -113,15 +115,22 @@ def main(argv=None):
         build_parser().error('--src and --tgt are required for %s input' % ext)
 
     output_base, formats = _resolve_output(args.input, args.output, tuple(args.to) if args.to else None)
-    reader_opts = _build_reader_opts(args, ext)
 
     try:
+        # _build_reader_opts parses --src-col/--tgt-col via int(); a non-numeric
+        # value raises ValueError, so it has to sit inside the guard too --
+        # otherwise a bad column flag spills a raw traceback instead of the
+        # one-line 'error: ...' message the rest of the CLI is careful to give.
+        reader_opts = _build_reader_opts(args, ext)
         result = api.convert(
             args.input, output_base, src_lang=args.src, tgt_lang=args.tgt,
             repair_path=args.repair, name=args.name, formats=formats,
             reader_opts=reader_opts, qa=args.qa, min_confidence=args.min_confidence,
         )
-    except (ValueError, FileNotFoundError) as e:
+    except (ValueError, FileNotFoundError, zipfile.BadZipFile, ElementTree.ParseError) as e:
+        # A corrupt/mis-shaped input (e.g. a fake .docx that isn't really a zip,
+        # or malformed XML) surfaces as a low-level reader exception; report it
+        # as a clean one-line error rather than a full-screen traceback.
         print('error: %s' % e, file=sys.stderr)
         return 1
 

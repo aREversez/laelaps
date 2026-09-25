@@ -151,3 +151,30 @@ def test_cli_min_confidence_rejects_out_of_range_value(tmp_path):
                    '--min-confidence', '1.01'])
     assert result.returncode != 0
     assert 'must be between 0 and 1' in result.stderr
+
+
+def test_cli_corrupt_input_reports_clean_error(tmp_path):
+    # A fake .docx that isn't really a zip used to spill a full zipfile
+    # BadZipFile traceback (not caught by the old ValueError/FileNotFoundError
+    # guard). It must now surface as a one-line error with a non-zero exit.
+    fake = tmp_path / 'fake.docx'
+    fake.write_text('this is not a zip archive', encoding='utf-8')
+    out_base = str(tmp_path / 'out')
+    result = _run([str(fake), '-o', out_base, '--src', 'en-US', '--tgt', 'zh-CN'])
+    assert result.returncode != 0
+    assert 'error:' in result.stderr
+    assert 'Traceback' not in result.stderr
+
+
+def test_cli_non_numeric_src_col_reports_clean_error(tmp_path):
+    # --src-col is a 0-based index for csv/docx-table input; a stray Excel
+    # letter ('B') makes int() raise ValueError. _build_reader_opts used to
+    # run outside the try block, so this too dumped a raw traceback.
+    src_csv = tmp_path / 'src.csv'
+    src_csv.write_text('EN,ZH\nHello,你好\n', encoding='utf-8')
+    out_base = str(tmp_path / 'out')
+    result = _run([str(src_csv), '-o', out_base, '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--src-col', 'B'])
+    assert result.returncode != 0
+    assert 'error:' in result.stderr
+    assert 'Traceback' not in result.stderr
