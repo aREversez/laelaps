@@ -23,6 +23,7 @@ from language_tools.model import TranslationUnit
 from language_tools.writers import csv_writer
 
 from semantic_stub import IdenticalTextReviewer
+import semantic_stub as stub
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _TESTS_DIR = os.path.join(_REPO_ROOT, 'tests')
@@ -210,3 +211,37 @@ def test_cli_spec_naming_a_prebuilt_instance(tmp_path):
                    'semantic_stub:REVIEWER'], with_stub_on_path=True)
     assert result.returncode == 0, result.stderr
     assert 'Semantic flagged=1' in result.stdout
+
+
+def test_noncallable_review_rejected_despite_protocol_isinstance():
+    # The gap this closes: a @runtime_checkable Protocol's isinstance only
+    # checks the *name* exists, so NonCallableReviewer passes isinstance but
+    # must still be rejected for not being callable -- and rejected at load
+    # time, before attach() would crash calling a string.
+    reviewer = stub.NonCallableReviewer()
+    assert isinstance(reviewer, semantic_review.Reviewer)  # isinstance alone is insufficient
+    assert not callable(reviewer.review)
+
+
+def test_cli_rejects_noncallable_review(tmp_path):
+    input_ = tmp_path / 'in.tmx'
+    _write_tmx(input_, [_tu('A B C', 'A B C')])
+    result = _run(['qa', str(input_), '--semantic-review',
+                   'semantic_stub:NonCallableReviewer'], with_stub_on_path=True)
+    assert result.returncode != 0
+    assert 'does not satisfy the Reviewer protocol' in result.stderr
+    assert 'Traceback' not in result.stderr
+
+
+def test_cli_reviewer_exception_surfaces_as_clean_error_line(tmp_path):
+    # A real bug inside a well-formed reviewer: still a tidy
+    # ``error: --semantic-review: ...`` line, not a bare traceback -- the
+    # whole point of wrapping attach() at the call site.
+    input_ = tmp_path / 'in.tmx'
+    _write_tmx(input_, [_tu('A B C', 'A B C')])
+    result = _run(['qa', str(input_), '--semantic-review',
+                   'semantic_stub:RaisingReviewer'], with_stub_on_path=True)
+    assert result.returncode != 0
+    assert 'reviewer semantic_stub:RaisingReviewer raised RuntimeError: boom inside reviewer' \
+        in result.stderr
+    assert 'Traceback' not in result.stderr

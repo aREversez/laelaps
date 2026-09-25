@@ -32,3 +32,21 @@ class IdenticalTextReviewer:
 # Pre-built singleton, so the CLI tests can cover the "spec names an
 # instance, not a class" form as well as the bare-class form.
 REVIEWER = IdenticalTextReviewer()
+
+
+class NonCallableReviewer:
+    """Satisfies the runtime_checkable Protocol's name-only isinstance
+    check (it *has* a ``review`` attribute) but ``review`` is a string, not
+    a method -- the exact case the explicit callable() guard in
+    ``_load_reviewer`` exists to reject before ``attach()`` can crash."""
+
+    review = 'not a method'
+
+
+class RaisingReviewer:
+    """A well-formed reviewer that blows up inside ``review()`` -- models a
+    real bug in a user's own reviewer, to pin that the CLI surfaces it as
+    one clean ``error: --semantic-review:`` line, not a bare traceback."""
+
+    def review(self, unit):
+        raise RuntimeError('boom inside reviewer')

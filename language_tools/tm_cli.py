@@ -201,10 +201,16 @@ def _load_reviewer(spec):
     "pointed at the wrong thing" into one clear line instead of a TypeError
     from deep inside ``attach()`` (a bare class reaching ``review()`` binds
     ``self`` to the unit and fails as "missing argument 'unit'", which this
-    check also preempts). The expression form's ``eval`` is as trusted as
-    the rest of the flag: the user is importing and running *their own*
-    module either way -- hence ``{'__builtins__': {}}`` (constructor-side
-    effects come from the imported module's code, not from this string).
+    check also preempts). The protocol check is NOT sufficient on its own:
+    a ``@runtime_checkable`` Protocol's ``isinstance`` only tests that the
+    method *name* exists, never that it's callable, so an object whose
+    ``review`` attribute is a plain string would sail through it and only
+    blow up when ``attach()`` tries to call it -- hence the explicit
+    ``callable(reviewer.review)`` guard beside the isinstance. The
+    expression form's ``eval`` is as trusted as the rest of the flag: the
+    user is importing and running *their own* module either way -- hence
+    ``{'__builtins__': {}}`` (constructor-side effects come from the
+    imported module's code, not from this string).
     """
     if ':' in spec:
         module_name, _, expr = spec.partition(':')
@@ -226,9 +232,10 @@ def _load_reviewer(spec):
         except AttributeError:
             raise SystemExit('error: --semantic-review: %r has no attribute %r' % (module_name, expr))
         reviewer = callable_() if isinstance(callable_, type) else callable_
-    if not isinstance(reviewer, semantic_review.Reviewer):
+    if (not isinstance(reviewer, semantic_review.Reviewer)
+            or not callable(getattr(reviewer, 'review', None))):
         raise SystemExit('error: --semantic-review: %s does not satisfy the Reviewer '
-                         'protocol (needs a review(unit) -> list[SemanticIssue] method)'
+                         'protocol (needs a callable review(unit) -> list[SemanticIssue] method)'
                          % spec)
     return reviewer
 
@@ -245,7 +252,18 @@ def _cmd_qa(args):
     reviewer = _load_reviewer(args.semantic_review) if args.semantic_review else None
     sem_summary = None
     if reviewer is not None:
-        semantic_review.attach(units, reviewer)
+        try:
+            semantic_review.attach(units, reviewer)
+        except Exception as exc:
+            # ``attach()`` deliberately doesn't guard ``review()`` (a broken
+            # reviewer should fail loudly, see its docstring) -- the loudness
+            # belongs at the call site, but in the CLI's house style: one
+            # clean ``error: --semantic-review:`` line, matching the
+            # spec-parse failures just above it, not a bare traceback pasted
+            # under an otherwise-tidy run. ``from exc`` preserves the chain
+            # for anyone embedding this CLI who catches the SystemExit.
+            raise SystemExit('error: --semantic-review: reviewer %s raised %s: %s'
+                             % (args.semantic_review, type(exc).__name__, exc)) from exc
         sem_summary = semantic_review.summarize(units)
         print('Semantic flagged=%d' % sem_summary['flagged'])
         for issue_type, count in sorted(sem_summary['by_type'].items()):
