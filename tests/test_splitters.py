@@ -4,7 +4,11 @@ empirical writeup of each).
 """
 import pytest
 
-from language_tools.align.splitters import is_cjk_lang, looks_cjk, pick_splitter, split_en, split_zh
+import re
+
+from language_tools.align.splitters import (
+    is_cjk_lang, looks_cjk, pick_splitter, split_en, split_zh, word_bounded)
+from language_tools.align.repair import Repairer
 
 # Every ABBREV entry with an internal period ends in "single letter + period",
 # which is exactly the pattern the removed regex clause misfired on. Locking
@@ -82,3 +86,36 @@ def test_is_cjk_lang():
 def test_looks_cjk():
     assert looks_cjk('这是中文')
     assert not looks_cjk('This is English')
+
+
+def test_word_bounded_matches_term_with_trailing_punctuation():
+    # P1-6: r'\bC\+\+\b' never matched "... C++ ..." because the trailing
+    # \b after '+' requires a following word char. word_bounded only anchors
+    # the leading (word-char) edge, leaving the '+' edge unanchored.
+    pat = word_bounded('C++')
+    assert pat.search('Written in C++ and more.')
+    assert not pat.search('AC++')  # leading word char still rejected
+
+
+def test_word_bounded_matches_term_with_leading_punctuation():
+    # r'\b\.NET\b' required a word char *before* the dot -- the opposite of
+    # what's wanted, so '.NET' after a space never matched.
+    pat = word_bounded('.NET')
+    assert pat.search('built on .NET today')
+    assert pat.search('the .NET runtime')
+
+
+def test_word_bounded_reduces_to_word_boundary_for_plain_words():
+    pat = word_bounded('AI', re.IGNORECASE)
+    assert pat.search('The AI system')
+    assert not pat.search('She said hi')  # 'ai' inside 'said'
+    assert not pat.search('main street')
+
+
+def test_repairer_applies_rule_whose_wrong_side_has_edge_punctuation():
+    # A repair rule keyed on a punctuation-edge term used to be silently dead
+    # under r'\b<wrong>\b'; it now fires while still honoring word edges.
+    rep = Repairer(en={'C + +': 'C++', 'recieve': 'receive'})
+    assert rep('compile with C + + here', 'en') == 'compile with C++ here'
+    assert rep('you recieve it', 'en') == 'you receive it'
+    assert rep('receiver', 'en') == 'receiver'  # 'recieve' not inside a word

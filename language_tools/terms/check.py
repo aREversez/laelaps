@@ -38,14 +38,18 @@ something this module validates).
 """
 import re
 
-from language_tools.align.splitters import is_cjk_lang
+from language_tools.align.splitters import is_cjk_lang, word_bounded
 
 
 def _term_pattern(term, lang):
-    escaped = re.escape(term)
     if is_cjk_lang(lang):
-        return re.compile(escaped)
-    return re.compile(r'\b%s\b' % escaped, re.IGNORECASE)
+        return re.compile(re.escape(term))
+    # Not r'\b<term>\b': a term carrying its own edge punctuation ('C++',
+    # '.NET', 'C#') has a non-word boundary char that \b anchors against in
+    # the wrong direction, so it silently never matched. word_bounded() only
+    # anchors on edges that are actual word chars (P1-6 of the 2026-09 fix
+    # list); for an ordinary word it reduces to \b...\b.
+    return word_bounded(term, re.IGNORECASE)
 
 
 def _contains_term(text, term, lang):

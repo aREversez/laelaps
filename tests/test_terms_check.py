@@ -144,6 +144,29 @@ def test_latin_term_matches_at_word_boundary_case_insensitively():
     assert no_hit.meta['term_issues'] == []
 
 
+def test_latin_term_with_edge_punctuation_matches():
+    # P1-6: a glossary term carrying its own punctuation at an edge ('C++',
+    # '.NET', 'C#') was silently dead under r'\b<term>\b' -- the \b next to
+    # the punctuation anchored against a *word* char, so "... C++ ..." (a
+    # space follows) never matched. Both must fire now.
+    glossary = [_entry('C++', 'c-bad', src_lang='en-US', tgt_lang='en-US'),
+                _entry('.NET', 'n-bad', src_lang='en-US', tgt_lang='en-US')]
+    hit = _u('Written in C++ and .NET today.', 'c-bad n-bad',
+             src_lang='en-US', tgt_lang='en-US')
+    check.run([hit], glossary)
+    assert {h['src_term'] for h in hit.meta['term_issues']} == {'C++', '.NET'}
+
+
+def test_word_edge_term_still_respects_real_boundaries():
+    # The punctuation fix must not over-match: an all-word term like 'NET'
+    # still needs genuine word boundaries, so it does not fire inside
+    # 'network'.
+    glossary = [_entry('NET', 'n-bad', src_lang='en-US', tgt_lang='en-US')]
+    unit = _u('a network effect', 'n-bad', src_lang='en-US', tgt_lang='en-US')
+    check.run([unit], glossary)
+    assert unit.meta['term_issues'] == []
+
+
 def test_cjk_term_matches_as_plain_substring_no_word_boundary():
     glossary = [_entry('云', 'cloud-wrong', src_lang='zh-CN', tgt_lang='en-US')]
     units = [_u('我们讨论云计算。', 'we discussed cloud-wrong computing',

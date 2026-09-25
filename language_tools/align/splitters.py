@@ -121,6 +121,29 @@ def looks_cjk(text):
     return len(CJK_RE.findall(letters)) / len(letters) > 0.3
 
 
+_WORD_CHAR_RE = re.compile(r'\w')
+
+
+def word_bounded(term, flags=0):
+    """Compile ``term`` as a literal, anchored so it only matches when not
+    glued to a surrounding word character -- the correct generalization of
+    ``\\b<term>\\b`` for terms that contain their own punctuation.
+
+    ``\\b`` asserts a ``\\w``<->non-``\\w`` *transition*, so it mis-anchors
+    whenever the term's own edge is punctuation: a trailing ``\\b`` after
+    ``C++`` demands a following word char and so never matches ``"... C++
+    ..."`` (a space follows), and a leading ``\\b`` before ``.NET`` demands a
+    preceding word char -- the opposite of what's wanted. Terms like
+    ``C++``, ``C#``, ``.NET``, ``co-op`` therefore silently matched nothing
+    (P1-6 of the 2026-09 fix list). Emit a lookaround on an edge only when
+    that edge character is itself a word char; leave punctuation edges
+    unanchored. For an all-word term this is exactly ``\\b...\\b``.
+    """
+    prefix = r'(?<!\w)' if term and _WORD_CHAR_RE.match(term[0]) else ''
+    suffix = r'(?!\w)' if term and _WORD_CHAR_RE.match(term[-1]) else ''
+    return re.compile(r'%s%s%s' % (prefix, re.escape(term), suffix), flags)
+
+
 def pick_splitter(lang_code, sample_text, role):
     """Return (splitter_fn, join_str, lang_tag) for a declared language + sample text.
 

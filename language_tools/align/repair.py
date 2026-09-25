@@ -10,6 +10,8 @@ explicitly wherever repair is needed.
 import json
 import re
 
+from language_tools.align.splitters import word_bounded
+
 
 class Repairer:
     """Callable text-repair rule set. Immutable once constructed."""
@@ -24,7 +26,12 @@ class Repairer:
         if rules:
             if lang == 'en':
                 for wrong, right in rules.items():
-                    text = re.sub(r'\b%s\b' % re.escape(wrong), lambda m, r=right: r, text)
+                    # word_bounded not r'\b<wrong>\b': an en rule whose
+                    # 'wrong' side has edge punctuation ('C+ +', stray '.')
+                    # anchored wrong under a bare \b and never fired
+                    # (P1-6 of the 2026-09 fix list). Case-sensitive, as
+                    # the previous r'\b...\b' sub was.
+                    text = word_bounded(wrong).sub(lambda m, r=right: r, text)
             else:
                 for wrong, right in rules.items():
                     text = text.replace(wrong, right)
