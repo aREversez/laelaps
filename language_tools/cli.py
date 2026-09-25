@@ -14,6 +14,10 @@ from language_tools import api
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _ALL_FORMATS = ('sdltm', 'tmx', 'csv')
+# jsonl is opt-in only (--to jsonl), never part of the default bundle above:
+# it's a training-data export, not something every conversion should start
+# emitting by default just because this format got added later.
+_TO_CHOICES = _ALL_FORMATS + ('jsonl',)
 
 
 def bounded_confidence(raw):
@@ -33,16 +37,18 @@ def build_parser():
         prog='biconvert',
         description='Convert bilingual files (docx/xlsx/csv/tsv) to translation-memory '
                     'corpus formats (sdltm/tmx/csv), or convert between corpus formats '
-                    '(tmx<->sdltm).')
+                    '(tmx<->sdltm). A jsonl training-data export is also available via '
+                    '--to jsonl (opt-in, not part of the default bundle).')
     p.add_argument('input', help='input file path')
     p.add_argument('-o', '--output',
                     help='output path or basename. A bare basename writes every requested '
                          'format under it (e.g. "out" -> out.sdltm, out.tmx, out.csv); a '
                          'path ending in .sdltm/.tmx/.csv writes only that one format unless '
                          '--to is also given. Default: derived from the input filename.')
-    p.add_argument('--to', action='append', choices=list(_ALL_FORMATS),
+    p.add_argument('--to', action='append', choices=list(_TO_CHOICES),
                     help='output format to write; repeatable (e.g. --to tmx --to csv). '
-                         'Default: sdltm, tmx, and csv all together.')
+                         'Default: sdltm, tmx, and csv all together (jsonl is opt-in only, '
+                         'for LLM/MT training data -- pass --to jsonl explicitly to get it).')
     p.add_argument('--src', help='source language code, e.g. en-US. Required for docx/xlsx/'
                                   'csv/tsv input; inferred from the file for tmx/sdltm input.')
     p.add_argument('--tgt', help='target language code, e.g. zh-CN. Same rules as --src.')
@@ -88,12 +94,13 @@ def _build_reader_opts(args, ext):
 
 def _resolve_output(input_path, output, to_formats):
     """Returns (output_base, formats). A single-format extension on -o
-    (e.g. -o out.tmx) selects that one format unless --to already did."""
+    (e.g. -o out.tmx, or -o out.jsonl) selects that one format unless
+    --to already did."""
     if not output:
         return os.path.splitext(input_path)[0], to_formats or _ALL_FORMATS
     root, ext = os.path.splitext(output)
     fmt = ext.lstrip('.').lower()
-    if fmt in _ALL_FORMATS and not to_formats:
+    if fmt in _TO_CHOICES and not to_formats:
         return root, (fmt,)
     return output, to_formats or _ALL_FORMATS
 

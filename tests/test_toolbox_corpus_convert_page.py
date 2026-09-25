@@ -31,6 +31,7 @@ def test_no_output_format_selected_shows_error(qtbot):
     page.chk_sdltm.setChecked(False)
     page.chk_tmx.setChecked(False)
     page.chk_csv.setChecked(False)
+    assert page.chk_jsonl.isChecked() is False  # already unchecked by default
     page.convert_btn.click()
     assert '至少勾选一种要生成的格式' in page.log.toPlainText()
 
@@ -77,7 +78,17 @@ def test_language_fields_and_format_checkboxes_have_tooltips(qtbot):
     assert page.chk_sdltm.toolTip()
     assert page.chk_tmx.toolTip()
     assert page.chk_csv.toolTip()
+    assert page.chk_jsonl.toolTip()
     assert page.chk_qa.toolTip()
+
+
+def test_jsonl_checkbox_defaults_unchecked(qtbot):
+    """Unlike sdltm/tmx/csv, jsonl is a training-data export and shouldn't
+    be produced by default just because the checkbox exists."""
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    assert page.chk_jsonl.isChecked() is False
+    assert page.chk_sdltm.isChecked() and page.chk_tmx.isChecked() and page.chk_csv.isChecked()
 
 
 def test_real_conversion_end_to_end(qtbot, tmp_path):
@@ -98,6 +109,25 @@ def test_real_conversion_end_to_end(qtbot, tmp_path):
     assert '转换完成' in log_text
     assert '出错了' not in log_text
     assert (tmp_path / 'basic.sdltm').exists()
+
+
+def test_jsonl_conversion_when_opted_in(qtbot, tmp_path):
+    src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
+    page.chk_jsonl.setChecked(True)
+
+    page.convert_btn.click()
+    qtbot.waitUntil(lambda: page.convert_btn.isEnabled(), timeout=5000)
+
+    log_text = page.log.toPlainText()
+    assert '转换完成' in log_text
+    assert '出错了' not in log_text
+    assert (tmp_path / 'basic.jsonl').exists()
 
 
 def test_cleanup_waits_for_running_conversion_instead_of_crashing(qtbot, tmp_path):
@@ -255,6 +285,7 @@ def test_restore_settings_defaults_when_nothing_saved_yet(qtbot):
     assert lang_combo_code(page.tgt_edit) == 'zh-CN'
     assert page.layout_combo.currentData() == 'auto'
     assert page.chk_sdltm.isChecked() and page.chk_tmx.isChecked() and page.chk_csv.isChecked()
+    assert page.chk_jsonl.isChecked() is False
     assert page.chk_qa.isChecked() is False
     assert page._last_dir == ''
 
@@ -267,6 +298,7 @@ def test_save_then_restore_settings_round_trips(qtbot):
     idx = page.layout_combo.findData('table')
     page.layout_combo.setCurrentIndex(idx)
     page.chk_tmx.setChecked(False)
+    page.chk_jsonl.setChecked(True)
     page.chk_qa.setChecked(True)
     page._last_dir = '/some/folder'
     page.save_settings()
@@ -280,6 +312,7 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert fresh.chk_sdltm.isChecked() is True
     assert fresh.chk_tmx.isChecked() is False
     assert fresh.chk_csv.isChecked() is True
+    assert fresh.chk_jsonl.isChecked() is True
     assert fresh.chk_qa.isChecked() is True
     assert fresh._last_dir == '/some/folder'
 

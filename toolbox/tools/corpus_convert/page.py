@@ -84,6 +84,7 @@ _FORMAT_TOOLTIPS = {
     'sdltm': 'Trados 记忆库格式',
     'tmx': 'CAT 工具通用记忆库格式',
     'csv': '可人工核对的表格',
+    'jsonl': '供模型训练用，逐行 JSON',
 }
 
 _SETTINGS_PREFIX = 'corpus_convert/'
@@ -115,8 +116,9 @@ class CorpusConvertPage(QWidget):
         # The user's actual 生成格式 preference, independent of whatever
         # _sync_format_checkboxes() is currently forcing a checkbox to for
         # the loaded input file -- see that method's docstring. Defaults
-        # match the checkboxes' own default (all checked).
-        self._fmt_manual_state = {'sdltm': True, 'tmx': True, 'csv': True}
+        # match the checkboxes' own default (all checked, except jsonl --
+        # see _build_ui() for why that one starts unchecked).
+        self._fmt_manual_state = {'sdltm': True, 'tmx': True, 'csv': True, 'jsonl': False}
         self._build_ui()
 
     # ---------------------------------------------------------------- UI
@@ -180,8 +182,13 @@ class CorpusConvertPage(QWidget):
         self.chk_sdltm = QCheckBox('sdltm')
         self.chk_tmx = QCheckBox('tmx')
         self.chk_csv = QCheckBox('csv')
-        for cb, key in ((self.chk_sdltm, 'sdltm'), (self.chk_tmx, 'tmx'), (self.chk_csv, 'csv')):
-            cb.setChecked(True)
+        self.chk_jsonl = QCheckBox('jsonl')
+        for cb, key in ((self.chk_sdltm, 'sdltm'), (self.chk_tmx, 'tmx'), (self.chk_csv, 'csv'),
+                         (self.chk_jsonl, 'jsonl')):
+            # jsonl starts unchecked -- it's a training-data export, not
+            # part of the everyday sdltm/tmx/csv trio, so it shouldn't be
+            # on by default just because the checkbox exists.
+            cb.setChecked(key != 'jsonl')
             cb.setToolTip(_FORMAT_TOOLTIPS[key])
             cb.toggled.connect(lambda checked, k=key: self._on_format_toggled(k, checked))
             fmt_row.addWidget(cb)
@@ -229,6 +236,7 @@ class CorpusConvertPage(QWidget):
         self.chk_sdltm.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtSdltm', True))
         self.chk_tmx.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtTmx', True))
         self.chk_csv.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtCsv', True))
+        self.chk_jsonl.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtJsonl', False))
         self.chk_qa.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'qa', False))
         self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
 
@@ -244,6 +252,7 @@ class CorpusConvertPage(QWidget):
         settings.set_value(_SETTINGS_PREFIX + 'fmtSdltm', self._fmt_manual_state['sdltm'])
         settings.set_value(_SETTINGS_PREFIX + 'fmtTmx', self._fmt_manual_state['tmx'])
         settings.set_value(_SETTINGS_PREFIX + 'fmtCsv', self._fmt_manual_state['csv'])
+        settings.set_value(_SETTINGS_PREFIX + 'fmtJsonl', self._fmt_manual_state['jsonl'])
         settings.set_value(_SETTINGS_PREFIX + 'qa', self.chk_qa.isChecked())
         settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
@@ -316,7 +325,7 @@ class CorpusConvertPage(QWidget):
         if ext in _BILINGUAL_EXTS and (not lang_combo_code(self.src_edit) or not lang_combo_code(self.tgt_edit)):
             return '这类文件需要先填写原文语言和译文语言，才能开始转换'
 
-        if not any(cb.isChecked() for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv)):
+        if not any(cb.isChecked() for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv, self.chk_jsonl)):
             return '请至少勾选一种要生成的格式'
         return None
 
@@ -329,7 +338,8 @@ class CorpusConvertPage(QWidget):
         input_path = self.input_edit.text().strip()
         ext = os.path.splitext(input_path)[1].lower()
         formats = tuple(f for f, cb in (
-            ('sdltm', self.chk_sdltm), ('tmx', self.chk_tmx), ('csv', self.chk_csv)) if cb.isChecked())
+            ('sdltm', self.chk_sdltm), ('tmx', self.chk_tmx), ('csv', self.chk_csv),
+            ('jsonl', self.chk_jsonl)) if cb.isChecked())
         reader_opts = {}
         if ext == '.docx' and self.layout_combo.currentData() != 'auto':
             reader_opts['layout'] = self.layout_combo.currentData()

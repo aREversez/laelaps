@@ -125,6 +125,25 @@ def test_real_batch_conversion_end_to_end(qtbot, tmp_path):
         assert (base.with_suffix('.sdltm')).exists()
         assert (base.with_suffix('.tmx')).exists()
         assert (base.with_suffix('.csv')).exists()
+        assert not (base.with_suffix('.jsonl')).exists()  # opt-in, unchecked by default
+
+
+def test_jsonl_batch_conversion_when_opted_in(qtbot, tmp_path):
+    docx_src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+
+    page = BatchConvertPage()
+    qtbot.addWidget(page)
+    page._append_path(str(docx_src))
+    page._refresh_count()
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
+    page.chk_jsonl.setChecked(True)
+
+    page.start_btn.click()
+    qtbot.waitUntil(lambda: page.start_btn.isEnabled(), timeout=5000)
+
+    assert '全部完成' in page.summary_label.text()
+    assert (tmp_path / 'basic.jsonl').exists()
 
 
 def test_batch_with_one_bad_file_reports_partial_failure(qtbot, tmp_path):
@@ -308,6 +327,7 @@ def test_restore_settings_defaults_when_nothing_saved_yet(qtbot):
     assert lang_combo_code(page.tgt_edit) == 'zh-CN'
     assert page.layout_combo.currentData() == 'auto'
     assert page.chk_sdltm.isChecked() and page.chk_tmx.isChecked() and page.chk_csv.isChecked()
+    assert page.chk_jsonl.isChecked() is False
     assert page.chk_qa.isChecked() is False
     assert page._last_dir == ''
 
@@ -320,6 +340,7 @@ def test_save_then_restore_settings_round_trips(qtbot):
     idx = page.layout_combo.findData('alternating')
     page.layout_combo.setCurrentIndex(idx)
     page.chk_sdltm.setChecked(False)
+    page.chk_jsonl.setChecked(True)
     page.chk_qa.setChecked(True)
     page._last_dir = '/some/batch/folder'
     page.save_settings()
@@ -333,6 +354,7 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert fresh.chk_sdltm.isChecked() is False
     assert fresh.chk_tmx.isChecked() is True
     assert fresh.chk_csv.isChecked() is True
+    assert fresh.chk_jsonl.isChecked() is True
     assert fresh.chk_qa.isChecked() is True
     assert fresh._last_dir == '/some/batch/folder'
 

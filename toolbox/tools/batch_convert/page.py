@@ -71,6 +71,7 @@ _FORMAT_TOOLTIPS = {
     'sdltm': 'Trados 记忆库格式',
     'tmx': 'CAT 工具通用记忆库格式',
     'csv': '可人工核对的表格',
+    'jsonl': '供模型训练用，逐行 JSON',
 }
 _QA_TOOLTIP = '检查漏译、数字不一致等问题'
 
@@ -234,8 +235,12 @@ class BatchConvertPage(QWidget):
         self.chk_sdltm = QCheckBox('sdltm')
         self.chk_tmx = QCheckBox('tmx')
         self.chk_csv = QCheckBox('csv')
-        for cb, key in ((self.chk_sdltm, 'sdltm'), (self.chk_tmx, 'tmx'), (self.chk_csv, 'csv')):
-            cb.setChecked(True)
+        self.chk_jsonl = QCheckBox('jsonl')
+        for cb, key in ((self.chk_sdltm, 'sdltm'), (self.chk_tmx, 'tmx'), (self.chk_csv, 'csv'),
+                         (self.chk_jsonl, 'jsonl')):
+            # jsonl starts unchecked -- see corpus_convert/page.py's identical
+            # choice for why (training-data export, not an everyday format).
+            cb.setChecked(key != 'jsonl')
             cb.setToolTip(_FORMAT_TOOLTIPS[key])
             fmt_row.addWidget(cb)
         fmt_row.addStretch(1)
@@ -347,6 +352,7 @@ class BatchConvertPage(QWidget):
         self.chk_sdltm.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtSdltm', True))
         self.chk_tmx.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtTmx', True))
         self.chk_csv.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtCsv', True))
+        self.chk_jsonl.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'fmtJsonl', False))
         self.chk_qa.setChecked(settings.get_bool(_SETTINGS_PREFIX + 'qa', False))
         self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
 
@@ -357,6 +363,7 @@ class BatchConvertPage(QWidget):
         settings.set_value(_SETTINGS_PREFIX + 'fmtSdltm', self.chk_sdltm.isChecked())
         settings.set_value(_SETTINGS_PREFIX + 'fmtTmx', self.chk_tmx.isChecked())
         settings.set_value(_SETTINGS_PREFIX + 'fmtCsv', self.chk_csv.isChecked())
+        settings.set_value(_SETTINGS_PREFIX + 'fmtJsonl', self.chk_jsonl.isChecked())
         settings.set_value(_SETTINGS_PREFIX + 'qa', self.chk_qa.isChecked())
         settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
@@ -368,14 +375,14 @@ class BatchConvertPage(QWidget):
         has_bilingual = any(os.path.splitext(p)[1].lower() in _BILINGUAL_EXTS for p in self._paths)
         if has_bilingual and (not lang_combo_code(self.src_edit) or not lang_combo_code(self.tgt_edit)):
             return '本批文件里有双语文档，需要先填写原文语言和译文语言'
-        if not any(cb.isChecked() for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv)):
+        if not any(cb.isChecked() for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv, self.chk_jsonl)):
             return '请至少勾选一种要生成的格式'
         return None
 
     def _set_controls_enabled(self, enabled):
         for w in (self.add_files_btn, self.add_folder_btn, self.remove_btn, self.clear_btn, self.start_btn,
                   self.src_edit, self.tgt_edit, self.layout_combo,
-                  self.chk_sdltm, self.chk_tmx, self.chk_csv, self.chk_qa):
+                  self.chk_sdltm, self.chk_tmx, self.chk_csv, self.chk_jsonl, self.chk_qa):
             w.setEnabled(enabled)
 
     def _start_batch(self):
@@ -397,7 +404,8 @@ class BatchConvertPage(QWidget):
             src_lang=lang_combo_code(self.src_edit) or None,
             tgt_lang=lang_combo_code(self.tgt_edit) or None,
             formats=tuple(f for f, cb in (
-                ('sdltm', self.chk_sdltm), ('tmx', self.chk_tmx), ('csv', self.chk_csv)) if cb.isChecked()),
+                ('sdltm', self.chk_sdltm), ('tmx', self.chk_tmx), ('csv', self.chk_csv),
+                ('jsonl', self.chk_jsonl)) if cb.isChecked()),
             reader_opts=reader_opts,
             qa=self.chk_qa.isChecked(),
         )

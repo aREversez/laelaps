@@ -13,7 +13,7 @@ from language_tools.align.aligner import align_paragraph_pairs
 from language_tools.align.repair import NULL_REPAIRER, load_repairs
 from language_tools.corpus_readers import sdltm_reader, tmx_reader
 from language_tools.readers import csv_bilingual, docx, xlsx_bilingual
-from language_tools.writers import csv_writer, sdltm_writer, tmx_writer
+from language_tools.writers import csv_writer, jsonl_writer, sdltm_writer, tmx_writer
 
 # Public (not _-prefixed) since align_report.py's independent "align
 # without writing files" entry point needs the exact same "which reader
@@ -111,6 +111,9 @@ def convert(input_path, output_base, src_lang=None, tgt_lang=None,
     if 'tmx' in formats:
         tmx_writer.write(output_base + '.tmx', corpus_units, src_lang, tgt_lang)
         written['tmx'] = len(corpus_units)
+    if 'jsonl' in formats:
+        jsonl_writer.write(output_base + '.jsonl', corpus_units, src_lang, tgt_lang)
+        written['jsonl'] = len(corpus_units)
     if 'csv' in formats:
         csv_writer.write(output_base + '.csv', units, include_qa=run_qa)
         written['csv'] = len(units)

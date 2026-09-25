@@ -60,6 +60,39 @@ def test_cli_to_flag_repeatable(tmp_path):
     assert not (tmp_path / 'out.sdltm').exists()
 
 
+def test_cli_jsonl_is_opt_in_not_in_default_bundle(tmp_path):
+    out_base = str(tmp_path / 'out')
+    result = _run([fixture_path('basic.docx'), '-o', out_base, '--src', 'en-US', '--tgt', 'zh-CN'])
+    assert result.returncode == 0, result.stderr
+    assert not (tmp_path / 'out.jsonl').exists()
+
+
+def test_cli_to_jsonl_explicit(tmp_path):
+    out_base = str(tmp_path / 'out')
+    result = _run([fixture_path('basic.docx'), '-o', out_base, '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--to', 'jsonl'])
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'out.jsonl').exists()
+    assert not (tmp_path / 'out.sdltm').exists()
+    assert not (tmp_path / 'out.tmx').exists()
+    assert not (tmp_path / 'out.csv').exists()
+
+    import json
+    lines = (tmp_path / 'out.jsonl').read_text(encoding='utf-8').splitlines()
+    assert len(lines) == 4
+    row = json.loads(lines[0])
+    assert row['src_lang'] == 'en-US' and row['tgt_lang'] == 'zh-CN'
+    assert row['src'] and row['tgt']
+
+
+def test_cli_single_jsonl_format_via_output_extension(tmp_path):
+    out_path = str(tmp_path / 'single.jsonl')
+    result = _run([fixture_path('basic.docx'), '-o', out_path, '--src', 'en-US', '--tgt', 'zh-CN'])
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'single.jsonl').exists()
+    assert not (tmp_path / 'single.sdltm').exists()
+
+
 def test_cli_corpus_to_corpus_infers_language(tmp_path):
     step1 = str(tmp_path / 'step1')
     r1 = _run([fixture_path('basic.docx'), '-o', step1, '--src', 'en-US', '--tgt', 'zh-CN', '--to', 'tmx'])
