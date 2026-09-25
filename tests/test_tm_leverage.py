@@ -62,6 +62,30 @@ def test_fuzzy_match_lands_in_expected_band():
     assert candidates[0].meta['leverage_match_pct'] < 100.0
 
 
+def test_rounded_up_near_miss_is_not_billed_as_exact():
+    # A very long segment differing by a couple of trailing characters has a
+    # match ratio just under 1.0, but round(ratio*100, 1) reports it as 100.0.
+    # Banding off the *un-rounded* ratio keeps it in 95-99 (charged) instead
+    # of 'exact' (weighted 0.0 by quote.py, i.e. free) -- the fix for the P3
+    # leverage-rounding bug.
+    base = 'The system shall log every authentication attempt for audit purposes. ' * 60
+    tm = [_u(base, '')]
+    candidates = [_u(base + 'XY', '')]  # two extra chars -> ratio ~0.9998, pct rounds to 100.0
+    leverage_module.analyze(tm, candidates)
+    assert candidates[0].meta['leverage_match_pct'] == 100.0  # rounded display value
+    assert candidates[0].meta['leverage_band'] == '95-99'     # but not 'exact'
+
+
+def test_true_identical_segment_still_bands_exact():
+    # Guard the other side of the fix: an actually-identical segment must keep
+    # banding as 'exact' despite the ratio>=1.0 requirement.
+    base = 'The system shall log every authentication attempt for audit purposes. ' * 60
+    tm = [_u(base, '')]
+    candidates = [_u(base, '')]
+    leverage_module.analyze(tm, candidates)
+    assert candidates[0].meta['leverage_band'] == 'exact'
+
+
 def test_below_fuzzy_floor_is_no_match():
     tm = [_u('Alpha bravo charlie delta echo foxtrot golf.', '')]
     candidates = [_u('Something else entirely different here today.', '')]

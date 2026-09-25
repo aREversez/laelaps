@@ -126,7 +126,13 @@ def analyze(tm_units, candidate_units, *, fuzzy_floor=0.50):
         ratio = difflib.SequenceMatcher(None, norm, matches[0]).ratio()
         pct = round(ratio * 100, 1)
         u.meta['leverage_match_pct'] = pct
-        u.meta['leverage_band'] = _band_for_pct(pct)
+        # Band the 'exact' cut off the un-rounded ratio, not pct: round()
+        # lifts a 99.95%+ near-miss to pct==100.0, which _band_for_pct would
+        # then call 'exact' -- and quote.py weights 'exact' at 0.0, so a long
+        # segment that isn't actually identical would be billed as free. Only
+        # ratio==1.0 is a true exact; cap the band lookup just under 100 for
+        # everything else so a rounded-up near-miss lands in 95-99.
+        u.meta['leverage_band'] = 'exact' if ratio >= 1.0 else _band_for_pct(min(pct, 99.9))
 
 
 def summarize(candidate_units):
