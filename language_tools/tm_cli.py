@@ -43,10 +43,12 @@ running a whole batch through it unattended, not to fully validate one
 already-converted result.
 """
 import argparse
+import importlib
 import os
 import sys
 
 from language_tools import align_report
+from language_tools import semantic_review
 from language_tools.cli import _build_reader_opts
 from language_tools.readers import docx_preflight
 from language_tools.reports import adapters as report_adapters
@@ -183,6 +185,54 @@ def _cmd_stats(args):
     return 0
 
 
+def _load_reviewer(spec):
+    """Resolve ``--semantic-review``'s 'module:attr' (or 'module.attr')
+    spec into a reviewer object. Lives in the CLI, not in
+    ``language_tools.semantic_review``, on purpose: dynamic import of an
+    arbitrary dotted path is the *wiring layer's* job -- the library module
+    only ever takes an already-constructed reviewer from its caller.
+    The spec may name a ready-made object (``MyReviewer()``,
+    ``make_reviewer(cfg)`` -- evaluated as an expression with the module's
+    namespace as its only globals, so constructor/factory arguments fit
+    into one flat string) or a bare class/function/module attribute (used
+    as-is, a bare class instantiated with no arguments). Whatever it
+    names, the object must satisfy the ``Reviewer`` protocol; checking that
+    here, at the seam where a user-supplied string becomes an object, turns
+    "pointed at the wrong thing" into one clear line instead of a TypeError
+    from deep inside ``attach()`` (a bare class reaching ``review()`` binds
+    ``self`` to the unit and fails as "missing argument 'unit'", which this
+    check also preempts). The expression form's ``eval`` is as trusted as
+    the rest of the flag: the user is importing and running *their own*
+    module either way -- hence ``{'__builtins__': {}}`` (constructor-side
+    effects come from the imported module's code, not from this string).
+    """
+    if ':' in spec:
+        module_name, _, expr = spec.partition(':')
+    else:
+        module_name, _, expr = spec.rpartition('.')
+    try:
+        obj = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise SystemExit('error: --semantic-review: cannot import module %r: %s' % (module_name, exc))
+    if expr.endswith(')'):
+        try:
+            reviewer = eval(expr, {'__builtins__': {}}, vars(obj))
+        except Exception as exc:
+            raise SystemExit('error: --semantic-review: %r failed to evaluate in %r: %s'
+                             % (expr, module_name, exc))
+    else:
+        try:
+            callable_ = getattr(obj, expr)
+        except AttributeError:
+            raise SystemExit('error: --semantic-review: %r has no attribute %r' % (module_name, expr))
+        reviewer = callable_() if isinstance(callable_, type) else callable_
+    if not isinstance(reviewer, semantic_review.Reviewer):
+        raise SystemExit('error: --semantic-review: %s does not satisfy the Reviewer '
+                         'protocol (needs a review(unit) -> list[SemanticIssue] method)'
+                         % spec)
+    return reviewer
+
+
 def _cmd_qa(args):
     units = qa_report_module.run(args.input)
     s = qa_report_module.summarize(units)
@@ -192,9 +242,18 @@ def _cmd_qa(args):
         count = s['by_type'].get(issue_type)
         if count:
             print('  %s: %d' % (issue_type, count))
+    reviewer = _load_reviewer(args.semantic_review) if args.semantic_review else None
+    sem_summary = None
+    if reviewer is not None:
+        semantic_review.attach(units, reviewer)
+        sem_summary = semantic_review.summarize(units)
+        print('Semantic flagged=%d' % sem_summary['flagged'])
+        for issue_type, count in sorted(sem_summary['by_type'].items()):
+            print('  %s: %d' % (issue_type, count))
     if args.export:
         src_lang, tgt_lang = tm_io.infer_langs(units)
-        csv_writer.write(args.export, units, src_lang or 'SRC', tgt_lang or 'TGT', include_qa=True)
+        csv_writer.write(args.export, units, src_lang or 'SRC', tgt_lang or 'TGT',
+                         include_qa=True, include_semantic=reviewer is not None)
         print('Wrote %s' % args.export)
     if args.report:
         rc = _write_report(args.report, report_adapters.from_qa_summary(s))
@@ -482,6 +541,19 @@ def build_parser():
                        help='write a bilingual side-by-side review page (flagged segments only, '
                             'with the problem spans highlighted) to PATH as HTML -- for handing '
                             'to a client/proofreader, not the same as --report\'s stats summary')
+    qa_p.add_argument('--semantic-review', metavar='SPEC',
+                       help="EXPERT/OPT-IN hook: run an *external* semantic reviewer over the "
+                            "corpus before --export/--review output is produced, by importing "
+                            "it from 'module:attr' (or 'module.attr') -- e.g. "
+                            "'my_reviewers.aaa:MyReviewer()' or 'mymod.make_reviewer'. The "
+                            "toolbox ships no built-in "
+                            "implementations and never talks to a model by itself (README's "
+                            "offline promise; see language_tools/semantic_review.py); whatever "
+                            "the injected callable does, including any network access, is the "
+                            "user's own code and responsibility. Hits are to-verify hints: "
+                            "they land in meta['semantic_issues'] (a separate channel from the "
+                            "rule checks' qa_issues, so confidence scores and exit codes are "
+                            "unaffected) and add a semantic_issues column to --export's CSV")
     qa_p.set_defaults(func=_cmd_qa)
 
     leverage_p = sub.add_parser(

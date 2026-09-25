@@ -64,6 +64,19 @@ only have come from the forbidden direction, so ``.get``-defaulting to
 ``issues``/``align_move``) -- the band names ('exact', '95-99',
 'repetition', ...) are already the whole vocabulary a PM/translator
 needs, not internal codes standing in for something more readable.
+
+``include_semantic=True`` appends a semantic_issues column from
+``semantic_review.attach()``'s ``meta['semantic_issues']``. Same
+no-fixed-vocabulary situation as ``term_issues`` -- hit types come from
+whatever outside reviewer was injected -- but that reviewer was told to
+carry its own human-readable text in ``description``, so the cell renders
+"<TYPE>(<description>)" with no label lookup at all. A ``span_hint``, when
+present, is appended after " -- ": this sheet is plain CSV, no highlight
+rendering exists for semantic hits (highlights are wired to the rule
+checks' SPAN_FINDERS), so the pointed-at text has to travel as text.
+Empty cell means "reviewed, nothing flagged" or "not reviewed" -- the
+channel itself distinguishes those (``attach`` always writes the key),
+this column just doesn't spell the difference out per row.
 """
 import csv
 
@@ -88,8 +101,15 @@ def _format_term_hit(hit):
     return '%s(%s)' % (text, hit['note']) if hit.get('note') else text
 
 
+def _format_semantic_hit(issue):
+    text = '%s(%s)' % (issue.type, issue.description)
+    if issue.span_hint:
+        text += ' -- %s' % issue.span_hint
+    return text
+
+
 def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include_align=False,
-          include_terms=False, include_leverage=False):
+          include_terms=False, include_leverage=False, include_semantic=False):
     with open(path, 'w', encoding='utf-8-sig', newline='') as f:
         w = csv.writer(f)
         header = ['No', src_label, tgt_label]
@@ -101,6 +121,8 @@ def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include
             header += ['term_issues']
         if include_leverage:
             header += ['leverage_band', 'match_pct']
+        if include_semantic:
+            header += ['semantic_issues']
         w.writerow(header)
         for i, u in enumerate(units, 1):
             row = [i, u.src_text.strip(), u.tgt_text.strip()]
@@ -116,4 +138,7 @@ def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include
                 row += [';'.join(_format_term_hit(h) for h in hits)]
             if include_leverage:
                 row += [u.meta.get('leverage_band', ''), u.meta.get('leverage_match_pct', '')]
+            if include_semantic:
+                hits = u.meta.get('semantic_issues', [])
+                row += [';'.join(_format_semantic_hit(h) for h in hits)]
             w.writerow(row)
