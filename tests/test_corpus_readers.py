@@ -2,6 +2,57 @@ from language_tools.corpus_readers import sdltm_reader, tmx_reader
 from language_tools.writers import sdltm_writer, tmx_writer
 from language_tools.model import TranslationUnit
 
+import pytest
+
+
+def test_illegal_xml_control_chars_survive_round_trip_in_both_formats(tmp_path):
+    # XML 1.0 illegal control chars (form feed \x0c and friends really
+    # occur in TM/CSV-sourced text). Before esc() sanitized them: the TMX
+    # file was unparseable end to end (ET.parse: "not well-formed
+    # (invalid token)"), and the SDLTM one "read back fine" with src_text
+    # silently '' -- the reader's ParseError fallback swallowed the
+    # corruption instead of reporting it.
+    text = 'Form\x0cfeed and \x01other\x1f control chars.'
+    units = [TranslationUnit(src_lang='en-US', tgt_lang='zh-CN', src_text=text, tgt_text='控制字符。')]
+
+    tmx = str(tmp_path / 'ctrl.tmx')
+    tmx_writer.write(tmx, units, 'en-US', 'zh-CN')
+    back = tmx_reader.read(tmx)  # must not raise
+    assert len(back) == 1
+    assert back[0].src_text == text.replace('\x0c', '\ufffd').replace('\x01', '\ufffd').replace('\x1f', '\ufffd')
+
+    sdltm = str(tmp_path / 'ctrl.sdltm')
+    sdltm_writer.write(sdltm, units, 'en-US', 'zh-CN', 'test')
+    back = sdltm_reader.read(sdltm)
+    assert len(back) == 1
+    assert back[0].src_text == text.replace('\x0c', '\ufffd').replace('\x01', '\ufffd').replace('\x1f', '\ufffd')
+
+
+def test_sdltm_reader_raises_loudly_on_unparseable_segment_xml(tmp_path):
+    # A corrupt/foreign Segment blob must not read back as an empty
+    # unit -- '' is indistinguishable from a genuinely empty segment, so
+    # the old behavior silently emptied text with no signal at all.
+    import sqlite3
+
+    path = str(tmp_path / 'corrupt.sdltm')
+    sdltm_writer.write(path, [], 'en-US', 'zh-CN', 'test')
+    con = sqlite3.connect(path)
+    try:
+        con.execute(
+            'INSERT INTO translation_units(guid,translation_memory_id,source_hash,'
+            'source_segment,target_hash,target_segment,creation_date,creation_user,'
+            'change_date,change_user,last_used_date,last_used_user,usage_counter,flags) '
+            'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (b'\x00' * 16, 1, 0, '<Segment><unclosed>', 0,
+             '<Segment>ok</Segment>', '2024-01-01 00:00:00', 'test',
+             '2024-01-01 00:00:00', 'test', '2024-01-01 00:00:00', 'test', 0, 131073))
+        con.commit()
+    finally:
+        con.close()
+
+    with pytest.raises(ValueError, match='unparseable segment XML'):
+        sdltm_reader.read(path)
+
 
 def _sample_units():
     return [

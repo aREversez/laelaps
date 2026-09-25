@@ -33,6 +33,7 @@ of Trados' real hash.
 """
 import datetime
 import os
+import re
 import sqlite3
 import uuid
 
@@ -141,8 +142,21 @@ def fnv1a64(text):
     return s64(h)
 
 
+# XML 1.0 forbids #x00-#x08, #x0B, #x0C, #x0E-#x1F outright -- no entity,
+# no escaping makes them legal. Leaving one in a <Segment> Value writes a
+# file that is not XML at all: Studio/SQLite won't notice (the text is a
+# plain column), but tmx_reader's ET.parse dies on the whole file and our
+# own sdltm_reader's per-segment parse silently yields '' (raw control
+# bytes survive esc()'s 3-entity escaping untouched -- hand-built TMX/
+# SDLTM exports and Excel/CSV round-trips really do carry them).
+# Replaced with U+FFFD rather than dropped: losing one can flip meaning
+# ("line\x0cbreak" vs "linebreak"), a visible replacement marker cannot.
+_ILLEGAL_XML_CHARS_RE = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f]')
+
+
 def esc(t):
-    return t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    return _ILLEGAL_XML_CHARS_RE.sub('\ufffd',
+                                     t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
 
 
 def unesc(t):

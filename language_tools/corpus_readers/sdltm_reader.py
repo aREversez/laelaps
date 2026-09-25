@@ -39,13 +39,17 @@ def _local_name(tag):
     return tag.rsplit('}', 1)[-1]
 
 
-def _extract(seg_xml_text):
+def _extract(seg_xml_text, where='segment'):
     if not seg_xml_text:
         return '', ''
     try:
         root = ET.fromstring(seg_xml_text)
-    except ET.ParseError:
-        return '', ''
+    except ET.ParseError as e:
+        # Never swallow this: '' for a segment is indistinguishable from
+        # a genuinely empty one, so a file-level parse failure used to
+        # "read back fine" with silently emptied src/tgt text (the exact
+        # shape of a real illegal-control-char data-loss bug).
+        raise ValueError('sdltm: unparseable segment XML in %s (%s)' % (where, e))
     value_el = next((e for e in root.iter() if _local_name(e.tag) == 'Value'), None)
     culture_el = next((e for e in root.iter() if _local_name(e.tag) == 'CultureName'), None)
     text = (value_el.text or '') if value_el is not None else ''
@@ -69,13 +73,14 @@ def read(path, **opts):
 
     units = []
     for guid, src_seg, tgt_seg, created, changed in rows:
-        src_text, src_lang = _extract(src_seg)
-        tgt_text, tgt_lang = _extract(tgt_seg)
+        guid_hex = guid.hex() if isinstance(guid, (bytes, bytearray)) else guid
+        src_text, src_lang = _extract(src_seg, 'source_segment of TU %s' % (guid_hex or '?'))
+        tgt_text, tgt_lang = _extract(tgt_seg, 'target_segment of TU %s' % (guid_hex or '?'))
         units.append(TranslationUnit(
             src_lang=src_lang or tm_src_lang,
             tgt_lang=tgt_lang or tm_tgt_lang,
             src_text=src_text, tgt_text=tgt_text,
-            guid=guid.hex() if isinstance(guid, (bytes, bytearray)) else guid,
+            guid=guid_hex,
             created_at=created, modified_at=changed,
             source_file=path,
         ))
