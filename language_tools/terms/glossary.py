@@ -1,0 +1,230 @@
+"""Read/write a glossary file (csv/xlsx) of ``TermEntry`` rows
+(DESIGN.md section 15.1, Phase G0).
+
+Column shape is deliberately different from the bilingual-source readers
+in ``language_tools/readers/``: those *guess* a header/column layout
+because their input is an arbitrary externally-authored document. A
+glossary file here is either round-tripped by ``write()`` in this module
+or hand-edited starting from that output, so requiring a *named* header
+(``src_term``/``tgt_term``/...) rather than guessing column positions is
+the right tradeoff -- position-guessing a term list would also misfire on
+``readers/_rowreader.py``'s own ``looks_like_header()`` heuristic (short
+cells, no sentence punctuation): *every* row in a term list looks like
+that, header or not, so that heuristic can't tell header from data here.
+
+Language pair is a file-level property, not a per-row column: a glossary
+in this tool covers one src/tgt language pair (same mental model as a
+TM), so asking someone hand-maintaining the file to repeat "en-US,zh-CN"
+on every single row would be pure busywork the file format doesn't need.
+``read()`` takes the pair as parameters and stamps every entry with it;
+``write()`` doesn't persist it at all (entries already carry their own
+``src_lang``/``tgt_lang`` -- see model.py -- ``write()`` just doesn't
+duplicate that into a column, since a single glossary file is always one
+pair by convention here).
+
+Encoding fallback for csv mirrors ``readers/csv_bilingual.py`` exactly
+(utf-8-sig -> utf-8 -> gb18030) -- same real-world "Excel export from
+Chinese Windows isn't UTF-8" problem, same fix, not reinvented.
+
+``import openpyxl`` is deferred to inside the two functions that actually
+need it, same reasoning and same fix as ``readers/xlsx_bilingual.py``'s
+docstring: this module (like every ``toolbox/tools/*/page.py``) gets
+imported at app startup regardless of whether the person ever opens an
+xlsx glossary in the session, so an eager import would make every launch
+pay openpyxl's load cost, not just the ones that use it.
+
+``.tbx`` (DESIGN.md 15.2's TBX/MultiTerm interop item) dispatches to
+``terms/tbx.py`` instead of the row-based reader/writer below -- TBX is a
+concept-oriented XML format, not a flat row table, so it gets its own
+module rather than being squeezed into ``_rows_to_entries()``'s CSV/xlsx
+row model. Read that module's docstring before trusting a round trip
+through a real third-party TBX export; it is NOT the same "lossless for
+files this module wrote" guarantee the CSV/xlsx path gives.
+"""
+import csv
+import io
+import os
+
+from language_tools.terms import tbx as tbx_module
+from language_tools.terms.model import TermEntry
+
+ENCODINGS = ['utf-8-sig', 'utf-8', 'gb18030']
+
+# Header column names, in write order. write() always emits exactly this
+# set, in this order. read() is more permissive -- see HEADER_ALIASES.
+COLUMNS = ['src_term', 'tgt_term', 'status', 'domain', 'note']
+
+# Alternate header spellings read() accepts for each canonical column,
+# matched case-insensitively/whitespace-trimmed (see _parse_header()).
+# This tool only ever *writes* the exact COLUMNS names, but real glossary
+# files brought in from elsewhere routinely use a different header
+# convention for the same two columns everything else here depends on --
+# a real hand-off file rejected outright for saying "source"/"target"
+# instead of "src_term"/"tgt_term" is a false negative, not a genuinely
+# unusable file. Each canonical name is listed first as its own alias so
+# COLUMNS stays a strict subset of this mapping's keys covered.
+# 中文表头（原文/译文…）同样是常见的第三方术语表命名，一并识别。
+HEADER_ALIASES = {
+    'src_term': (
+        'src_term', 'source_term', 'src', 'source', 'sourceterm',
+        'term_source', 'source term', '原文', '原文术语', '源术语', '源语言术语',
+    ),
+    'tgt_term': (
+        'tgt_term', 'target_term', 'tgt', 'target', 'targetterm',
+        'term_target', 'target term', '译文', '译文术语', '目标术语', '目标语言术语',
+    ),
+    'status': ('status', '状态'),
+    'domain': ('domain', 'category', 'subject', '领域', '类别'),
+    'note': ('note', 'notes', 'comment', 'comments', 'remark', 'remarks', '备注'),
+}
+
+_VALID_STATUSES = {'approved', 'forbidden'}
+_SUPPORTED_EXTS = ('.csv', '.xlsx', '.xlsm', '.tbx')
+
+
+def _read_text(path):
+    last_err = None
+    for enc in ENCODINGS:
+        try:
+            with open(path, encoding=enc) as f:
+                return f.read(), enc
+        except UnicodeDecodeError as e:
+            last_err = e
+    raise ValueError('could not decode %s with any of %s: %s' % (path, ENCODINGS, last_err))
+
+
+_ALIAS_TO_CANONICAL = {
+    alias.strip().lower(): canonical
+    for canonical, aliases in HEADER_ALIASES.items()
+    for alias in aliases
+}
+
+
+def _parse_header(row):
+    """Maps recognized column names to their position, accepting any
+    spelling in HEADER_ALIASES (not just the exact COLUMNS names this
+    tool itself writes -- see that mapping's docstring for why). Requires
+    src_term/tgt_term at minimum -- a glossary without those two has
+    nothing to check against, so failing loudly here (rather than
+    returning an empty entry list a caller might mistake for "empty
+    file") is the right failure mode. First matching header cell wins if
+    a row somehow has more than one alias for the same canonical column.
+    """
+    col_index = {}
+    for i, cell in enumerate(row):
+        name = (cell or '').strip().lower()
+        canonical = _ALIAS_TO_CANONICAL.get(name)
+        if canonical and canonical not in col_index:
+            col_index[canonical] = i
+    missing = [c for c in ('src_term', 'tgt_term') if c not in col_index]
+    if missing:
+        raise ValueError(
+            '术语表缺少必需的表头列 %s（需要 src_term/tgt_term 或其常见别名，如 '
+            'source/target、原文/译文，大小写不敏感）' % missing)
+    return col_index
+
+
+def _cell(cells, col_index, name):
+    idx = col_index.get(name)
+    if idx is None or idx >= len(cells):
+        return ''
+    return (cells[idx] or '').strip()
+
+
+def _rows_to_entries(rows, src_lang, tgt_lang):
+    """``rows`` is a list of raw cell-lists, row 0 assumed to be the
+    header. Returns [] for a header-only or empty file, same "no data,
+    not an error" treatment as the bilingual readers give an empty
+    source document.
+    """
+    if not rows:
+        return []
+    col_index = _parse_header(rows[0])
+
+    entries, bad_status_rows = [], []
+    for row_number, cells in enumerate(rows[1:], 2):
+        src_term = _cell(cells, col_index, 'src_term')
+        tgt_term = _cell(cells, col_index, 'tgt_term')
+        if not src_term and not tgt_term:
+            continue
+        # Blank/unrecognized status cells still *become* 'approved' (the
+        # entry needs a displayable/round-trippable value), but mark them
+        # status_declared=False: "approved-by-default" and "approved-on-
+        # purpose" only diverge once check.run(check_approved=True) is
+        # switched on, and a legacy file with no status column at all
+        # shouldn't turn into a whole-glossary to-verify list at that
+        # moment -- see TermEntry.status_declared.
+        raw_status = _cell(cells, col_index, 'status').lower()
+        status_declared = raw_status in _VALID_STATUSES
+        if status_declared:
+            status = raw_status
+        else:
+            if raw_status:
+                bad_status_rows.append(row_number)
+            status = 'approved'
+        entries.append(TermEntry(
+            src_lang=src_lang, tgt_lang=tgt_lang, src_term=src_term, tgt_term=tgt_term,
+            status=status, status_declared=status_declared,
+            domain=_cell(cells, col_index, 'domain') or None,
+            note=_cell(cells, col_index, 'note') or None,
+        ))
+    if bad_status_rows:
+        print('warning: glossary rows with unrecognized status (treated as \'approved\', '
+              'but skipped by the opt-in approved check): %s'
+              % bad_status_rows)
+    return entries
+
+
+def read(path, src_lang, tgt_lang):
+    ext = os.path.splitext(path)[1].lower()
+    if ext == '.tbx':
+        return tbx_module.read(path, src_lang, tgt_lang)
+    if ext == '.csv':
+        text, _enc = _read_text(path)
+        rows = [row for row in csv.reader(io.StringIO(text)) if any(c.strip() for c in row)]
+    elif ext in ('.xlsx', '.xlsm'):
+        import openpyxl
+        wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        try:
+            ws = wb.worksheets[0]
+            rows = [['' if c is None else str(c).strip() for c in row]
+                    for row in ws.iter_rows(values_only=True)]
+            rows = [row for row in rows if any(c for c in row)]
+        finally:
+            wb.close()
+    else:
+        raise ValueError('unsupported glossary format %r (expected one of %s)'
+                          % (ext, _SUPPORTED_EXTS))
+    return _rows_to_entries(rows, src_lang, tgt_lang)
+
+
+def write(path, entries):
+    ext = os.path.splitext(path)[1].lower()
+    if ext == '.tbx':
+        tbx_module.write(path, entries)
+        return
+    rows = [COLUMNS] + [
+        # Only a *declared* status is written back verbatim. An 'approved'
+        # that read() synthesized from a blank/unrecognized status cell
+        # (status_declared=False) must stay blank on disk -- otherwise one
+        # open-edit-save in the GUI promoted every legacy implicit-approved
+        # row to explicitly-approved, and the opt-in approved check would
+        # then sweep the whole glossary into its to-verify list, exactly the
+        # false-positive wall status_declared exists to avoid
+        # (P1-7 of the 2026-09 fix list).
+        [e.src_term, e.tgt_term, e.status if e.status_declared else '',
+         e.domain or '', e.note or ''] for e in entries
+    ]
+    if ext == '.csv':
+        with open(path, 'w', encoding='utf-8-sig', newline='') as f:
+            csv.writer(f).writerows(rows)
+    elif ext in ('.xlsx', '.xlsm'):
+        import openpyxl
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        for row in rows:
+            ws.append(row)
+        wb.save(path)
+    else:
+        raise ValueError('unsupported glossary format %r (expected one of %s)'
+                          % (ext, _SUPPORTED_EXTS))

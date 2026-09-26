@@ -1,0 +1,33 @@
+---------------------------------------------------------
+Update translation memories started. (9/24/2026 20:11:59)
+---------------------------------------------------------
+
+Working folder: <TESTDIR>
+
+
+----------------------------------------------
+Backup Translation Memory (9/24/2026 20:11:59)
+----------------------------------------------
+
+Backup location: <TESTDIR>\large_unique.sdltm.000.bak
+
+Process completed (9/24/2026 20:11:59)
+
+
+-----------------------------------------------
+Upgrade Translation Memory (9/24/2026 20:11:59)
+-----------------------------------------------
+
+Translation memory: <TESTDIR>\large_unique.sdltm
+
+Process failed (9/24/2026 20:11:59)
+Sdl.LanguagePlatform.Core.LanguagePlatformException: The TM does not support FGA
+   at Sdl.LanguagePlatform.TranslationMemoryApi.AbstractLocalTranslationMemory.Save(IProgress`1 progress, CancellationToken cancellationToken)
+   at Sdl.TranslationStudio.Common.TranslationMemory.TranslationMemoryAutomation.Jobs.UpgradeTranslationMemoryJobRequest.Execute(IJobExecutionContext context)
+
+----------------------------------------------------------
+Update translation memories finished. (9/24/2026 20:11:59)
+----------------------------------------------------------
+
+
+

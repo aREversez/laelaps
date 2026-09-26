@@ -1,0 +1,42 @@
+---------------------------------------------------------
+Update translation memories started. (9/22/2026 21:59:32)
+---------------------------------------------------------
+
+Working folder: <TESTDIR>
+
+
+----------------------------------------------
+Backup Translation Memory (9/22/2026 21:59:32)
+----------------------------------------------
+
+Backup location: <TESTDIR>\basic.sdltm.000.bak
+
+Process completed (9/22/2026 21:59:32)
+
+
+-----------------------------------------------
+Upgrade Translation Memory (9/22/2026 21:59:32)
+-----------------------------------------------
+
+Translation memory: <TESTDIR>\basic.sdltm
+
+Process completed (9/22/2026 21:59:32)
+
+
+-----------------------------------------------
+Reindex Translation Memory (9/22/2026 21:59:32)
+-----------------------------------------------
+
+Translation memory: <TESTDIR>\basic.sdltm
+Translation units : 4
+
+Process completed (9/22/2026 21:59:32)
+
+
+
+----------------------------------------------------------
+Update translation memories finished. (9/22/2026 21:59:32)
+----------------------------------------------------------
+
+
+

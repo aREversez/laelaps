@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+*.sdltm
+tests/temp/
+# Screenshots stay on the test machine — public repo, they evidence a
+# licensed-app install; commit text transcriptions instead
+# (see compatibility/fixtures/README.md)
+compatibility/fixtures/*.png
+*.png
+*.tmx
+*.csv
+!tests/fixtures/expected/*.csv
+!tests/fixtures/csv/*.csv
+!tests/fixtures/tmx/*.tmx

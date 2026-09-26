@@ -1,0 +1,1306 @@
+import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QFileDialog, QMessageBox
+
+from language_tools.model import TranslationUnit
+from language_tools.terms import glossary as glossary_module
+from language_tools.terms.filelock import FileLock
+from language_tools.terms.model import TermEntry
+from language_tools.writers import tmx_writer
+from toolbox.tools.term_management.page import TermManagementPage, _TermEntryDialog
+from toolbox.widgets import lang_combo_code
+
+
+def _u(src, tgt, **kw):
+    return TranslationUnit(src_lang='en-US', tgt_lang='zh-CN', src_text=src, tgt_text=tgt, **kw)
+
+
+def _write_tmx(path, units):
+    tmx_writer.write(str(path), units, 'en-US', 'zh-CN')
+
+
+def _entry(src_term, tgt_term, **kw):
+    return TermEntry(src_lang='en-US', tgt_lang='zh-CN', src_term=src_term, tgt_term=tgt_term, **kw)
+
+
+# ------------------------------------------------------------------ dialog
+# _TermEntryDialog.exec() is modal and would block in a real run; tests
+# below that go through the page's _add_entry()/_edit_selected_entry()
+# monkeypatch exec() itself (fill fields, return Accepted) rather than
+# calling .exec() for real -- same "swap out the blocking call" approach
+# QFileDialog-driven flows use further down this file.
+
+def test_dialog_rejects_empty_terms_without_accepting(qtbot):
+    dialog = _TermEntryDialog()
+    dialog._on_accept()
+    assert dialog.result() != QDialog.Accepted
+    # isVisible() would be False regardless (the dialog itself was never
+    # shown), so check the label's own hidden flag instead -- isHidden()
+    # reflects the explicit setVisible() call directly, not the ancestor
+    # chain's actual on-screen state.
+    assert not dialog.error_label.isHidden()
+
+
+def test_dialog_prefills_from_existing_entry(qtbot):
+    entry = _entry('cloud', '云', status='forbidden', domain='tech', note='测试备注')
+    dialog = _TermEntryDialog(entry=entry)
+    assert dialog.src_term_edit.text() == 'cloud'
+    assert dialog.tgt_term_edit.text() == '云'
+    assert dialog.status_combo.currentData() == 'forbidden'
+    assert dialog.domain_edit.text() == 'tech'
+    assert dialog.note_edit.text() == '测试备注'
+
+
+def test_dialog_result_values_strips_whitespace_and_blanks_optional_fields(qtbot):
+    dialog = _TermEntryDialog()
+    dialog.src_term_edit.setText('  cloud  ')
+    dialog.tgt_term_edit.setText('  云  ')
+    values = dialog.result_values()
+    assert values['src_term'] == 'cloud'
+    assert values['tgt_term'] == '云'
+    assert values['domain'] is None
+    assert values['note'] is None
+
+
+# --------------------------------------------------------------- glossary tab
+
+def test_glossary_tab_starts_empty_with_buttons_disabled(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.entry_table.rowCount() == 0
+    assert not page.glossary_save_btn.isEnabled()
+    assert not page.glossary_close_btn.isEnabled()
+
+
+def test_add_entry_via_dialog_appends_to_table(qtbot, monkeypatch):
+    def fake_exec(self):
+        self.src_term_edit.setText('cloud')
+        self.tgt_term_edit.setText('云')
+        return QDialog.Accepted
+    monkeypatch.setattr(_TermEntryDialog, 'exec', fake_exec)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._add_entry()
+    assert page.entry_table.rowCount() == 1
+    assert page.entry_table.item(0, 0).text() == 'cloud'
+    assert page.entry_table.item(0, 1).text() == '云'
+    assert page.entry_table.item(0, 2).text() == '推荐译法'
+    assert '已添加' in page.log.toPlainText()
+
+
+def test_add_entry_enables_close_button_even_without_a_saved_path(qtbot, monkeypatch):
+    def fake_exec(self):
+        self.src_term_edit.setText('cloud')
+        self.tgt_term_edit.setText('云')
+        return QDialog.Accepted
+    monkeypatch.setattr(_TermEntryDialog, 'exec', fake_exec)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._add_entry()
+    # Nothing to save to yet, but there's now something to discard.
+    assert page.glossary_close_btn.isEnabled()
+
+
+def test_dialog_cancel_does_not_add_entry(qtbot, monkeypatch):
+    monkeypatch.setattr(_TermEntryDialog, 'exec', lambda self: QDialog.Rejected)
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._add_entry()
+    assert page.entry_table.rowCount() == 0
+
+
+def test_edit_selected_entry_updates_table(qtbot, monkeypatch):
+    def fake_exec(self):
+        self.tgt_term_edit.setText('大数据（已更新）')
+        return QDialog.Accepted
+    monkeypatch.setattr(_TermEntryDialog, 'exec', fake_exec)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+    page.entry_table.selectRow(0)
+    page._edit_selected_entry()
+    assert page.entry_table.item(0, 1).text() == '大数据（已更新）'
+
+
+def test_edit_requires_exactly_one_selected_row(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('a', 'A'), _entry('b', 'B')]
+    page._refresh_entry_table()
+    page._edit_selected_entry()
+    assert '只能选一条' in page.log.toPlainText()
+
+
+def test_double_clicking_a_row_opens_the_edit_dialog(qtbot, monkeypatch):
+    def fake_exec(self):
+        self.tgt_term_edit.setText('改过了')
+        return QDialog.Accepted
+    monkeypatch.setattr(_TermEntryDialog, 'exec', fake_exec)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+    page._on_entry_double_clicked(0, 1)
+    assert page.entry_table.item(0, 1).text() == '改过了'
+
+
+def test_remove_selected_entries_removes_only_selected(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('a', 'A'), _entry('b', 'B')]
+    page._refresh_entry_table()
+    page.entry_table.selectRow(0)
+    page._remove_selected_entries()
+    assert len(page._entries) == 1
+    assert page._entries[0].src_term == 'b'
+    assert page.entry_table.rowCount() == 1
+
+
+def test_remove_with_no_selection_shows_validation_error(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._remove_selected_entries()
+    assert '请先选中要删除' in page.log.toPlainText()
+
+
+# ----------------------------------------------------------- context menu
+
+def _fake_menu_module(monkeypatch, choose_text):
+    """Swaps QMenu (as used inside term_management.page) for a fake that
+    records added actions/separators and, on exec(), returns whichever
+    action's text matches choose_text (or None, e.g. simulating a
+    dismissed menu, if nothing matches) -- QMenu.exec() is otherwise
+    modal and would block. Matching by text rather than position keeps
+    these tests unaffected by menu-item reordering.
+    """
+    class _FakeAction:
+        def __init__(self, text):
+            self.text = text
+            self._enabled = True
+
+        def setEnabled(self, enabled):
+            self._enabled = enabled
+
+        def isEnabled(self):
+            return self._enabled
+
+    class _FakeMenu:
+        def __init__(self, parent=None):
+            self.actions = []
+
+        def addAction(self, text):
+            action = _FakeAction(text)
+            self.actions.append(action)
+            return action
+
+        def addSeparator(self):
+            pass
+
+        def exec(self, pos):
+            for action in self.actions:
+                if action.text == choose_text:
+                    return action
+            return None
+
+    import toolbox.tools.term_management.page as page_module
+    monkeypatch.setattr(page_module, 'QMenu', _FakeMenu)
+
+
+def _row_center(page, row):
+    page.show()
+    page.entry_table.window().activateWindow()
+    from PySide6.QtWidgets import QApplication
+    QApplication.processEvents()
+    return page.entry_table.visualRect(page.entry_table.model().index(row, 0)).center()
+
+
+def test_context_menu_add_action_dispatches_to_add(qtbot, monkeypatch):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+    _fake_menu_module(monkeypatch, choose_text='添加…')
+
+    calls = []
+    monkeypatch.setattr(page, '_add_entry', lambda: calls.append('add'))
+    page._show_entry_context_menu(_row_center(page, 0))
+    assert calls == ['add']
+
+
+def test_context_menu_on_empty_area_offers_only_add(qtbot, monkeypatch):
+    from PySide6.QtCore import QPoint
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+
+    seen_texts = []
+
+    class _RecordingMenu:
+        def __init__(self, parent=None):
+            pass
+
+        def addAction(self, text):
+            seen_texts.append(text)
+
+            class _Action:
+                def setEnabled(_self, enabled):
+                    pass
+            return _Action()
+
+        def addSeparator(self):
+            seen_texts.append('---')
+
+        def exec(self, pos):
+            return None
+
+    import toolbox.tools.term_management.page as page_module
+    monkeypatch.setattr(page_module, 'QMenu', _RecordingMenu)
+    page._show_entry_context_menu(QPoint(5, 9999))  # well below any row
+    assert seen_texts == ['添加…']  # no separator, no 编辑/删除 -- nothing to act on
+
+
+def test_context_menu_edit_action_dispatches_to_edit(qtbot, monkeypatch):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+    _fake_menu_module(monkeypatch, choose_text='编辑…')
+
+    calls = []
+    monkeypatch.setattr(page, '_edit_selected_entry', lambda: calls.append('edit'))
+    page._show_entry_context_menu(_row_center(page, 0))
+    assert calls == ['edit']
+
+
+def test_context_menu_delete_action_dispatches_to_delete(qtbot, monkeypatch):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+    _fake_menu_module(monkeypatch, choose_text='删除')
+
+    calls = []
+    monkeypatch.setattr(page, '_remove_selected_entries', lambda: calls.append('delete'))
+    page._show_entry_context_menu(_row_center(page, 0))
+    assert calls == ['delete']
+
+
+def test_right_clicking_an_unselected_row_selects_it(qtbot, monkeypatch):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('a', 'A'), _entry('b', 'B')]
+    page._refresh_entry_table()
+    _fake_menu_module(monkeypatch, choose_text='删除')
+
+    monkeypatch.setattr(page, '_remove_selected_entries', lambda: None)
+    page._show_entry_context_menu(_row_center(page, 1))
+    assert page._selected_entry_rows() == [1]
+
+
+def test_right_click_outside_any_row_does_not_select_anything(qtbot, monkeypatch):
+    from PySide6.QtCore import QPoint
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('a', 'A')]
+    page._refresh_entry_table()
+    _fake_menu_module(monkeypatch, choose_text=None)  # dismissed
+    page._show_entry_context_menu(QPoint(5, 9999))  # well below any row
+    assert page._selected_entry_rows() == []
+
+
+def test_context_menu_edit_disabled_when_multiple_rows_selected(qtbot, monkeypatch):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('a', 'A'), _entry('b', 'B')]
+    page._refresh_entry_table()
+    page.entry_table.selectRow(0)
+    from PySide6.QtCore import QItemSelectionModel
+    page.entry_table.selectionModel().select(
+        page.entry_table.model().index(1, 0),
+        QItemSelectionModel.Select | QItemSelectionModel.Rows)
+    assert len(page._selected_entry_rows()) == 2
+
+    captured = {}
+
+    class _CapturingMenu:
+        def __init__(self, parent=None):
+            self.actions = []
+
+        def addAction(self, text):
+            action_holder = {'text': text, 'enabled': True}
+            self.actions.append(action_holder)
+            if text == '编辑…':
+                captured['edit'] = action_holder
+
+            class _Action:
+                def setEnabled(_self, enabled):
+                    action_holder['enabled'] = enabled
+            return _Action()
+
+        def addSeparator(self):
+            pass
+
+        def exec(self, pos):
+            return None  # dismissed, doesn't matter for this test
+
+    import toolbox.tools.term_management.page as page_module
+    monkeypatch.setattr(page_module, 'QMenu', _CapturingMenu)
+    # Right-click on one of the already-multi-selected rows -- selection
+    # must stay as-is (not collapse to just the clicked row), same as
+    # most apps' right-click-within-an-existing-multi-selection behavior.
+    page._show_entry_context_menu(_row_center(page, 0))
+    assert captured['edit']['enabled'] is False
+    assert len(page._selected_entry_rows()) == 2
+
+
+# ----------------------------------------------------------------- close
+
+def test_close_glossary_clears_state_when_not_dirty(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    assert page.entry_table.rowCount() == 1
+
+    page._close_glossary()
+    assert page.entry_table.rowCount() == 0
+    assert page._glossary_path is None
+    assert page._file_lock is None
+    assert not page.glossary_save_btn.isEnabled()
+    assert not page.glossary_close_btn.isEnabled()
+    assert page.glossary_path_label.text() == '未打开文件（当前为新建）'
+    assert '已关闭术语库' in page.log.toPlainText()
+
+    # And the file is genuinely unlocked now -- someone else could open it.
+    lock = FileLock(str(path))
+    lock.acquire()
+    lock.release()
+
+
+def test_close_glossary_with_unsaved_changes_prompts_and_cancel_keeps_state(qtbot, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Cancel)
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+    page._refresh_entry_table()
+
+    page._close_glossary()
+    assert page.entry_table.rowCount() == 1  # nothing was discarded
+    assert page.has_unsaved_changes() is True
+
+
+def test_close_glossary_with_unsaved_changes_discard_clears_state(qtbot, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Discard)
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+    page._refresh_entry_table()
+
+    page._close_glossary()
+    assert page.entry_table.rowCount() == 0
+    assert page.has_unsaved_changes() is False
+
+
+def test_close_glossary_with_unsaved_changes_save_writes_then_clears(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary.csv'
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Save)
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+    page._refresh_entry_table()
+
+    page._close_glossary()
+    assert out.exists()
+    assert page.entry_table.rowCount() == 0
+    assert page._glossary_path is None
+
+
+def test_close_glossary_on_a_clean_empty_page_is_a_noop(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._close_glossary()  # close button would be disabled, but the method itself must not crash
+    assert page.entry_table.rowCount() == 0
+
+
+# ------------------------------------------------------- open/save flows
+
+def test_open_glossary_populates_table_and_enables_buttons(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云', status='forbidden', note='测试')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    assert page.entry_table.rowCount() == 1
+    assert page.entry_table.item(0, 1).text() == '云'
+    assert page.glossary_save_btn.isEnabled()
+    assert page.glossary_close_btn.isEnabled()
+    assert page.glossary_path_label.text() == str(path)
+    page.cleanup()
+
+
+def test_open_glossary_missing_header_shows_error_not_crash(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'bad.csv'
+    path.write_text('foo,bar\ncloud,云\n', encoding='utf-8')
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    assert '打开失败' in page.log.toPlainText()
+    assert page.entry_table.rowCount() == 0
+
+
+def test_save_as_writes_file_and_enables_buttons(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary.csv'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云', status='forbidden', note='测试')]
+    page._save_glossary_as()
+
+    assert out.exists()
+    back = glossary_module.read(str(out), 'en-US', 'zh-CN')
+    assert len(back) == 1
+    assert back[0].status == 'forbidden'
+    assert page.glossary_save_btn.isEnabled()
+    assert page.glossary_close_btn.isEnabled()
+    assert '已保存' in page.log.toPlainText()
+    page.cleanup()
+
+
+def test_save_without_a_path_yet_falls_back_to_save_as(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary.csv'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    # glossary_save_btn is disabled until a path exists (see the "starts
+    # disabled" test above), so a real .click() would be a no-op here --
+    # this exercises the fallback branch directly, the same defensive-
+    # guard testing approach qa_check's own "noop before any check" test
+    # uses for its equally-disabled export button.
+    page._save_glossary()
+
+    assert out.exists()
+    page.cleanup()
+
+
+def test_saving_twice_to_the_same_path_does_not_self_block(qtbot, monkeypatch, tmp_path):
+    # Regression coverage for write_around(): a second save to the same
+    # already-locked path must succeed, not deadlock against this page's
+    # own held lock.
+    out = tmp_path / 'glossary.csv'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._save_glossary_as()
+    page._entries.append(_entry('api', '接口'))
+    page._save_glossary()  # second save, same path, lock already held
+
+    back = glossary_module.read(str(out), 'en-US', 'zh-CN')
+    assert len(back) == 2
+    page.cleanup()
+
+
+# ----------------------------------------------------------------- check tab
+
+def test_check_empty_input_shows_validation_error(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_btn.click()
+    assert '请先选择要检查的翻译记忆库文件' in page.log.toPlainText()
+
+
+def test_check_missing_glossary_shows_validation_error(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('big data.', '大数据。')])
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_corpus_edit.setText(str(src))
+    page.check_btn.click()
+    assert '请先选择术语库文件' in page.log.toPlainText()
+
+
+def test_check_missing_file_shows_validation_error(qtbot, tmp_path):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_corpus_edit.setText(str(tmp_path / 'does-not-exist.tmx'))
+    page.check_glossary_edit.setText(str(tmp_path / 'also-missing.csv'))
+    page.check_btn.click()
+    assert '找不到翻译记忆库文件' in page.log.toPlainText()
+
+
+def test_export_before_any_check_is_a_silent_noop(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._start_export()
+    assert page.log.toPlainText() == ''
+
+
+def test_check_end_to_end_flags_forbidden_hit_and_enables_export(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('This is about big data.', '这是关于大资料的。'),
+                      _u('Clean sentence.', '干净的句子。')])
+    glossary_module.write(str(gloss), [_entry('big data', '大资料', status='forbidden', note='旧译名')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_corpus_edit.setText(str(src))
+    page.check_glossary_edit.setText(str(gloss))
+    assert not page.check_export_btn.isEnabled()
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    assert '检查完成' in page.log.toPlainText()
+    assert '共 2 条，1 条有术语问题（50.0%（禁用译法 1））' in page.check_summary_label.text()
+    assert page.check_export_btn.isEnabled()
+    assert page.check_table.rowCount() == 1  # hide_clean checked by default
+    assert 'big data→大资料（旧译名）' in page.check_table.item(0, 3).text()
+
+
+def test_check_approved_checkbox_off_by_default(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.check_approved_chk.isChecked() is False
+
+
+def test_check_with_approved_flag_flags_missing_preferred_translation(qtbot, tmp_path):
+    # Source term present, target reworded around the preferred term --
+    # only surfaces with 同时检查推荐译法未使用 ticked, and the hit cell
+    # labels it as a to-verify hint rather than a bare pair.
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('This is about big data.', '这是关于海量数据的。'),
+                      _u('Clean sentence.', '干净的句子。')])
+    glossary_module.write(str(gloss), [_entry('big data', '大数据', status='approved')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_corpus_edit.setText(str(src))
+    page.check_glossary_edit.setText(str(gloss))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    assert page.check_table.rowCount() == 0  # default off: approved stays unchecked
+
+    page.check_approved_chk.setChecked(True)
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    assert '共 2 条，1 条有术语问题（50.0%（未用推荐译法 1））' in page.check_summary_label.text()
+    assert page.check_table.rowCount() == 1
+    assert '未用推荐译法 big data→大数据' in page.check_table.item(0, 3).text()
+
+
+def test_check_hide_clean_checkbox_toggles_row_count(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('This is about big data.', '这是关于大资料的。'),
+                      _u('Clean sentence.', '干净的句子。')])
+    glossary_module.write(str(gloss), [_entry('big data', '大资料', status='forbidden')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_corpus_edit.setText(str(src))
+    page.check_glossary_edit.setText(str(gloss))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    assert page.check_table.rowCount() == 1
+    page.check_hide_clean_chk.setChecked(False)
+    assert page.check_table.rowCount() == 2
+
+
+def test_check_export_writes_csv_with_term_issues_column(qtbot, monkeypatch, tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    out = tmp_path / 'report.csv'
+    _write_tmx(src, [_u('This is about big data.', '这是关于大资料的。')])
+    glossary_module.write(str(gloss), [_entry('big data', '大资料', status='forbidden')])
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_corpus_edit.setText(str(src))
+    page.check_glossary_edit.setText(str(gloss))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+
+    page._start_export()
+    qtbot.waitUntil(lambda: page.check_export_btn.isEnabled(), timeout=5000)
+
+    assert out.exists()
+    content = out.read_text(encoding='utf-8-sig')
+    assert 'term_issues' in content
+    assert 'big data->大资料' in content
+    assert '已导出到' in page.log.toPlainText()
+
+
+def test_check_export_report_writes_html_with_hit_table(qtbot, monkeypatch, tmp_path):
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('This is about big data.', '这是关于大资料的。'),
+                      _u('Clean sentence.', '干净的句子。')])
+    glossary_module.write(str(gloss), [_entry('big data', '大资料', status='forbidden')])
+    out = tmp_path / 'report.html'
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert not page.check_export_report_btn.isEnabled()
+    page.check_corpus_edit.setText(str(src))
+    page.check_glossary_edit.setText(str(gloss))
+    page.check_btn.click()
+    qtbot.waitUntil(lambda: page.check_btn.isEnabled(), timeout=5000)
+    assert page.check_export_report_btn.isEnabled()
+
+    monkeypatch.setattr(
+        QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), 'HTML (*.html)'))
+    page.check_export_report_btn.click()
+
+    assert '已导出报告到' in page.log.toPlainText()
+    content = out.read_text(encoding='utf-8')
+    assert '<title>Term-Consistency Check</title>' in content
+    assert 'big data' in content and '大资料' in content
+
+
+def test_check_export_report_before_any_check_is_a_silent_noop(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._start_export_report()
+    assert page.log.toPlainText() == ''
+
+
+# ------------------------------------------------------------ dirty tracking
+
+def test_page_starts_clean(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.has_unsaved_changes() is False
+
+
+def test_add_entry_marks_dirty(qtbot, monkeypatch):
+    def fake_exec(self):
+        self.src_term_edit.setText('cloud')
+        self.tgt_term_edit.setText('云')
+        return QDialog.Accepted
+    monkeypatch.setattr(_TermEntryDialog, 'exec', fake_exec)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._add_entry()
+    assert page.has_unsaved_changes() is True
+
+
+def test_edit_entry_marks_dirty(qtbot, monkeypatch):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('big data', '大数据')]
+    page._refresh_entry_table()
+    page.entry_table.selectRow(0)
+
+    monkeypatch.setattr(_TermEntryDialog, 'exec',
+                         lambda self: (self.tgt_term_edit.setText('改过了'), QDialog.Accepted)[1])
+    page._edit_selected_entry()
+    assert page.has_unsaved_changes() is True
+
+
+def test_remove_entry_marks_dirty(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('a', 'A')]
+    page._refresh_entry_table()
+    page.entry_table.selectRow(0)
+    page._remove_selected_entries()
+    assert page.has_unsaved_changes() is True
+
+
+def test_open_glossary_resets_dirty(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+    # Dirty before opening now triggers the same save/discard/cancel
+    # prompt _close_glossary() uses (see the dedicated tests below for
+    # that prompt itself) -- Discard here to isolate this test's actual
+    # point, which is just that a clean open resets _dirty.
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Discard)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._dirty = True  # pretend there was unsaved work before opening a different file
+    page._open_glossary()
+    assert page.has_unsaved_changes() is False
+    page.cleanup()
+
+
+def test_open_glossary_with_unsaved_changes_prompts_and_cancel_keeps_state(qtbot, monkeypatch, tmp_path):
+    other_path = tmp_path / 'other.csv'
+    glossary_module.write(str(other_path), [_entry('api', '接口')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(other_path), ''))
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Cancel)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+    page._refresh_entry_table()
+
+    page._open_glossary()
+    # Cancelled at the prompt -- the other file must never have been loaded.
+    assert page.entry_table.rowCount() == 1
+    assert page.entry_table.item(0, 0).text() == 'cloud'
+    assert page._glossary_path is None
+    assert page.has_unsaved_changes() is True
+
+
+def test_open_glossary_with_unsaved_changes_discard_loads_the_new_file(qtbot, monkeypatch, tmp_path):
+    other_path = tmp_path / 'other.csv'
+    glossary_module.write(str(other_path), [_entry('api', '接口')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(other_path), ''))
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Discard)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+    page._refresh_entry_table()
+
+    page._open_glossary()
+    assert page.entry_table.rowCount() == 1
+    assert page.entry_table.item(0, 0).text() == 'api'  # the unsaved 'cloud' entry is gone
+    assert page._glossary_path == str(other_path)
+    assert page.has_unsaved_changes() is False
+    page.cleanup()
+
+
+def test_open_glossary_with_unsaved_changes_save_writes_old_file_then_loads_new_one(
+        qtbot, monkeypatch, tmp_path):
+    old_path = tmp_path / 'old.csv'
+    other_path = tmp_path / 'other.csv'
+    glossary_module.write(str(other_path), [_entry('api', '接口')])
+    monkeypatch.setattr(QMessageBox, 'exec', lambda self: QMessageBox.Save)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._glossary_path = str(old_path)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(other_path), ''))
+    page._open_glossary()
+
+    # The old (unsaved) glossary got written to disk before switching...
+    old_back = glossary_module.read(str(old_path), 'en-US', 'zh-CN')
+    assert len(old_back) == 1
+    assert old_back[0].src_term == 'cloud'
+    # ...and the new file is now the one loaded.
+    assert page._glossary_path == str(other_path)
+    assert page.entry_table.item(0, 0).text() == 'api'
+    page.cleanup()
+
+
+def test_save_resets_dirty(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary.csv'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+    page._save_glossary_as()
+    assert page.has_unsaved_changes() is False
+    page.cleanup()
+
+
+def test_unsaved_changes_label(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.unsaved_changes_label() == '术语管理'
+
+
+# -------------------------------------------------- save_unsaved_changes()
+
+def test_save_unsaved_changes_is_noop_when_clean(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.save_unsaved_changes() is True
+
+
+def test_save_unsaved_changes_writes_to_existing_path(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    page._entries.append(_entry('cloud', '云'))
+    page._dirty = True
+
+    assert page.save_unsaved_changes() is True
+    assert page.has_unsaved_changes() is False
+    back = glossary_module.read(str(path), 'en-US', 'zh-CN')
+    assert len(back) == 1
+    page.cleanup()
+
+
+def test_save_unsaved_changes_prompts_for_path_when_none_yet(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary.csv'
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+
+    assert page.save_unsaved_changes() is True
+    assert out.exists()
+    page.cleanup()
+
+
+def test_save_unsaved_changes_returns_false_when_save_dialog_cancelled(qtbot, monkeypatch):
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: ('', ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._dirty = True
+
+    assert page.save_unsaved_changes() is False
+    assert page.has_unsaved_changes() is True  # still dirty, nothing was lost
+
+
+# --------------------------------------------------------------- file locking
+
+def test_open_glossary_shows_warning_when_office_marker_present(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    (tmp_path / ('~$%s' % path.name)).write_bytes(b'')
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *a, **kw: QMessageBox.Cancel)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    # Cancelled at the warning -- must not actually load the file.
+    assert page.entry_table.rowCount() == 0
+    assert page._glossary_path is None
+
+
+def test_open_glossary_proceeds_past_office_marker_warning_if_confirmed(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    (tmp_path / ('~$%s' % path.name)).write_bytes(b'')
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+    monkeypatch.setattr(QMessageBox, 'warning', lambda *a, **kw: QMessageBox.Yes)
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    assert page.entry_table.rowCount() == 1
+    page.cleanup()
+
+
+def test_open_glossary_fails_when_already_locked_by_another_process(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    other = FileLock(str(path))
+    other.acquire()
+    try:
+        monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+        page = TermManagementPage()
+        qtbot.addWidget(page)
+        page._open_glossary()
+        assert page.entry_table.rowCount() == 0
+        assert page._file_lock is None
+        assert '占用' in page.log.toPlainText()
+    finally:
+        other.release()
+
+
+def test_open_glossary_acquires_lock_and_cleanup_releases_it(qtbot, monkeypatch, tmp_path):
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    assert page._file_lock is not None
+
+    # While our lock is held, a second attempt from elsewhere must fail --
+    # this is the point of holding it in the first place (and, on
+    # Windows -- see filelock.py's docstring -- is what would actually
+    # give WPS/Office a chance to notice too, not just another instance
+    # of this tool as tested here).
+    other = FileLock(str(path))
+    with pytest.raises(OSError):
+        other.acquire()
+
+    page.cleanup()
+    assert page._file_lock is None
+    # Released now, so someone else (or a re-open) can acquire it.
+    other.acquire()
+    other.release()
+
+
+def test_open_a_different_glossary_releases_the_previous_lock(qtbot, monkeypatch, tmp_path):
+    path_a = tmp_path / 'a.csv'
+    path_b = tmp_path / 'b.csv'
+    glossary_module.write(str(path_a), [_entry('cloud', '云')])
+    glossary_module.write(str(path_b), [_entry('api', '接口')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path_a), ''))
+    page._open_glossary()
+
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path_b), ''))
+    page._open_glossary()
+
+    # path_a's lock should be free again -- it was released when path_b opened.
+    a_lock = FileLock(str(path_a))
+    a_lock.acquire()
+    a_lock.release()
+    page.cleanup()
+
+
+def test_save_as_to_new_path_transfers_the_lock(qtbot, monkeypatch, tmp_path):
+    path_a = tmp_path / 'a.csv'
+    path_b = tmp_path / 'b.csv'
+    glossary_module.write(str(path_a), [_entry('cloud', '云')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path_a), ''))
+    page._open_glossary()
+
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(path_b), ''))
+    page._save_glossary_as()
+
+    # a's lock released, b's lock now held.
+    a_lock = FileLock(str(path_a))
+    a_lock.acquire()
+    a_lock.release()
+    with pytest.raises(OSError):
+        FileLock(str(path_b)).acquire()
+    page.cleanup()
+
+
+def test_reopening_the_same_already_open_file_does_not_self_block(qtbot, monkeypatch, tmp_path):
+    # Regression test: acquiring a second FileLock on a path this page
+    # already holds one for would incorrectly fail (Windows mandatory
+    # locking -- and, for what it's worth, this project's own POSIX
+    # fallback via flock -- denies a second lock from the same process),
+    # so re-opening the currently-open file to discard local edits and
+    # reload from disk must not try to acquire a new lock at all.
+    path = tmp_path / 'glossary.csv'
+    glossary_module.write(str(path), [_entry('cloud', '云')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileName', lambda *a, **kw: (str(path), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._open_glossary()
+    assert page.entry_table.rowCount() == 1
+
+    page._entries.append(_entry('extra', '额外'))
+    page._refresh_entry_table()
+    assert page.entry_table.rowCount() == 2
+
+    page._open_glossary()  # reload from disk, discarding the in-memory addition
+    assert page.entry_table.rowCount() == 1  # back to what's on disk
+    assert page.has_unsaved_changes() is False
+    page.cleanup()
+
+
+# ---------------------------------------------------- split save-format filter
+
+def test_save_as_defaults_to_csv_when_filter_unselected(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary'  # no extension typed
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName', lambda *a, **kw: (str(out), ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._save_glossary_as()
+
+    assert (tmp_path / 'glossary.csv').exists()
+    page.cleanup()
+
+
+def test_save_as_uses_xlsx_extension_when_that_filter_is_selected(qtbot, monkeypatch, tmp_path):
+    out = tmp_path / 'glossary'  # no extension typed
+    monkeypatch.setattr(QFileDialog, 'getSaveFileName',
+                         lambda *a, **kw: (str(out), 'Excel (*.xlsx)'))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._entries = [_entry('cloud', '云')]
+    page._save_glossary_as()
+
+    assert (tmp_path / 'glossary.xlsx').exists()
+    page.cleanup()
+
+
+# ------------------------------------------------------------- settings
+
+def test_restore_settings_defaults_when_nothing_saved_yet(qtbot):
+    from toolbox.widgets import lang_combo_code
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.restore_settings()
+    assert lang_combo_code(page.glossary_src_lang) == 'en-US'
+    assert lang_combo_code(page.glossary_tgt_lang) == 'zh-CN'
+    assert page.check_hide_clean_chk.isChecked() is True
+    assert page.check_approved_chk.isChecked() is False
+    assert page._last_dir == ''
+
+
+def test_save_then_restore_settings_round_trips(qtbot):
+    from toolbox.widgets import lang_combo_code
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.glossary_src_lang.setEditText('ja-JP')
+    page.glossary_tgt_lang.setEditText('ko-KR')
+    page.check_hide_clean_chk.setChecked(False)
+    page.check_approved_chk.setChecked(True)
+    page._last_dir = '/some/folder'
+    page.save_settings()
+
+    fresh = TermManagementPage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert lang_combo_code(fresh.glossary_src_lang) == 'ja-JP'
+    assert lang_combo_code(fresh.glossary_tgt_lang) == 'ko-KR'
+    assert fresh.check_hide_clean_chk.isChecked() is False
+    assert fresh.check_approved_chk.isChecked() is True
+    assert fresh._last_dir == '/some/folder'
+
+
+def test_cleanup_waits_for_running_check_instead_of_crashing(qtbot, tmp_path):
+    """Regression test: closing the window while a consistency check is
+    still running used to destroy a live QThread -- and this page had
+    already implemented ``cleanup()`` for its file lock (see that
+    method's docstring), which is exactly why its own two workers had
+    been missed until now. Calling ``cleanup()`` right after
+    ``check_btn.click()``, with no wait in between, reproduces that race
+    deliberately instead of relying on timing luck.
+    """
+    src = tmp_path / 'in.tmx'
+    gloss = tmp_path / 'glossary.csv'
+    _write_tmx(src, [_u('Clean sentence.', '干净的句子。')])
+    glossary_module.write(str(gloss), [_entry('big data', '大资料', status='forbidden')])
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.check_corpus_edit.setText(str(src))
+    page.check_glossary_edit.setText(str(gloss))
+    page.check_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-check
+    qtbot.wait(50)  # cleanup() only waits for the thread; let its queued
+                     # finished_ok signal actually reach its slot too
+
+    assert page._check_worker.isFinished()
+    assert '检查完成' in page.log.toPlainText()
+
+
+# -------------------------------------------------------------- extract tab
+
+def test_extract_tab_starts_with_promote_disabled(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    assert page.extract_table.rowCount() == 0
+    assert not page.extract_promote_btn.isEnabled()
+
+
+def test_add_extract_inputs_via_dialog(qtbot, monkeypatch, tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('hello', '你好')])
+    _write_tmx(b, [_u('bye', '再见')])
+    monkeypatch.setattr(QFileDialog, 'getOpenFileNames',
+                         lambda *args, **kw: ([str(a), str(b)], ''))
+
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._add_extract_inputs()
+    assert page._extract_inputs == [str(a), str(b)]
+    assert page.extract_input_list.count() == 2
+
+    # adding the same file again is a no-op, not a duplicate
+    monkeypatch.setattr(QFileDialog, 'getOpenFileNames', lambda *args, **kw: ([str(a)], ''))
+    page._add_extract_inputs()
+    assert page._extract_inputs == [str(a), str(b)]
+    assert page.extract_input_list.count() == 2
+
+
+def test_remove_selected_extract_inputs(qtbot, tmp_path):
+    a = tmp_path / 'a.tmx'
+    _write_tmx(a, [_u('hello', '你好')])
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_inputs = [str(a)]
+    page.extract_input_list.addItem(str(a))
+    page.extract_input_list.selectAll()
+    page._remove_selected_extract_inputs()
+    assert page._extract_inputs == []
+    assert page.extract_input_list.count() == 0
+
+
+def test_start_extract_with_no_inputs_shows_error(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._start_extract()
+    assert '请先添加' in page.log.toPlainText()
+
+
+def test_extract_end_to_end_populates_table_unchecked_and_enables_promote(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [
+        _u('Click OK to continue with the installation.', '点击确定以继续安装过程。'),
+        _u('Click OK to proceed.', '点击确定以继续。'),
+        _u('The installation wizard will now close.', '安装向导现在将会关闭。'),
+        _u('Click OK to confirm the installation.', '点击确定以确认安装。'),
+        _u('Please wait while the installation completes.', '请稍候，安装正在完成。'),
+    ])
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_inputs = [str(src)]
+    page.extract_input_list.addItem(str(src))
+    page.extract_min_freq_spin.setValue(2)
+    page.extract_max_ngram_spin.setValue(4)
+    page.extract_min_pair_freq_spin.setValue(2)
+
+    page.extract_btn.click()
+    qtbot.waitUntil(lambda: page.extract_btn.isEnabled(), timeout=5000)
+
+    assert '提取完成' in page.log.toPlainText()
+    assert page.extract_table.rowCount() > 0
+    assert page.extract_promote_btn.isEnabled()
+    # nothing pre-checked -- see _build_extract_tab()'s docstring
+    for row in range(page.extract_table.rowCount()):
+        assert page.extract_table.item(row, 0).checkState() == Qt.Unchecked
+
+    texts = [page.extract_table.item(row, 1).text() for row in range(page.extract_table.rowCount())]
+    assert 'Click OK' in texts
+
+
+def test_promote_with_nothing_checked_shows_error(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_candidates = [{'src_term': 'foo', 'tgt_term': '', 'src_freq': 1,
+                                  'pair_freq': 0, 'concentration': 0.0}]
+    page._refresh_extract_table()
+    page._promote_extract_selection()
+    assert '请先勾选' in page.log.toPlainText()
+    assert page._entries == []
+
+
+def test_promote_checked_row_with_blank_translation_is_rejected(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_candidates = [{'src_term': 'foo', 'tgt_term': '', 'src_freq': 1,
+                                  'pair_freq': 0, 'concentration': 0.0}]
+    page._refresh_extract_table()
+    page.extract_table.item(0, 0).setCheckState(Qt.Checked)
+    page._promote_extract_selection()
+    assert '译文建议为空' in page.log.toPlainText()
+    assert page._entries == []
+    assert not page._dirty
+
+
+def test_promote_checked_rows_appends_to_glossary_and_marks_dirty(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_candidates = [
+        {'src_term': 'click ok', 'tgt_term': '点击确定', 'src_freq': 3,
+         'pair_freq': 3, 'concentration': 1.67},
+        {'src_term': 'installation', 'tgt_term': '', 'src_freq': 4,
+         'pair_freq': 0, 'concentration': 0.0},
+    ]
+    page._refresh_extract_table()
+    page.extract_table.item(0, 0).setCheckState(Qt.Checked)
+    page.extract_table.item(0, 3).setText('localization')  # domain
+    page.extract_table.item(0, 4).setText('extracted')     # note
+
+    page._promote_extract_selection()
+
+    assert page._dirty is True
+    assert len(page._entries) == 1
+    entry = page._entries[0]
+    assert entry.src_term == 'click ok'
+    assert entry.tgt_term == '点击确定'
+    assert entry.status == 'approved'
+    assert entry.status_declared is True
+    assert entry.domain == 'localization'
+    assert entry.note == 'extracted'
+    assert entry.src_lang == lang_combo_code(page.glossary_src_lang)
+    assert '已提升 1 条' in page.log.toPlainText()
+    # promoted row's checkbox resets so it can't be double-promoted by accident
+    assert page.extract_table.item(0, 0).checkState() == Qt.Unchecked
+    # 术语库 tab's own table reflects the promotion immediately
+    assert page.entry_table.rowCount() == 1
+
+
+def test_promote_allows_editing_the_suggested_translation_before_approving(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_candidates = [
+        {'src_term': 'foo', 'tgt_term': 'bar', 'src_freq': 2, 'pair_freq': 2,
+         'concentration': 5.0},
+    ]
+    page._refresh_extract_table()
+    page.extract_table.item(0, 0).setCheckState(Qt.Checked)
+    page.extract_table.item(0, 2).setText('corrected translation')
+    page._promote_extract_selection()
+    assert page._entries[0].tgt_term == 'corrected translation'
+
+
+def test_extract_settings_round_trip(qtbot):
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page.extract_min_freq_spin.setValue(5)
+    page.extract_max_ngram_spin.setValue(6)
+    page.extract_top_n_spin.setValue(50)
+    page.extract_min_pair_freq_spin.setValue(3)
+    page.save_settings()
+
+    fresh = TermManagementPage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    assert fresh.extract_min_freq_spin.value() == 5
+    assert fresh.extract_max_ngram_spin.value() == 6
+    assert fresh.extract_top_n_spin.value() == 50
+    assert fresh.extract_min_pair_freq_spin.value() == 3
+
+
+def test_cleanup_waits_for_running_extract_instead_of_crashing(qtbot, tmp_path):
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('hello there', '你好')])
+    page = TermManagementPage()
+    qtbot.addWidget(page)
+    page._extract_inputs = [str(src)]
+    page.extract_input_list.addItem(str(src))
+    page.extract_btn.click()
+    page.cleanup()  # simulates closeEvent() landing mid-extraction
+    qtbot.wait(50)
+    assert page._extract_worker.isFinished()

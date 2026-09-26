@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+
+env:
+  # GUI tests (pytest-qt) run headless everywhere -- same convention as
+  # local development on this repo.
+  QT_QPA_PLATFORM: offscreen
+
+jobs:
+  test:
+    name: ${{ matrix.os }} py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.10', '3.12', '3.13']
+        exclude:
+          # Windows only needs one Python version as a platform-behavior canary
+          # (sdltm involves sqlite file locks + path separators, which is
+          # exactly what a Linux-only run cannot catch); running all three
+          # versions there would triple wall-clock time for no extra
+          # platform coverage.
+          - os: windows-latest
+            python-version: '3.10'
+          - os: windows-latest
+            python-version: '3.12'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install Qt system libraries
+        # pytest-qt imports QtGui at pytest_configure time, so a missing
+        # libEGL/libGL aborts the whole session (pytest exit 3) before any
+        # test runs -- offscreen does not remove that load-time dependency.
+        # The runner's apt cache is stale, so update first.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libopengl0 libdbus-1-3 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libxkbcommon0 libfontconfig1
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,gui,reports]"
+      - name: Test (3x -- flakiness check, a pass only counts if it repeats)
+        # --deselect: the packaging spec test imports PyInstaller via
+        # importorskip, so in this matrix it would surface as an
+        # "environmental skip" every run; the dedicated `packaging` job
+        # owns that coverage instead, so exclude it explicitly here.
+        # shell must be pinned: the Windows runner otherwise defaults to pwsh
+        # and fails to parse the POSIX `for ... do` loop below.
+        shell: bash
+        run: |
+          for i in 1 2 3; do
+            echo "::group::pytest run $i/3"
+            pytest -q --deselect tests/test_packaging_spec.py
+            echo "::endgroup::"
+          done
+
+  packaging:
+    name: packaging spec (ubuntu py3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install Qt system libraries
+        # Same reason as in the `test` job: this job's pytest session also
+        # loads pytest-qt, so it needs libEGL/libGL present on Linux.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libopengl0 libdbus-1-3 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libxkbcommon0 libfontconfig1
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,gui,reports]"
+          pip install "pyinstaller>=6"
+      - name: Test packaging spec
+        run: pytest -q tests/test_packaging_spec.py
+
+  smoke:
+    name: CLI smoke (biconvert -> tmtool chain)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,gui,reports]"
+      - name: End-to-end CLI over fixtures
+        # CLI-level regression net: pytest covers functions, this covers
+        # the installed entry points (biconvert/tmtool) and their argument
+        # plumbing actually working end to end on real fixture files.
+        run: |
+          set -e
+          mkdir -p smoke
+          biconvert tests/fixtures/docx/table_layout.docx -o smoke/out \
+            --src en-US --tgt zh-CN --layout table
+          test -s smoke/out.sdltm && test -s smoke/out.tmx && test -s smoke/out.csv
+          tmtool clean smoke/out.tmx -o smoke/cleaned.tmx
+          tmtool merge smoke/out.sdltm smoke/cleaned.tmx -o smoke/merged.tmx --strategy prefer-last
+          tmtool stats smoke/merged.tmx
+          tmtool qa smoke/merged.tmx
+          tmtool compare smoke/out.tmx smoke/cleaned.tmx

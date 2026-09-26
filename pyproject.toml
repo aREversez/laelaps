@@ -1,0 +1,33 @@
+[project]
+name = "laelaps"
+version = "0.1.0"
+description = "Language management toolbox: bilingual document <-> translation-memory corpus conversion (docx/xlsx/csv <-> sdltm/tmx) as the first tool, with more planned. Ships both a library/CLI and a native desktop GUI (PySide6)."
+requires-python = ">=3.10"
+dependencies = ["openpyxl>=3.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-qt>=4", "pytest-timeout>=2", "reportlab>=4"]
+gui = ["PySide6>=6.5"]
+reports = ["reportlab>=4"]
+
+[project.scripts]
+biconvert = "language_tools.cli:main"
+tmtool = "language_tools.tm_cli:main"
+language-toolbox = "toolbox.main:main"
+
+[tool.pytest.ini_options]
+# No test here should ever hang (file-lock/sdltm/sqlite paths are the
+# plausible candidates) -- 120s is generous headroom over the slowest
+# suite of tests, well under any CI job timeout, so a hang fails loudly
+# with a traceback instead of stalling the job until GitHub kills it.
+addopts = "--timeout=120"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["language_tools*", "toolbox*"]
+
+[tool.setuptools.package-data]
+"toolbox" = ["resources/*.qss", "resources/*.svg", "resources/icons/*"]

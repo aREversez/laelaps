@@ -1,0 +1,166 @@
+"""``biconvert`` -- thin CLI wrapper over ``language_tools.api.convert()``.
+
+Per DESIGN.md section 12: the CLI contains no pipeline logic of its own,
+only argument parsing and translating flags into a ``convert()`` call, so
+a future GUI can reuse exactly the same behavior (including the
+``min_confidence`` export filter, which deliberately lives in ``api.py``
+rather than here for that reason).
+"""
+import argparse
+import os
+import sys
+import zipfile
+from xml.etree import ElementTree
+
+from language_tools import api
+
+_BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
+_ALL_FORMATS = ('sdltm', 'tmx', 'csv')
+# jsonl is opt-in only (--to jsonl), never part of the default bundle above:
+# it's a training-data export, not something every conversion should start
+# emitting by default just because this format got added later.
+_TO_CHOICES = _ALL_FORMATS + ('jsonl',)
+
+
+def bounded_confidence(raw):
+    """argparse type= for --min-confidence: rejects out-of-[0,1] values at
+    parse time with a clear error, instead of silently accepting e.g. 1.5
+    and having it behave the same as 1.0 (or worse, being misread as "no
+    filtering" by someone assuming it's a percentage).
+    """
+    value = float(raw)
+    if not 0.0 <= value <= 1.0:
+        raise argparse.ArgumentTypeError('--min-confidence must be between 0 and 1, got %r' % raw)
+    return value
+
+
+def build_parser():
+    p = argparse.ArgumentParser(
+        prog='biconvert',
+        description='Convert bilingual files (docx/xlsx/csv/tsv) to translation-memory '
+                    'corpus formats (sdltm/tmx/csv), or convert between corpus formats '
+                    '(tmx<->sdltm). A jsonl training-data export is also available via '
+                    '--to jsonl (opt-in, not part of the default bundle).')
+    p.add_argument('input', help='input file path')
+    p.add_argument('-o', '--output',
+                    help='output path or basename. A bare basename writes every requested '
+                         'format under it (e.g. "out" -> out.sdltm, out.tmx, out.csv); a '
+                         'path ending in .sdltm/.tmx/.csv writes only that one format unless '
+                         '--to is also given. Default: derived from the input filename.')
+    p.add_argument('--to', action='append', choices=list(_TO_CHOICES),
+                    help='output format to write; repeatable (e.g. --to tmx --to csv). '
+                         'Default: sdltm, tmx, and csv all together (jsonl is opt-in only, '
+                         'for LLM/MT training data -- pass --to jsonl explicitly to get it).')
+    p.add_argument('--src', help='source language code, e.g. en-US. Required for docx/xlsx/'
+                                  'csv/tsv input; inferred from the file for tmx/sdltm input.')
+    p.add_argument('--tgt', help='target language code, e.g. zh-CN. Same rules as --src.')
+    p.add_argument('--layout', choices=['auto', 'numbered', 'table', 'alternating'], default='auto',
+                    help='docx layout; ignored for non-docx input. Default: auto-detect.')
+    p.add_argument('--sheet', help='xlsx sheet name (default: first sheet)')
+    p.add_argument('--src-col', help='source column: Excel letter (xlsx) or 0-based index (docx table/csv)')
+    p.add_argument('--tgt-col', help='target column: Excel letter (xlsx) or 0-based index (docx table/csv)')
+    p.add_argument('--delimiter', help='csv/tsv delimiter override (default: auto-sniffed)')
+    header = p.add_mutually_exclusive_group()
+    header.add_argument('--header', dest='header', action='store_true', default=None,
+                        help='treat the first row as a header (xlsx/csv/docx table)')
+    header.add_argument('--no-header', dest='header', action='store_false',
+                        help='treat the first row as data, not a header')
+    p.add_argument('--repair', metavar='PATH', help='path to a repairs.json rule file')
+    p.add_argument('--name', help='translation memory name for sdltm output '
+                                  '(default: derived from the input filename)')
+    p.add_argument('--qa', action='store_true',
+                    help='run the QA layer and add confidence/status/issues columns to the CSV')
+    p.add_argument('--min-confidence', type=bounded_confidence, default=0.0, metavar='0..1',
+                    help='exclude units below this QA confidence from sdltm/tmx output '
+                         '(the CSV always lists everything, filtered or not); implies --qa')
+    return p
+
+
+def _build_reader_opts(args, ext):
+    opts = {}
+    if ext == '.docx' and args.layout != 'auto':
+        opts['layout'] = args.layout
+    if args.sheet:
+        opts['sheet'] = args.sheet
+    is_xlsx = ext in ('.xlsx', '.xlsm')
+    if args.src_col is not None:
+        opts['src_col' if is_xlsx else 'src_col_index'] = args.src_col if is_xlsx else int(args.src_col)
+    if args.tgt_col is not None:
+        opts['tgt_col' if is_xlsx else 'tgt_col_index'] = args.tgt_col if is_xlsx else int(args.tgt_col)
+    if args.delimiter:
+        opts['delimiter'] = args.delimiter
+    if args.header is not None:
+        opts['header'] = args.header
+    return opts
+
+
+def _resolve_output(input_path, output, to_formats):
+    """Returns (output_base, formats). A single-format extension on -o
+    (e.g. -o out.tmx, or -o out.jsonl) selects that one format unless
+    --to already did."""
+    if not output:
+        return os.path.splitext(input_path)[0], to_formats or _ALL_FORMATS
+    root, ext = os.path.splitext(output)
+    fmt = ext.lstrip('.').lower()
+    if fmt in _TO_CHOICES and not to_formats:
+        return root, (fmt,)
+    return output, to_formats or _ALL_FORMATS
+
+
+def setup_console_encoding():
+    """Force UTF-8 on the CLI's own stdout/stderr.
+
+    Both entry points print target-side text (align's summary line carries
+    labels like '1:1 (一一对应)', biconvert echoes source/target language
+    codes), but a Windows console defaults to the system code page, where
+    CJK raises UnicodeEncodeError and the command dies with a traceback.
+    UTF-8 is the only encoding this corpus work ever wants, so there is
+    nothing to preserve from the locale default. Reconfigured in place --
+    never replaced -- so anything already holding sys.stdout keeps working.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError, OSError):
+            # Redirected/closed/undecorated stream: leave it alone, the
+            # caller's own encoding wins.
+            pass
+
+
+def main(argv=None):
+    setup_console_encoding()
+    args = build_parser().parse_args(argv)
+    ext = os.path.splitext(args.input)[1].lower()
+
+    if ext in _BILINGUAL_EXTS and (not args.src or not args.tgt):
+        build_parser().error('--src and --tgt are required for %s input' % ext)
+
+    output_base, formats = _resolve_output(args.input, args.output, tuple(args.to) if args.to else None)
+
+    try:
+        # _build_reader_opts parses --src-col/--tgt-col via int(); a non-numeric
+        # value raises ValueError, so it has to sit inside the guard too --
+        # otherwise a bad column flag spills a raw traceback instead of the
+        # one-line 'error: ...' message the rest of the CLI is careful to give.
+        reader_opts = _build_reader_opts(args, ext)
+        result = api.convert(
+            args.input, output_base, src_lang=args.src, tgt_lang=args.tgt,
+            repair_path=args.repair, name=args.name, formats=formats,
+            reader_opts=reader_opts, qa=args.qa, min_confidence=args.min_confidence,
+        )
+    except (ValueError, FileNotFoundError, zipfile.BadZipFile, ElementTree.ParseError) as e:
+        # A corrupt/mis-shaped input (e.g. a fake .docx that isn't really a zip,
+        # or malformed XML) surfaces as a low-level reader exception; report it
+        # as a clean one-line error rather than a full-screen traceback.
+        print('error: %s' % e, file=sys.stderr)
+        return 1
+
+    print('Units=%d Exported=%d LengthRatio=%.3f' %
+          (result['units'], result['exported'], result['length_ratio']))
+    for fmt, count in result['written'].items():
+        print('Wrote %s.%s (%d units)' % (output_base, fmt, count))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

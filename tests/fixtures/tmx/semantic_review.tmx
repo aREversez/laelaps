@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tmx version="1.4">
+  <header creationtool="hand-written-fixture" creationtoolversion="1.0" o-tmf="TMX"
+          adminlang="en-US" srclang="en-US" datatype="unknown" segtype="sentence"
+          creationdate="20260101T000000Z" creationid="fixture"/>
+  <body>
+    <!-- tu 1: ordinary pair; the stub reviewer (tests/semantic_stub.py)
+         must stay silent on it. -->
+    <tu creationdate="20260101T000000Z" creationid="fixture">
+      <tuv xml:lang="en-US"><seg>The system is ready.</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>系统已准备就绪。</seg></tuv>
+    </tu>
+
+    <!-- tu 2: source and target literally identical; the stub reviewer's
+         SEM_SUSPECT_IDENTICAL hit. No rule-check issue fires on it (the
+         texts differ only by being untranslated), so qa_issues and
+         semantic_issues can be told apart cleanly in the exported CSV. -->
+    <tu creationdate="20260101T000000Z" creationid="fixture">
+      <tuv xml:lang="en-US"><seg>A B C</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>A B C</seg></tuv>
+    </tu>
+
+    <!-- tu 3: deliberate mistranslated number; fires the rule check's
+         NUMBER_MISMATCH while staying silent for the stub reviewer, the
+         mirror image of tu 2. -->
+    <tu creationdate="20260101T000000Z" creationid="fixture">
+      <tuv xml:lang="en-US"><seg>There are 5 apples.</seg></tuv>
+      <tuv xml:lang="zh-CN"><seg>有3个苹果。</seg></tuv>
+    </tu>
+  </body>
+</tmx>

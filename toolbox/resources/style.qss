@@ -1,0 +1,384 @@
+/* language-tools desktop toolbox stylesheet.
+ * Design tokens (documented in DESIGN.md section 13 for reuse by future
+ * tools -- keep this file as the single source of truth, don't hardcode
+ * these colors again in a new tool's page.py):
+ *   ink       #1A1D23   primary text
+ *   slate     #6B7280   secondary text / muted labels
+ *   paper     #F6F7F9   app background
+ *   surface   #FFFFFF   panels / input fields
+ *   hairline  #E3E6EB   borders / dividers
+ *   indigo    #2E4374   the one accent -- primary actions, selection, focus
+ *   success   #2F855A / danger #B23B3B -- semantic only, not decorative
+ *
+ * Elevation (added 2026-09,修订了 DESIGN.md §13 早先"完全不用阴影"的
+ * 决策): ONE light shadow -- ink at 6-10% alpha, 2-3px offset, <=14px
+ * blur -- reserved for exactly two things: each tool page's content
+ * card (QWidget#pageCard, applied in widgets.page_shell()) and a
+ * home-page tile while hovered (home/page.py _set_lifted()). Shadows
+ * live in QGraphicsDropShadowEffect calls, not this file (QSS has no
+ * box-shadow); everything else stays flat + hairline. Do not add
+ * shadow to inputs, buttons, tables, or tab panes.
+ */
+
+/* The app background (paper) is painted on the main window's central
+ * widget (QWidget#centralWidget, a plain QWidget -- see main_window.py),
+ * NOT on QMainWindow: a stylesheet background on QMainWindow does not
+ * reach its central area on Windows, which left every transparent child
+ * rendering black. QDialog/QMessageBox are top-level and paint their own.
+ * Every other child QWidget is transparent by default and shows whatever
+ * it sits on -- the paper central widget, or a white surface (page card,
+ * sidebar panel, tab pane) where one opts in. Painting #F6F7F9 on the
+ * bare `QWidget` selector instead used to be invisible (everything shared
+ * paper) but turned into gray blocks behind every section()/row container
+ * once those started living on the white page card. Specific surfaces
+ * below set their own background explicitly. */
+QMainWindow, QDialog, QMessageBox {
+    background: #F6F7F9;
+}
+QWidget#centralWidget {
+    background: #F6F7F9;
+}
+QWidget {
+    background: transparent;
+    color: #1A1D23;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
+    font-size: 13px;
+}
+
+/* Dropdown/menu popups are their own top-level surfaces -- they need a
+ * real background now that QWidget no longer supplies one. */
+QComboBox QAbstractItemView, QMenu {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 6px;
+    padding: 4px;
+    selection-background-color: #EAEEF6;
+    selection-color: #2E4374;
+    outline: 0;
+}
+
+/* ---------------------------------------------------------------- sidebar */
+QWidget#sidebarPanel {
+    background: #FFFFFF;
+    border-right: 1px solid #E3E6EB;
+}
+QListWidget#sidebar {
+    background: #FFFFFF;
+    border: none;
+    padding: 6px 8px;
+    outline: 0;
+}
+QListWidget#sidebar::item {
+    padding: 9px 12px;
+    border-radius: 8px;
+    margin: 2px 0;
+    color: #1A1D23;
+}
+QListWidget#sidebar::item:hover {
+    background: #F0F2F6;
+}
+QListWidget#sidebar::item:selected {
+    background: #EAEEF6;
+    color: #2E4374;
+    font-weight: 600;
+}
+/* Group section headers ("转换"/"检查"/...) -- non-selectable rows
+ * inserted by main_window._add_sidebar_section(). They are painted by
+ * _SidebarDelegate, NOT here: a QListWidget item is not a QWidget, so a
+ * ::item[role="section"] property selector would silently match nothing
+ * (an earlier revision of this file had exactly that dead rule). */
+
+QLabel#sidebarHeaderTitle {
+    font-size: 15px;
+    font-weight: 600;
+    color: #1A1D23;
+}
+QLabel#sidebarVersion {
+    color: #A6ACB6;
+    font-size: 11px;
+}
+
+/* -------------------------------------------------------- page skeleton */
+/* Shared by every tool page via toolbox.widgets.page_shell() -- the
+ * header labels and the one content card per page. Styling lives here
+ * (not inline setStyleSheet in page.py) per this file's own rule. */
+QLabel#pageTitle {
+    font-size: 20px;
+    font-weight: 600;
+    color: #1A1D23;
+}
+QLabel#pageSubtitle {
+    font-size: 13px;
+    color: #6B7280;
+}
+QWidget#pageCard {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 10px;
+}
+QScrollArea#pageScroll, QScrollArea#pageScroll > QWidget,
+QScrollArea#homeScroll, QScrollArea#homeScroll > QWidget {
+    background: transparent;
+    border: none;
+}
+
+/* ----------------------------------------------------------- home page */
+QWidget#homeTile {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 10px;
+}
+QWidget#homeTile:hover {
+    border: 1px solid #C6CFE2;
+    background: #FBFCFE;
+}
+QLabel#homeTileName {
+    font-size: 14px;
+    font-weight: 600;
+    color: #1A1D23;
+}
+QLabel#homeTileDesc {
+    font-size: 12px;
+    color: #6B7280;
+}
+
+/* ------------------------------------------------------------- sections */
+QLabel[role="sectionTitle"] {
+    font-size: 14px;
+    font-weight: 600;
+    color: #4B5262;
+}
+QLabel[role="fieldLabel"] {
+    color: #6B7280;
+    font-size: 12px;
+}
+QFrame[role="hairline"] {
+    background: #E3E6EB;
+    max-height: 1px;
+    min-height: 1px;
+    border: none;
+}
+
+/* ---------------------------------------------------------------- inputs */
+QLineEdit, QComboBox {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 6px;
+    padding: 6px 8px;
+    min-height: 20px;
+    selection-background-color: #2E4374;
+}
+QLineEdit:focus, QComboBox:focus {
+    border: 1px solid #2E4374;
+}
+QLineEdit:hover:!focus, QComboBox:hover:!focus {
+    border: 1px solid #C9CED6;
+}
+QComboBox::drop-down {
+    border: none;
+    width: 26px;
+}
+QComboBox::down-arrow {
+    image: url({ICONS_DIR}/chevron_down.svg);
+    width: 10px;
+    height: 6px;
+    margin-right: 10px;
+}
+QCheckBox {
+    spacing: 8px;
+    padding: 2px 0;
+}
+QCheckBox::indicator {
+    width: 16px;
+    height: 16px;
+}
+QCheckBox::indicator:unchecked {
+    image: url({ICONS_DIR}/checkbox_unchecked.svg);
+}
+QCheckBox::indicator:checked {
+    image: url({ICONS_DIR}/checkbox_checked.svg);
+}
+
+/* ------------------------------------------------------------------ tabs */
+/* The tab bar is styled as a standalone rounded "segmented control" that
+ * floats above the content card (its own full border box, its own
+ * background) rather than the traditional connected-notebook-tab look.
+ * The old style only gave the *selected* tab a box; the other two just
+ * sat on bare background with no border of their own, and pane's
+ * `top: -1px` tucked the pane in right under the tab bar so the pane's
+ * rounded top-left/top-right corners had to visually double as the tab
+ * row's corners too -- next to an unselected tab (no box) that reads as
+ * a border that just stops short exactly at the top-left. Two fully
+ * separate rounded boxes with a real gap between them sidesteps that:
+ * neither one depends on the other for its corners.
+ */
+QTabWidget::pane {
+    border: 1px solid #E3E6EB;
+    border-radius: 8px;
+    background: #FFFFFF;
+    top: 8px;
+}
+QTabBar {
+    background: #EEF0F4;
+    border: 1px solid #E3E6EB;
+    border-radius: 9px;
+    padding: 3px;
+}
+QTabBar::tab {
+    background: transparent;
+    color: #6B7280;
+    border: none;
+    border-radius: 6px;
+    padding: 7px 18px;
+    margin: 0 1px;
+}
+QTabBar::tab:hover {
+    color: #1A1D23;
+}
+QTabBar::tab:selected {
+    background: #FFFFFF;
+    color: #2E4374;
+    font-weight: 600;
+}
+
+/* --------------------------------------------------------------- buttons */
+QPushButton {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 6px;
+    padding: 7px 16px;
+    color: #1A1D23;
+}
+QPushButton:hover {
+    background: #F0F2F6;
+    border: 1px solid #C9CED6;
+}
+QPushButton:pressed {
+    background: #E3E6EB;
+}
+QPushButton:disabled {
+    color: #A6ACB6;
+    background: #F6F7F9;
+}
+QPushButton#primaryButton {
+    background: #2E4374;
+    border: 1px solid #2E4374;
+    color: #FFFFFF;
+    font-weight: 600;
+    padding: 9px 20px;
+}
+QPushButton#primaryButton:hover {
+    background: #263A63;
+}
+QPushButton#primaryButton:pressed {
+    background: #1F3053;
+}
+QPushButton#primaryButton:disabled {
+    background: #B7C0D6;
+    border: 1px solid #B7C0D6;
+    color: #FFFFFF;
+}
+
+/* ------------------------------------------------------------------ tables */
+/* text-align on QHeaderView::section handles most styles, but isn't
+ * reliably honored on every platform/Qt-style combination via QSS alone
+ * -- setDefaultAlignment() is also called in Python on every table's
+ * horizontal header (results_table, stats_table) as the authoritative
+ * fix; this QSS rule is a belt-and-suspenders backup, not the only fix.
+ */
+QTableWidget {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 8px;
+    gridline-color: #E3E6EB;
+    font-size: 13px;
+    selection-background-color: #EAEEF6;
+    selection-color: #1A1D23;
+}
+QTableWidget::item {
+    padding: 6px 10px;
+}
+QTableWidget::item:selected {
+    background: #EAEEF6;
+    color: #1A1D23;
+}
+QHeaderView::section {
+    background: #F6F7F9;
+    color: #6B7280;
+    padding: 8px 10px;
+    border: none;
+    border-bottom: 1px solid #E3E6EB;
+    font-weight: 600;
+    text-align: left;
+}
+
+/* -------------------------------------------------------------- log/console */
+/* Sans-serif UI stack, same as everywhere else -- NOT a monospace/code
+ * font. A monospace stack like Consolas/Cascadia Code has no CJK glyphs,
+ * so on Windows Chinese characters in this widget would silently fall
+ * back per-glyph to whatever serif CJK font the OS picks next, while the
+ * ASCII portions (numbers, file paths) stayed in the monospace font --
+ * i.e. exactly the "some sans, some serif" inconsistency this was
+ * flagged for. Numbers/paths reading in the same UI font as everything
+ * else is a fair trade for that consistency.
+ */
+QTextEdit#logConsole {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 8px;
+    padding: 10px;
+    color: #1A1D23;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
+    font-size: 13px;
+}
+
+/* ------------------------------------------------------------- tooltips */
+QToolTip {
+    background: #1A1D23;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
+    font-size: 12px;
+}
+
+/* ------------------------------------------------------------- scrollbars */
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+QScrollBar::handle:vertical {
+    background: #D5D9E0;
+    border-radius: 5px;
+    min-height: 24px;
+}
+QScrollBar::handle:vertical:hover {
+    background: #B7C0D6;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: transparent;
+}
+QScrollBar:horizontal {
+    background: transparent;
+    height: 10px;
+    margin: 0;
+}
+QScrollBar::handle:horizontal {
+    background: #D5D9E0;
+    border-radius: 5px;
+    min-width: 24px;
+}
+QScrollBar::handle:horizontal:hover {
+    background: #B7C0D6;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: transparent;
+}

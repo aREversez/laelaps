@@ -1,0 +1,675 @@
+"""Lightweight QA layer (DESIGN.md section 9). Runs after alignment, before
+writing: flags likely-bad TUs for human review rather than blocking them.
+
+v1 scope was deliberately four checks: empty segment, length-ratio outlier,
+translation-consistency conflict, number mismatch. Tag/placeholder/URL
+checks were deferred until a tagged input format actually existed to test
+them against (see DESIGN.md section 9) -- adding them earlier would have
+been untested surface area with no real input to validate against.
+
+v2 (this commit) adds those three now that ``tmx_reader`` populates
+``src_markup``/``tgt_markup`` for TMX ``<seg>`` elements containing inline
+tags (bpt/ept/ph/hi/...), so there is real tagged input to test against:
+
+- TAG_MISMATCH: compares inline-tag *type counts* between src_markup and
+  tgt_markup (e.g. one ``<bpt>``/``<ept>`` pair on each side). Deliberately
+  narrow, matching the project's existing caution about not over-building
+  (see NUMBER_MISMATCH notes below): this does NOT verify tag *order*,
+  *id*-pairing (TMX ``bpt i="1"``/``ept i="1"``), or nesting -- only that
+  the same tag types appear the same number of times on both sides. A
+  translator who drops a formatting tag, or a tool that mangles one, still
+  gets caught; a translator who legitimately reorders "<b>bold</b> text"
+  to "text <b>bold</b>" does not get flagged for reordering, which is
+  correct (reordering inline formatting to fit target-language word order
+  is normal, not a defect). Units with no markup on either side (the
+  common case -- plain-text TUs from docx/xlsx/csv, or TMX <seg> with no
+  child elements) are skipped entirely, same as before this check existed.
+- PLACEHOLDER_MISMATCH: compares the *set* of placeholder tokens (``{name}``,
+  ``{0}``, ``%s``, ``%d``, ``%(name)s``) found in the visible src/tgt text.
+  Placeholders are code, not prose -- a translation must reproduce them
+  exactly, unlike numbers (which can be reformatted) or tags (which can be
+  reordered). Case-sensitive, exact-string comparison for that reason.
+- URL_MISMATCH: compares the set of ``http(s)://`` URLs found in src/tgt
+  text. A URL dropped or altered in translation is almost always a defect
+  (broken/missing link), so this stays a straight set-equality check with
+  no fuzzy tolerance.
+
+Number normalization: the original NUMBER_MISMATCH
+check compared raw digit-with-optional-decimal-separator matches between
+src and tgt -- which false-fires on common legitimate formatting variation
+like ``$1,000`` vs ``1000 dollars`` (the thousands-separator comma makes
+the regex see "1,000" vs "1000" as different numbers). We now normalize
+before comparison:
+
+- Strip thousands separators (`,` between groups of 3 digits when both
+  sides are 4+ digits; CJK fullwidth comma `，` too). A `.` is deliberately
+  NOT treated as a thousands separator -- it's far more often a decimal
+  point or a version-number fragment, and swallowing those did more harm
+  than the rare continental `.`-thousands false positive it costs us
+  (en-US<->zh-CN, this package's domain, never uses `.` for thousands).
+- Treat `.` and `,` decimal separators as equivalent
+- Drop trailing-zero decimals (``1.20`` == ``1.2``)
+- Strip currency symbols and the surrounding letters ``$``, ``€``, ``¥``,
+  ``USD``, ``RMB``, ``CNY`` -- the check is about *numeric* content, not
+  currency formatting, and a translation that writes "1000 dollars" for
+  "$1,000" is correct, not a mismatch
+
+Month-name equivalence: en-US source TMs commonly write a month as a name
+("September") while the zh-CN target writes it as a digit ("9月") -- both
+express the same value but the old raw-digit-only extraction saw an empty
+number set on the source side and a non-empty one on the target side, a
+guaranteed false NUMBER_MISMATCH on any TU mentioning a month by name. A
+recognized month name is expanded to its numeral before the usual digit
+extraction runs, so both sides land on the same canonical value. Kept to a
+literal lookup table (no date parsing) and case-sensitive on purpose:
+"May" is excluded entirely because it collides with the common modal verb
+("You may proceed") and a false *expansion* there is worse than leaving
+this one month unhandled -- it would silently add a spurious "5" to the
+number set and could flag or clear NUMBER_MISMATCH based on an accidental
+digit that has nothing to do with a date. Matching case-sensitively (not
+matching "march"/"may" lowercase) avoids the same class of collision with
+"march" the noun/verb ("the march continued").
+
+Magnitude-word equivalence: a source amount written with an English
+magnitude word ("$350bn") and a target amount written with a Chinese
+magnitude character ("3500亿美元") are the same value at different
+bases/scales, but the old check compared the bare digits ("350" vs
+"3500") as if they were unrelated numbers. A recognized "<number>
+<magnitude word>" span is expanded to its full value (350 * 1e9 ==
+3500 * 1e8) before the usual digit extraction runs, so both sides land
+on the same canonical value. Deliberately excludes single-letter
+abbreviations ("5m", "3b"): those are genuinely ambiguous (5 million? 5
+meters? 5 minutes?) and a wrong expansion silently clearing a real
+NUMBER_MISMATCH is worse than the false positive it would silence -- an
+ambiguous case is left to fire NUMBER_MISMATCH and go to human review,
+same as any other unrecognized pattern. "bn"/"trn" are the two
+abbreviations kept, since they are unambiguous specifically in the
+financial-amount context this check already lives in. "万亿" (trillion,
+literally "ten-thousand yi") is matched as its own two-character token
+ahead of the bare "万"/"亿" alternatives -- matching "万" alone first
+would consume only the "万" half of "4万亿" and leave a dangling,
+unmatched "亿" behind, silently computing the wrong value (40,000
+instead of 4,000,000,000,000) instead of either raising a mismatch or
+matching correctly.
+
+Caveats kept deliberately narrow (DESIGN.md says don't over-build):
+we do NOT collapse ranges (``1-3`` vs ``1 to 3``), do NOT match spelled-out
+numbers (``two`` vs ``2``), and do NOT attempt unit conversion (``5 km``
+vs ``3 miles``, ``100°F`` vs ``38°C``) -- unlike month names and
+magnitude words, these are approximate-equivalence judgment calls, not
+unambiguous rule-checkable equivalence, and stay a matter for human
+review rather than something this check silently clears.
+
+v3 (this commit) adds three punctuation/whitespace checks (DESIGN.md
+section 15.2, "标点规范专项 QA") -- unlike v2's src/tgt *comparison*
+checks, these are single-segment style/well-formedness checks applied to
+src and tgt independently:
+
+- PUNCTUATION_UNBALANCED: open/close counts disagree for a bracket or
+  quote pair (parens, CJK brackets, curly/smart quotes) within one side's
+  text. Count-based per pair type, not stack-based nesting -- same
+  reasoning as TAG_MISMATCH above: free-form prose doesn't reliably nest
+  the way code does, so "do the counts match" is the check that doesn't
+  false-fire on legitimate variation. Straight quotes (``"``, ``'``) are
+  excluded entirely: the same glyph serves as both open and close in
+  plain-text English, and ``'`` doubles as an apostrophe (``don't``), so
+  counting them would misfire on ordinary prose, not catch real defects.
+  The curly apostrophe ``\u2019`` (U+2019) is treated the same way in one
+  direction only: it doubles as ``don\u2019t``/``users\u2019`` so an excess of
+  ``\u2019`` over ``\u2018`` is ignored, while an unmatched opening ``\u2018``
+  (which is never an apostrophe) still flags.
+- WIDTH_MIXING: a segment uses both the half-width and full-width form of
+  the same punctuation mark (e.g. both ``!`` and ``！``). Comma and period
+  are deliberately excluded from the checked set -- both are common
+  thousands-separator/decimal/abbreviation punctuation unrelated to CJK
+  typesetting style, and would mostly false-fire the same way raw-digit
+  comparison did before NUMBER_MISMATCH's currency/thousands handling
+  (see above); the remaining pairs checked essentially never serve double
+  duty that way.
+- LEADING_TRAILING_SPACE: src or tgt has leading/trailing whitespace,
+  including the CJK fullwidth space (U+3000) that's invisible in most
+  editors and a common artifact of pasting from Word/PDF-derived text.
+  Checked against the *raw* text, before the ``.strip()`` this function
+  otherwise works on for every other check -- stripping first would throw
+  away exactly the thing being checked for.
+"""
+import re
+
+from language_tools.align.splitters import nolen
+
+# Raw number matcher -- same as before, used internally by the normalizer.
+_RAW_DIGIT_RE = re.compile(r'\d+(?:[.,]\d+)?')
+
+# Currency-prefix stripper: matched greedily, kept narrow on purpose.
+# Adding every ISO currency code would balloon this list without a real
+# false-positive reduction -- the most common offenders ($, €, ¥, USD,
+# RMB, CNY) cover the vast majority of real-world bilingual TMs. The
+# alphabetic codes are word-boundary anchored so they only match as
+# standalone tokens, never inside a longer identifier/word (IGNORECASE
+# made "USD" match inside "MUSD"-style tokens otherwise); the symbols are
+# punctuation and need no boundary.
+_CURRENCY_RE = re.compile(
+    r'(?:\b(?:USD|EUR|CNY|RMB|GBP|JPY)\b|[\$€¥£])\s*', re.IGNORECASE)
+
+# Thousands-separator: a comma (or CJK fullwidth comma) between two groups
+# of digits where the right group is exactly 3 digits. Deliberately NOT
+# matching '.' here: a period followed by three digits is far more often a
+# decimal fraction ("3.142") or a version fragment ("2.1.153") than a
+# continental thousands mark, and swallowing it silently mangles those.
+# en-US<->zh-CN (this package's domain) never uses '.' as a thousands
+# separator, so dropping it trades a rare locale false-positive for
+# correctly-handled version numbers.
+_THOUSANDS_RE = re.compile(
+    r'(?<=\d)[,，](?=\d{3}(?:\D|$))')
+
+# Decimal-separator normalizer: turns both "1.5" and "1,5" into "1.5" so
+# the rest of the comparison can treat them as the same number. Doesn't
+# distinguish locale (some locales use , for decimal and . for thousands)
+# -- we already stripped thousands separators above, so a single
+# remaining separator is the decimal one.
+_DECIMAL_RE = re.compile(r'(\d),(\d)')
+
+# Placeholder tokens: Python-style ``{name}``/``{0}``, printf-style
+# ``%s``/``%d``/``%(name)s``. The curly-brace body is restricted to ASCII
+# format-field characters (word chars plus '.', for attribute/index access
+# like ``{user.name}``) so CJK prose wrapped in braces -- ``{文件}`` in a
+# glossed UI string -- is not mistaken for a code placeholder. Body is
+# capped at 50 chars so a stray unmatched "{" in prose can't run the match
+# on for the rest of the string.
+_PLACEHOLDER_RE = re.compile(r'\{[A-Za-z0-9_.]{1,50}\}|%\(\w+\)[sdfgxX]|%[sdfgxX]')
+
+# URL matcher: greedy up to whitespace, then trailing punctuation commonly
+# adjacent to a URL in prose (closing parens/quotes, sentence-ending
+# punctuation incl. CJK) is stripped off in _extract_urls rather than
+# excluded from the character class here, since excluding them from the
+# class would also wrongly truncate URLs that legitimately contain them
+# (e.g. a query string with a literal ')'). IGNORECASE because RFC 3986
+# makes the scheme case-insensitive -- "HTTPS://..." is still a URL.
+_URL_RE = re.compile(r'https?://\S+', re.IGNORECASE)
+_URL_TRAILING_PUNCT = '.,;:!?)\'"\u3001\u3002\uff0c\uff1b\uff1a\uff01\uff1f\uff09'
+
+# Inline-tag element-name extractor: pulls "bpt" out of a raw XML fragment
+# like ``<bpt i="1">&lt;b&gt;</bpt>`` (an InlineNode 'tag' node's content).
+_TAG_NAME_RE = re.compile(r'<\s*([a-zA-Z][\w:-]*)')
+
+# Month-name matcher: case-sensitive on purpose (see module docstring --
+# lowercase "march"/"may" collide with the common noun/verb and modal
+# verb respectively). "May" is deliberately absent from both the regex
+# and the table below. Matched *before* the trailing "." so "Sept." and
+# "Sept" both come out as "Sept" in group 1.
+_MONTH_RE = re.compile(
+    r'\b(January|February|March|April|June|July|August|September|'
+    r'October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sept?|'
+    r'Oct|Nov|Dec)\.?\b')
+_MONTH_TO_NUM = {
+    'January': '1', 'Jan': '1',
+    'February': '2', 'Feb': '2',
+    'March': '3', 'Mar': '3',
+    'April': '4', 'Apr': '4',
+    'June': '6', 'Jun': '6',
+    'July': '7', 'Jul': '7',
+    'August': '8', 'Aug': '8',
+    'September': '9', 'Sep': '9', 'Sept': '9',
+    'October': '10', 'Oct': '10',
+    'November': '11', 'Nov': '11',
+    'December': '12', 'Dec': '12',
+}
+
+# Magnitude-word matcher: a digit run immediately (optionally through
+# whitespace) followed by a recognized magnitude word/character. English
+# words use a trailing \b; the CJK characters 万/亿 don't (Python's \b is
+# \w-boundary-based, and a following CJK word character like 美 in "亿美元"
+# is itself \w, so a trailing \b after 万/亿 would never match a real
+# "<number>万/亿<more CJK text>" span) -- see the deliberate omission of
+# single-letter abbreviations in the module docstring. Case-insensitive
+# so "Million"/"MILLION"/"million" (start of sentence, headings, etc.)
+# all match the same way.
+_MAGNITUDE_RE = re.compile(
+    r'(\d+(?:\.\d+)?)\s*(thousand\b|million\b|billion\b|trillion\b|trn\b|bn\b|万亿|万|亿)',
+    re.IGNORECASE)
+_MAGNITUDE_MULTIPLIER = {
+    'thousand': 1_000,
+    'million': 1_000_000,
+    'billion': 1_000_000_000,
+    'bn': 1_000_000_000,
+    'trillion': 1_000_000_000_000,
+    'trn': 1_000_000_000_000,
+    '万亿': 1_000_000_000_000,
+    '万': 10_000,
+    '亿': 100_000_000,
+}
+
+
+def _expand_month_names(text):
+    """Replace recognized month-name tokens with their numeral (e.g.
+    "September" -> "9", "Sept." -> "9") so the digit extraction below
+    picks them up the same way it already picks up an explicit "9月" on
+    the other side. Padded with spaces so an expansion never fuses with
+    an adjacent digit (e.g. "March 3" -> "3 3", two separate tokens, not
+    "33").
+    """
+    return _MONTH_RE.sub(lambda m: ' ' + _MONTH_TO_NUM[m.group(1)] + ' ', text)
+
+
+def _expand_magnitude_words(text):
+    """Replace "<number> <magnitude word>" spans with the fully expanded
+    integer, e.g. "$350bn" -> "$350000000000", "3500亿美元" ->
+    "350000000000美元", so the two compare equal at the digit-extraction
+    step below instead of comparing the bare "350" against "3500" as if
+    they were different values. The whole matched span (digit run +
+    magnitude word) is replaced, so the original bare digits never also
+    end up in the output as a separate, spurious token.
+    """
+    def _expand(m):
+        value = float(m.group(1))
+        expanded = value * _MAGNITUDE_MULTIPLIER[m.group(2).lower()]
+        # Every multiplier above is >= 1000, so a fractional input like
+        # "1.5 million" always lands on a whole number; format without a
+        # trailing ".0" so it matches the plain-integer canonical form
+        # the rest of this module already produces for plain digit runs.
+        if expanded == int(expanded):
+            return ' ' + str(int(expanded)) + ' '
+        return ' ' + str(expanded) + ' '
+    return _MAGNITUDE_RE.sub(_expand, text)
+
+
+def _normalize_numbers(text):
+    """Return the set of normalized numeric values found in ``text``.
+
+    Normalization order matters: expand month names first (so "September"
+    becomes "9" before anything else runs), then expand magnitude words
+    (so "350bn" becomes "350000000000" before thousands-separator
+    stripping could misinterpret it), then strip currency (so "$1,000"
+    becomes "1,000"), then thousands separators ("1,000" -> "1000"), then
+    unify decimal separators ("1,5" -> "1.5"), then drop trailing-zero
+    decimals ("1.20" -> "1.2") so the final set comparison is on a
+    canonical form.
+
+    Kept as a single function rather than a chain of compiled regexes
+    invoked inline so the normalization logic is in one place to read,
+    audit, and extend (e.g. if we later want to fold spelled-out numbers
+    in, this is the only function that changes).
+    """
+    s = _expand_month_names(text)
+    s = _expand_magnitude_words(s)
+    s = _CURRENCY_RE.sub('', s)
+    s = _THOUSANDS_RE.sub('', s)
+    s = _DECIMAL_RE.sub(r'\1.\2', s)
+    out = set()
+    for m in _RAW_DIGIT_RE.findall(s):
+        # Drop trailing-zero decimals: "1.20" -> "1.2", "1.00" -> "1".
+        # Plain ints ("42") are unaffected.
+        if '.' in m:
+            int_part, frac = m.split('.', 1)
+            frac = frac.rstrip('0')
+            norm = int_part + ('.' + frac if frac else '')
+        else:
+            norm = m
+        out.add(norm)
+    return out
+
+
+def find_number_spans(text):
+    """Return a sorted list of (start, end) character spans in the
+    *original*, untransformed ``text`` that ``_normalize_numbers()``
+    treats as numeric content -- the literal substrings a caller should
+    point at to show a reviewer *which* numbers a NUMBER_MISMATCH is
+    about (see ``toolbox/tools/qa_check/page.py``'s highlighting).
+
+    Kept separate from ``_normalize_numbers()`` rather than having that
+    function also return spans: ``_normalize_numbers()`` only needs to
+    produce a comparable canonical *value* and transforms the text
+    along the way (month/magnitude expansion), which is exactly what
+    throws away the original character offsets a highlighter needs --
+    two different contracts, so two different functions, each scanning
+    the original text directly with the same regexes rather than one
+    trying to serve both callers.
+
+    Magnitude-word and month-name spans (e.g. the whole "$350bn" or
+    "September", not just the "350"/"9" inside them) take priority over
+    the bare digit run within/near them, so the whole meaningful
+    expression gets highlighted as one unit instead of only part of it.
+    """
+    spans = []
+    claimed = []
+    for pattern in (_MAGNITUDE_RE, _MONTH_RE):
+        for m in pattern.finditer(text):
+            spans.append(m.span())
+            claimed.append(m.span())
+    for m in _RAW_DIGIT_RE.finditer(text):
+        span = m.span()
+        if any(cs <= span[0] and span[1] <= ce for cs, ce in claimed):
+            continue  # already covered by a magnitude/month span above
+        spans.append(span)
+    spans.sort()
+    return spans
+
+
+def find_placeholder_spans(text):
+    """Return a sorted list of (start, end) character spans in ``text``
+    for every placeholder token ``_extract_placeholders()`` would find
+    (see that function and PLACEHOLDER_MISMATCH's docstring above) --
+    for a caller (GUI highlighting) that needs to point at the literal
+    substrings rather than just the set of tokens found. Unlike
+    ``find_number_spans()``, no text transformation happens before
+    ``_PLACEHOLDER_RE`` runs, so this is a direct ``finditer()`` over
+    the original text -- there's no risk of the offsets referring to a
+    transformed string that don't line up with what's on screen.
+    """
+    return sorted(m.span() for m in _PLACEHOLDER_RE.finditer(text))
+
+
+def find_url_spans(text):
+    """Return a sorted list of (start, end) character spans in ``text``
+    for every URL ``_extract_urls()`` would find, trimmed the same way
+    that function trims trailing sentence punctuation (a period right
+    after a URL is the sentence's punctuation, not part of the URL) so
+    a caller highlighting the span doesn't mark that trailing character
+    as if it were part of the link.
+    """
+    spans = []
+    for m in _URL_RE.finditer(text):
+        start, end = m.span()
+        trimmed = m.group().rstrip(_URL_TRAILING_PUNCT)
+        spans.append((start, start + len(trimmed)))
+    spans.sort()
+    return spans
+
+
+def _extract_placeholders(text):
+    return set(_PLACEHOLDER_RE.findall(text))
+
+
+def _extract_urls(text):
+    urls = set()
+    for m in _URL_RE.findall(text):
+        urls.add(m.rstrip(_URL_TRAILING_PUNCT))
+    return urls
+
+
+def _tag_type_counts(markup):
+    """Returns {tag_name: count} for the 'tag' nodes in an InlineNode list.
+    ``markup`` of None or [] returns {} -- callers treat two empty dicts
+    as "no markup on either side, nothing to check" rather than a mismatch.
+    """
+    if not markup:
+        return {}
+    counts = {}
+    for node in markup:
+        if node.kind != 'tag':
+            continue
+        m = _TAG_NAME_RE.match(node.content)
+        name = m.group(1) if m else '?'
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+def expected_length_ratio(units):
+    """Corpus-wide src/tgt character-length ratio, used as the expected
+    ratio ``run()`` compares each individual unit against for
+    LENGTH_RATIO_OUTLIER. Named distinctly from ``run()``'s own
+    ``length_ratio`` parameter (this function *computes* the value that
+    parameter expects to be handed) to avoid a confusing same-name
+    function/parameter pair in one module.
+
+    Moved here from ``api.py`` (was a private ``_length_ratio()`` used
+    only inline in the convert pipeline) so ``tm/qa_report.py`` -- which
+    runs QA against an *already-existing* corpus file, outside the convert
+    pipeline -- can compute the same ratio the same way, rather than
+    re-deriving or hardcoding one. A per-language-pair constant (e.g.
+    "English to Chinese is usually ~0.5x the character count") was
+    considered and rejected: the actual ratio varies enough by
+    domain/register that a corpus-derived empirical ratio is more
+    reliable than a fixed table, and it's free to compute from data we
+    already have in hand.
+    """
+    src_len = sum(nolen(u.src_text) for u in units)
+    tgt_len = sum(nolen(u.tgt_text) for u in units)
+    return src_len / max(tgt_len, 1)
+
+
+# Bracket/quote pairing: see the v3 module-docstring note above for why
+# straight quotes are excluded and why this is count-based rather than
+# stack-based.
+_PAIR_CHARS = {
+    '(': ')', '（': '）', '[': ']', '{': '}',
+    '《': '》', '「': '」', '『': '』', '【': '】',
+    '“': '”', '‘': '’',
+}
+
+# Close chars that double as an apostrophe/diacritic in ordinary prose, so
+# an *excess* of them over their open partner is not evidence of a defect.
+# U+2019 is the typographic apostrophe ('don’t', 'users’', French
+# 'l’homme') -- the same glyph as the closing single quote. The open side
+# (U+2018) is never ambiguous, so only 'too many open quotes' is a real
+# finding for this pair. This is the curly counterpart of the straight-'
+# exclusion in the module docstring (P1-5 of the 2026-09 fix list).
+_AMBIGUOUS_CLOSE_CHARS = {'’'}
+
+
+def _unbalanced_pairs(text):
+    """Return {open_char: (open_count, close_count)} for every pair in
+    ``_PAIR_CHARS`` whose open/close counts disagree in ``text``. Empty
+    dict means every pair present is balanced (or absent entirely).
+
+    For a pair whose close char is ambiguous (``_AMBIGUOUS_CLOSE_CHARS``),
+    only the 'more opens than closes' direction counts -- the other
+    direction is indistinguishable from apostrophes and would false-fire
+    on ordinary prose.
+    """
+    out = {}
+    for open_c, close_c in _PAIR_CHARS.items():
+        o, c = text.count(open_c), text.count(close_c)
+        if close_c in _AMBIGUOUS_CLOSE_CHARS:
+            if o > c:
+                out[open_c] = (o, c)
+        elif o != c:
+            out[open_c] = (o, c)
+    return out
+
+
+def find_punctuation_pair_spans(text):
+    """Spans of every char in ``_PAIR_CHARS`` (open or close side) present
+    in ``text``, for GUI highlighting of a PUNCTUATION_UNBALANCED row --
+    same "highlight every occurrence, let the reviewer judge which one is
+    actually missing its partner" approach as ``find_number_spans()`` et
+    al., since the check itself can only say *that* counts disagree, not
+    reliably *which* specific occurrence is the culprit.
+    """
+    chars = set(_PAIR_CHARS) | set(_PAIR_CHARS.values())
+    pattern = '[' + re.escape(''.join(chars)) + ']'
+    return sorted(m.span() for m in re.finditer(pattern, text))
+
+
+# Full-width/half-width equivalents worth flagging as mixed style within
+# one segment. Comma/period excluded on purpose -- see v3 module-docstring
+# note above.
+_WIDTH_PAIRS = {
+    '!': '！', '?': '？', ':': '：', ';': '；', '(': '（', ')': '）',
+}
+
+
+def _width_mixing(text):
+    """Return the set of half-width chars from ``_WIDTH_PAIRS`` whose
+    full-width counterpart also appears in ``text`` -- the segment uses
+    both styles of the same punctuation mark.
+    """
+    return {half for half, full in _WIDTH_PAIRS.items() if half in text and full in text}
+
+
+def find_width_mixing_spans(text):
+    """Spans of every half/full-width char from ``_WIDTH_PAIRS`` present
+    in ``text``, for GUI highlighting of a WIDTH_MIXING row.
+    """
+    chars = set(_WIDTH_PAIRS) | set(_WIDTH_PAIRS.values())
+    pattern = '[' + re.escape(''.join(chars)) + ']'
+    return sorted(m.span() for m in re.finditer(pattern, text))
+
+
+# CJK fullwidth space (U+3000, "　") counts as leading/trailing whitespace
+# alongside ASCII whitespace -- see v3 module-docstring note above.
+_LEADING_TRAILING_WS_RE = re.compile(r'^[\s\u3000]+|[\s\u3000]+$')
+
+
+def _has_leading_trailing_ws(text):
+    return bool(_LEADING_TRAILING_WS_RE.search(text))
+
+
+# Issue code -> span finder, for every check that highlights a literal
+# substring rather than being a whole-segment property (see
+# toolbox/tools/qa_check/page.py's module docstring for which checks are
+# excluded and why). Single source of truth: the QA-check GUI page and
+# the bilingual-review HTML export (reports/adapters.py) both highlight
+# off this same mapping rather than keeping their own copies that could
+# drift out of sync with each other or with qa.py's actual check set --
+# same reasoning as ISSUE_LABELS/ISSUE_TYPES already being centralized.
+SPAN_FINDERS = {
+    'NUMBER_MISMATCH': find_number_spans,
+    'PLACEHOLDER_MISMATCH': find_placeholder_spans,
+    'URL_MISMATCH': find_url_spans,
+    'PUNCTUATION_UNBALANCED': find_punctuation_pair_spans,
+    'WIDTH_MIXING': find_width_mixing_spans,
+}
+
+
+def merged_highlight_spans(text, issues):
+    """Merge the spans every code in ``issues`` that has a
+    ``SPAN_FINDERS`` entry contributes into one sorted, non-overlapping
+    list of (start, end) spans over ``text``. Shared span-selection/merge
+    logic for every highlighting consumer; each consumer still owns its
+    own markup (Qt rich-text style string, HTML CSS class, ...) since
+    that part is genuinely renderer-specific.
+    """
+    spans = []
+    for code, finder in SPAN_FINDERS.items():
+        if code in issues:
+            spans.extend(finder(text))
+    spans.sort()
+    merged = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+# Human-readable (Chinese) label per issue code, for any presentation
+# layer that shouldn't show the raw code to a non-technical reviewer --
+# the CSV export (csv_writer.py) and the QA-check GUI page both import
+# this rather than keeping their own copy, so the label for e.g.
+# TAG_MISMATCH can't drift between "what the table shows" and "what the
+# filter dropdown says" the way two independently-maintained dicts could.
+# The *codes themselves* (qa_issues list contents, dict keys here) stay
+# English/machine-readable on purpose -- they're compared against by name
+# throughout the codebase (tests, the GUI's filter dropdown values,
+# ISSUE_TYPES in tm/qa_report.py) and are meant to be greppable/stable
+# identifiers, not prose.
+ISSUE_LABELS = {
+    'EMPTY_SOURCE': '原文为空',
+    'EMPTY_TARGET': '译文为空',
+    'LENGTH_RATIO_OUTLIER': '长度比异常',
+    'NUMBER_MISMATCH': '数字不匹配',
+    'PLACEHOLDER_MISMATCH': '占位符不匹配',
+    'URL_MISMATCH': 'URL 不匹配',
+    'TAG_MISMATCH': '标签不匹配',
+    'PUNCTUATION_UNBALANCED': '括号/引号不成对',
+    'WIDTH_MIXING': '全半角混用',
+    'LEADING_TRAILING_SPACE': '首尾空格',
+    'SOURCE_CONFLICT': '原文冲突',
+    'TARGET_CONFLICT': '译文冲突',
+}
+
+
+def run(units, length_ratio):
+    """Mutates each unit's meta in place: 'qa_issues' (list[str]) and
+    'qa_confidence' (float, 1.0 = no issues found). On NUMBER_MISMATCH
+    specifically, also sets 'qa_details' -> {'NUMBER_MISMATCH':
+    {'src_numbers': [...], 'tgt_numbers': [...]}} with the normalized
+    numbers found on each side, for diagnosing real TM output later
+    (not currently surfaced by the CSV/GUI report). Returns units for
+    chaining convenience.
+
+    Consistency check flags SOURCE_CONFLICT/TARGET_CONFLICT -- the same
+    source text mapping to more than one distinct target (or vice versa)
+    across the document, a real sign of inconsistent translation. An
+    *exact* duplicate pair (same source AND same target, appearing more
+    than once) is NOT flagged: repeated boilerplate/UI strings translated
+    the same way every time is normal, expected TM content, not a quality
+    problem -- flagging it would just be noise in the QA report.
+    """
+    src_to_targets, tgt_to_sources = {}, {}
+    for u in units:
+        src, tgt = u.src_text.strip(), u.tgt_text.strip()
+        if src and tgt:  # empty src/tgt is EMPTY_SOURCE/EMPTY_TARGET's job, not a conflict
+            src_to_targets.setdefault(src, set()).add(tgt)
+            tgt_to_sources.setdefault(tgt, set()).add(src)
+
+    for u in units:
+        issues = []
+        src, tgt = u.src_text.strip(), u.tgt_text.strip()
+        if not src:
+            issues.append('EMPTY_SOURCE')
+        if not tgt:
+            issues.append('EMPTY_TARGET')
+        # Checked against the *raw*, unstripped text -- see v3
+        # module-docstring note above.
+        ws_sides = [side for side, raw in (('src', u.src_text), ('tgt', u.tgt_text))
+                    if raw and _has_leading_trailing_ws(raw)]
+        if ws_sides:
+            issues.append('LEADING_TRAILING_SPACE')
+            u.meta.setdefault('qa_details', {})['LEADING_TRAILING_SPACE'] = {'sides': ws_sides}
+        if src and tgt:
+            src_len = len(re.sub(r'\s+', '', src))
+            tgt_len = len(re.sub(r'\s+', '', tgt))
+            if src_len and tgt_len and length_ratio > 0:
+                expected = src_len / length_ratio
+                # Ratio-based, not difference-based: a difference-based
+                # check (|tgt_len - expected| / expected) is asymmetric --
+                # it can never exceed 1.0 on the "too short" side (tgt_len
+                # can't go below 0), so a threshold above 1.0 can only ever
+                # fire for "too long", never "too short". Caught by the
+                # length-ratio-outlier test itself before this fix.
+                ratio = tgt_len / max(expected, 1e-6)
+                if ratio < 0.3 or ratio > 3.0:
+                    issues.append('LENGTH_RATIO_OUTLIER')
+            src_numbers, tgt_numbers = _normalize_numbers(src), _normalize_numbers(tgt)
+            if src_numbers != tgt_numbers:
+                issues.append('NUMBER_MISMATCH')
+                # Not surfaced in the CSV/GUI report yet -- this is just
+                # somewhere to look when sampling real TM output to decide
+                # whether a recurring false-positive pattern is worth a
+                # new high-confidence equivalence rule (month names,
+                # magnitude words, ...) versus a genuine mismatch.
+                # PUNCTUATION_UNBALANCED/WIDTH_MIXING below get their own
+                # 'qa_details' entries the same way.
+                u.meta.setdefault('qa_details', {})['NUMBER_MISMATCH'] = {
+                    'src_numbers': sorted(src_numbers),
+                    'tgt_numbers': sorted(tgt_numbers),
+                }
+            if _extract_placeholders(src) != _extract_placeholders(tgt):
+                issues.append('PLACEHOLDER_MISMATCH')
+            if _extract_urls(src) != _extract_urls(tgt):
+                issues.append('URL_MISMATCH')
+            if _tag_type_counts(u.src_markup) != _tag_type_counts(u.tgt_markup):
+                issues.append('TAG_MISMATCH')
+            src_unbalanced, tgt_unbalanced = _unbalanced_pairs(src), _unbalanced_pairs(tgt)
+            if src_unbalanced or tgt_unbalanced:
+                issues.append('PUNCTUATION_UNBALANCED')
+                u.meta.setdefault('qa_details', {})['PUNCTUATION_UNBALANCED'] = {
+                    'src': src_unbalanced, 'tgt': tgt_unbalanced,
+                }
+            src_mixed, tgt_mixed = _width_mixing(src), _width_mixing(tgt)
+            if src_mixed or tgt_mixed:
+                issues.append('WIDTH_MIXING')
+                u.meta.setdefault('qa_details', {})['WIDTH_MIXING'] = {
+                    'src': sorted(src_mixed), 'tgt': sorted(tgt_mixed),
+                }
+        if len(src_to_targets.get(src, ())) > 1:
+            issues.append('SOURCE_CONFLICT')
+        if len(tgt_to_sources.get(tgt, ())) > 1:
+            issues.append('TARGET_CONFLICT')
+
+        u.meta['qa_issues'] = issues
+        u.meta['qa_confidence'] = 1.0 if not issues else max(0.0, 1.0 - 0.25 * len(issues))
+    return units
