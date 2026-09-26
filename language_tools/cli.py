@@ -107,7 +107,28 @@ def _resolve_output(input_path, output, to_formats):
     return output, to_formats or _ALL_FORMATS
 
 
+def setup_console_encoding():
+    """Force UTF-8 on the CLI's own stdout/stderr.
+
+    Both entry points print target-side text (align's summary line carries
+    labels like '1:1 (一一对应)', biconvert echoes source/target language
+    codes), but a Windows console defaults to the system code page, where
+    CJK raises UnicodeEncodeError and the command dies with a traceback.
+    UTF-8 is the only encoding this corpus work ever wants, so there is
+    nothing to preserve from the locale default. Reconfigured in place --
+    never replaced -- so anything already holding sys.stdout keeps working.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except (AttributeError, ValueError, OSError):
+            # Redirected/closed/undecorated stream: leave it alone, the
+            # caller's own encoding wins.
+            pass
+
+
 def main(argv=None):
+    setup_console_encoding()
     args = build_parser().parse_args(argv)
     ext = os.path.splitext(args.input)[1].lower()
 

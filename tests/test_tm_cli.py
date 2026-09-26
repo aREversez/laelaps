@@ -15,7 +15,11 @@ def _run(args):
     env = dict(os.environ, PYTHONPATH=_REPO_ROOT)
     return subprocess.run(
         [sys.executable, '-m', 'language_tools.tm_cli'] + args,
-        capture_output=True, text=True, env=env,
+        # encoding pinned because tm_cli forces UTF-8 on its own std streams:
+        # bare text=True decodes with the *parent's* locale, so on a non-UTF-8
+        # console (the CI windows runner) the reader thread dies on the CJK
+        # summary line and result.stdout comes back as None.
+        capture_output=True, text=True, encoding='utf-8', env=env,
     )
 
 
@@ -359,6 +363,27 @@ def _write_bilingual_csv(path, rows):
     # No header, plain "src,tgt" rows -- --no-header below tells the
     # reader not to treat row 0 as a header.
     path.write_text('\n'.join('%s,%s' % row for row in rows), encoding='utf-8')
+
+
+def test_cli_survives_a_non_utf8_console_encoding(tmp_path):
+    # The align summary line carries target-side text ('1:1 (\u4e00\u4e00\u5bf9\u5e94)'), which on a
+    # Windows console defaults to the system code page -- the CI windows
+    # runner is cp1252, where CJK raises UnicodeEncodeError and the command
+    # died with 'error: charmap codec can't encode characters'. tm_cli forces
+    # UTF-8 on its own std streams; this pins that, because the rest of the
+    # suite only sees it through whatever console the developer happens to
+    # have (a GBK console prints CJK fine and cannot catch this).
+    src = tmp_path / 'in.csv'
+    _write_bilingual_csv(src, [('Hello there.', '\u4f60\u597d\u3002'), ('Bye now.', '\u518d\u89c1\u3002')])
+    env = dict(os.environ, PYTHONPATH=_REPO_ROOT, PYTHONIOENCODING='cp1252')
+    result = subprocess.run(
+        [sys.executable, '-m', 'language_tools.tm_cli',
+         'align', str(src), '--src', 'en-US', '--tgt', 'zh-CN', '--no-header'],
+        capture_output=True, text=True, encoding='utf-8', env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert 'charmap' not in (result.stderr or '')
+    assert '1:1 (\u4e00\u4e00\u5bf9\u5e94): 2' in result.stdout
 
 
 def test_align_prints_summary_for_a_clean_bilingual_csv(tmp_path):

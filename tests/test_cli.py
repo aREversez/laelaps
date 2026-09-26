@@ -11,7 +11,11 @@ def _run(args, cwd=None):
     env = dict(os.environ, PYTHONPATH=_REPO_ROOT)
     return subprocess.run(
         [sys.executable, '-m', 'language_tools.cli'] + args,
-        capture_output=True, text=True, env=env, cwd=cwd,
+        # encoding pinned because cli forces UTF-8 on its own std streams:
+        # bare text=True decodes with the *parent's* locale, so on a non-UTF-8
+        # console (the CI windows runner) the reader thread dies and
+        # result.stdout comes back as None.
+        capture_output=True, text=True, encoding='utf-8', env=env, cwd=cwd,
     )
 
 

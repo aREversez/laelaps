@@ -49,7 +49,7 @@ import sys
 
 from language_tools import align_report
 from language_tools import semantic_review
-from language_tools.cli import _build_reader_opts
+from language_tools.cli import _build_reader_opts, setup_console_encoding
 from language_tools.readers import docx_preflight
 from language_tools.reports import adapters as report_adapters
 from language_tools.reports import render as report_render
@@ -790,6 +790,7 @@ def build_parser():
 
 
 def main(argv=None):
+    setup_console_encoding()
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)
