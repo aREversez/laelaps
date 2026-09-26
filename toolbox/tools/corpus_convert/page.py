@@ -66,13 +66,14 @@ import os
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
     QCheckBox, QFileDialog, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QTextEdit, QVBoxLayout, QWidget,
+    QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
 )
 
 from language_tools import api
 from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, set_lang_combo_code
+from toolbox.widgets import LogConsole
 from toolbox.widgets import section as _section
 from toolbox.workers import wait_for_running
 
@@ -203,11 +204,9 @@ class CorpusConvertPage(QWidget):
         btn_row.addStretch(1)
         outer.addLayout(btn_row)
 
-        self.log = QTextEdit()
-        self.log.setObjectName('logConsole')
-        self.log.setReadOnly(True)
+        self.log = LogConsole()
         self.log.setMinimumHeight(110)
-        self.log.setPlaceholderText('转换结果会显示在这里')
+        self.log.set_empty_hint('转换结果会显示在这里')
         # Same上下双区 treatment as tm_maintenance: the log is a result area,
         # not one more form field -- giving it a 结果 header (via section())
         # separates it from the inputs above and lets it claim the leftover

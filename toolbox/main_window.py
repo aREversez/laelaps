@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 
 from toolbox import registry
 from toolbox.paths import RESOURCES_DIR
+from toolbox.widgets import apply_page_icon
 
 # Bigger than Qt's/this window's old fixed 960x660 default: the first
 # thing a person sees on first launch should show a full results table
@@ -165,6 +166,10 @@ class MainWindow(QMainWindow):
                 item.setIcon(QIcon(spec.icon))
             item.setToolTip(spec.description)
             page = spec.page_factory()
+            # Fill the page_shell header chip with this tool's glyph (no-op
+            # for pages without one, e.g. home). The window already knows the
+            # icon path, so no tool page hardcodes its own id.
+            apply_page_icon(page, spec.icon)
             restore_settings = getattr(page, 'restore_settings', None)
             if restore_settings:
                 restore_settings()

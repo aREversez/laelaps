@@ -59,11 +59,13 @@ was actually guaranteed to find the right widget once a page was built
 from a nested helper or while another widget's own ``__init__`` was still
 on the stack.
 """
-from PySide6.QtCore import QSize, Qt
-from PySide6.QtGui import QColor
+import os
+
+from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
-    QScrollArea, QSizePolicy, QTabWidget, QVBoxLayout, QWidget,
+    QScrollArea, QSizePolicy, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 
@@ -77,15 +79,28 @@ CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 
 
 def section(title, content_widget):
-    """A section header (label + hairline rule) above a content widget --
-    used instead of QGroupBox, whose native chrome can't be made to look
-    clean via QSS alone. Every tool page should use this for section
-    headers, for visual consistency across the toolbox.
+    """A self-contained section *card*: a soft tinted, rounded panel holding
+    a small title (with an indigo left accent bar) above its content.
+
+    The 2026-09 layout rounds first tried flat sections separated by a
+    full-width hairline, then a faint tint on the tab pane -- both read as
+    "no change" because a hairline and a near-white tint are too subtle to
+    create figure-ground. This is the decisive version: every section is
+    now a distinct block (``#sectionCard`` in style.qss, a light cool-gray
+    on the white page card), so a page reads as a set of grouped panels
+    rather than one long stack of identical full-width rows. The tint is
+    flat + hairline only -- no shadow (DESIGN.md §13 reserves shadow for
+    the page card and home tiles).
+
+    The ``role="hairline"`` frame is kept in the structure (rendered at
+    height 0) so the QSS contract and any structural inspection still see
+    one consistent wrapper shape.
     """
-    wrapper = QWidget()
-    layout = QVBoxLayout(wrapper)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(6)
+    card = QWidget()
+    card.setObjectName('sectionCard')
+    layout = QVBoxLayout(card)
+    layout.setContentsMargins(16, 14, 16, 16)
+    layout.setSpacing(10)
 
     label = QLabel(title)
     label.setProperty('role', 'sectionTitle')
@@ -96,7 +111,27 @@ def section(title, content_widget):
     layout.addWidget(rule)
 
     layout.addWidget(content_widget)
-    return wrapper
+    return card
+
+
+def columns(*cards, spacing=16):
+    """Lay a handful of ``section()`` cards out side by side as one row of
+    equal-width columns -- the two-column reflow that breaks the "every
+    field is its own full-width band" spreadsheet rhythm. Short related
+    inputs (e.g. 选择文件 / 输出到) become a compact cluster instead of two
+    stacked rows, and the card framing makes the grouping read at a glance.
+
+    Each card gets equal stretch, so they share the row width evenly; on a
+    narrow window the surrounding ``page_shell`` scroll area's horizontal
+    bar (ScrollBarAsNeeded) keeps the row's minimum width reachable.
+    """
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(spacing)
+    for card in cards:
+        layout.addWidget(card, 1)
+    return row
 
 
 # (display label, language code) -- common pairs, prefilled into an
@@ -283,6 +318,81 @@ def tinted_icon_pixmap(icon_path, size):
     return QPixmap.fromImage(image)
 
 
+def apply_page_icon(page, icon_path):
+    """Drop a tool's glyph into the header chip ``page_shell()`` reserved for
+    it (``QLabel#pageHeaderIcon``), tinted indigo like the home tiles so the
+    top of every page carries one clear color focal point.
+
+    Called by ``MainWindow`` right after building each page from its
+    ``ToolSpec`` -- the window already knows the icon path, so no tool page
+    has to hardcode its own id/path or thread it through ``page_shell()``.
+    A no-op for a page built outside the window (tests) or one that never
+    installed the header chip (e.g. the home page): ``findChild`` returns
+    None and we simply skip.
+    """
+    label = page.findChild(QLabel, 'pageHeaderIcon')
+    if label is None or not icon_path or not os.path.exists(icon_path):
+        return
+    label.setPixmap(tinted_icon_pixmap(icon_path, 34))
+    label.show()
+
+
+class LogConsole(QTextEdit):
+    """The shared append-only result/status log (``objectName('logConsole')``,
+    read-only). Behaves exactly like the plain ``QTextEdit`` pages used to
+    build by hand -- ``append()``/``toPlainText()`` and the QSS selector all
+    still work -- but adds one thing they lacked: a real *empty state*.
+
+    A bare QTextEdit with a top-left placeholder turned the (often
+    screen-filling) result area into a big white void with a lonely gray
+    word in the corner -- the single biggest source of the "单调/空" feel on
+    pages like 语料维护/语料转换. When there's no content yet we paint a
+    centered line-art "console" glyph + the hint underneath instead; the
+    moment anything is appended the document is non-empty and the normal
+    console rendering takes over. The glyph is drawn with QPainter
+    primitives (not an icon font), so it renders identically on Windows and
+    the Linux CI canary -- no per-glyph CJK/symbol fallback surprises.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName('logConsole')
+        self.setReadOnly(True)
+        self._empty_hint = ''
+
+    def set_empty_hint(self, text):
+        self._empty_hint = text
+        self.viewport().update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self._empty_hint and self.document().isEmpty():
+            self._paint_empty_state()
+
+    def _paint_empty_state(self):
+        vp = self.viewport()
+        painter = QPainter(vp)
+        painter.setRenderHint(QPainter.Antialiasing)
+        cx, cy = vp.width() / 2, vp.height() / 2
+
+        icon_w, icon_h = 38, 28
+        ix, iy = int(cx - icon_w / 2), int(cy - icon_h / 2 - 12)
+        pen = QPen(QColor('#C3C9D3'))
+        pen.setWidthF(1.6)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(ix, iy, icon_w, icon_h, 5, 5)
+        # three "log lines" of differing length inside the frame
+        for i, frac in enumerate((0.55, 0.78, 0.42)):
+            ly = iy + 8 + i * 6
+            painter.drawLine(ix + 6, ly, int(ix + 6 + (icon_w - 12) * frac), ly)
+
+        painter.setPen(QColor('#A6ACB6'))
+        text_rect = QRect(0, iy + icon_h + 8, vp.width(), 20)
+        painter.drawText(text_rect, Qt.AlignHCenter | Qt.AlignVCenter, self._empty_hint)
+        painter.end()
+
+
 def page_shell(page, title, subtitle, spacing=18, max_width=960):
     """The standard skeleton for a tool page's ``_build_ui()``: a page
     header (20px title + muted subtitle, styled via objectName in
@@ -340,15 +450,31 @@ def page_shell(page, title, subtitle, spacing=18, max_width=960):
     col_layout.setSpacing(14)
 
     header = QWidget()
-    header_layout = QVBoxLayout(header)
+    header.setObjectName('pageHeader')
+    header_layout = QHBoxLayout(header)
     header_layout.setContentsMargins(0, 0, 0, 0)
-    header_layout.setSpacing(2)
+    header_layout.setSpacing(14)
+    # Icon chip reserved for the tool glyph (filled by MainWindow via
+    # apply_page_icon()); hidden until an icon lands so a page built without
+    # one (home, tests) shows no empty colored box. Indigo glyph on an
+    # indigo-tinted rounded chip -- the one deliberate color focal point at
+    # the top of every page.
+    icon_label = QLabel()
+    icon_label.setObjectName('pageHeaderIcon')
+    icon_label.setFixedSize(44, 44)
+    icon_label.setAlignment(Qt.AlignCenter)
+    icon_label.hide()
     title_label = QLabel(title)
     title_label.setObjectName('pageTitle')
     subtitle_label = QLabel(subtitle)
     subtitle_label.setObjectName('pageSubtitle')
-    header_layout.addWidget(title_label)
-    header_layout.addWidget(subtitle_label)
+    text_col = QVBoxLayout()
+    text_col.setContentsMargins(0, 0, 0, 0)
+    text_col.setSpacing(2)
+    text_col.addWidget(title_label)
+    text_col.addWidget(subtitle_label)
+    header_layout.addWidget(icon_label, 0, Qt.AlignVCenter)
+    header_layout.addLayout(text_col, 1)
     col_layout.addWidget(header)
 
     card = QWidget()

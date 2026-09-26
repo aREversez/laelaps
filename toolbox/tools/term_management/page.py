@@ -95,7 +95,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QListWidget, QMenu, QMessageBox, QPushButton, QSpinBox, QTableWidget,
-    QTableWidgetItem, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from language_tools.reports import adapters as report_adapters
@@ -109,7 +109,7 @@ from language_tools.tm import io as tm_io
 from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import (CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo,
-                             labeled_field, page_shell)
+                             labeled_field, LogConsole, page_shell)
 from toolbox.widgets import lang_combo_code, make_lang_combo, section, set_lang_combo_code
 from toolbox.workers import CallableWorker, wait_for_running
 
@@ -258,12 +258,10 @@ class TermManagementPage(QWidget):
         self.tabs.addTab(self._build_extract_tab(), '候选词提取')
         outer.addWidget(self.tabs)
 
-        self.log = QTextEdit()
-        self.log.setObjectName('logConsole')
-        self.log.setReadOnly(True)
+        self.log = LogConsole()
         self.log.setMinimumHeight(90)
         self.log.setMaximumHeight(120)
-        self.log.setPlaceholderText('操作结果会显示在这里')
+        self.log.set_empty_hint('操作结果会显示在这里')
         # Shared across all three tabs, this is a status/operation console --
         # each tab's own table (术语条目/检查结果/候选结果) is the primary result
         # area, so the log stays a small fixed-height box below them. Giving it

@@ -83,7 +83,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget,
-    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from language_tools import align_report
@@ -94,6 +94,7 @@ from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, section, set_lang_combo_code
+from toolbox.widgets import LogConsole
 from toolbox.workers import CallableWorker, wait_for_running
 
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
@@ -244,12 +245,10 @@ class AlignmentCheckPage(QWidget):
 
         outer.addWidget(section('对齐结果', results_content), 1)
 
-        self.log = QTextEdit()
-        self.log.setObjectName('logConsole')
-        self.log.setReadOnly(True)
+        self.log = LogConsole()
         self.log.setMinimumHeight(80)
         self.log.setMaximumHeight(120)
-        self.log.setPlaceholderText('状态信息会显示在这里')
+        self.log.set_empty_hint('状态信息会显示在这里')
         # The log is a status console, not one more form field -- giving it a
         # 状态 header (via section()) so it reads as an intentional result area
         # instead of a floating empty box under the results table. Same

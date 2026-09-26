@@ -207,7 +207,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QStyle,
     QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
-    QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from language_tools import qa as qa_module
@@ -217,7 +217,7 @@ from language_tools.tm import io as tm_io
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
 from toolbox import settings
-from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, page_shell, section
+from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, LogConsole, page_shell, section
 from toolbox.workers import CallableWorker, wait_for_running
 
 _CSV_FILTER = 'CSV (*.csv)'
@@ -640,12 +640,10 @@ class QaCheckPage(QWidget):
 
         outer.addWidget(section('QA 结果', results_content), 1)
 
-        self.log = QTextEdit()
-        self.log.setObjectName('logConsole')
-        self.log.setReadOnly(True)
+        self.log = LogConsole()
         self.log.setMinimumHeight(80)
         self.log.setMaximumHeight(120)
-        self.log.setPlaceholderText('状态信息会显示在这里')
+        self.log.set_empty_hint('状态信息会显示在这里')
         # The log is a status console, not one more form field -- giving it a
         # 状态 header (via section()) so it reads as an intentional result area
         # instead of a floating empty box under the results table. Same

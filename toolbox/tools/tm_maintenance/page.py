@@ -59,7 +59,7 @@ import os
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QCheckBox, QFileDialog,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
-    QPushButton, QTableWidget, QTableWidgetItem, QTextEdit,
+    QPushButton, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt
@@ -75,8 +75,8 @@ from language_tools.tm import stats as stats_module
 from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import (
-    CORPUS_FILTER, LOG_COLORS, CurrentPageTabWidget, compact_combo,
-    labeled_field, page_shell, section,
+    CORPUS_FILTER, LOG_COLORS, CurrentPageTabWidget, columns, compact_combo,
+    labeled_field, LogConsole, page_shell, section,
 )
 from toolbox.workers import CallableWorker, wait_for_running
 
@@ -173,11 +173,9 @@ class TmMaintenancePage(QWidget):
         self.tabs.addTab(self._build_stats_tab(), '统计')
         outer.addWidget(self.tabs)
 
-        self.log = QTextEdit()
-        self.log.setObjectName('logConsole')
-        self.log.setReadOnly(True)
+        self.log = LogConsole()
         self.log.setMinimumHeight(110)
-        self.log.setPlaceholderText('操作结果会显示在这里')
+        self.log.set_empty_hint('操作结果会显示在这里')
         outer.addWidget(section('结果', self.log), 1)
 
     def _build_clean_tab(self):
@@ -195,7 +193,6 @@ class TmMaintenancePage(QWidget):
         browse_btn.clicked.connect(self._browse_clean_input)
         file_layout.addWidget(self.clean_input_edit, 1)
         file_layout.addWidget(browse_btn)
-        layout.addWidget(section('选择文件', file_row))
 
         output_row = QWidget()
         output_layout = QHBoxLayout(output_row)
@@ -207,7 +204,14 @@ class TmMaintenancePage(QWidget):
         output_browse_btn.clicked.connect(self._browse_clean_output)
         output_layout.addWidget(self.clean_output_edit, 1)
         output_layout.addWidget(output_browse_btn)
-        layout.addWidget(section('输出到（可选）', output_row))
+        # 选择文件 / 输出到 are two short, related inputs -- laid out side by
+        # side as one two-column row (columns()) rather than two stacked
+        # full-width bands, so the tab reads as a compact form, not a list of
+        # identical rows.
+        layout.addWidget(columns(
+            section('选择文件', file_row),
+            section('输出到（可选）', output_row),
+        ))
 
         opts_row = QWidget()
         opts_layout = QHBoxLayout(opts_row)

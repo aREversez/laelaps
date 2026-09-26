@@ -334,6 +334,12 @@ Design tokens（颜色，命名 hex，别在别处重新定义）：
 
 布局原则：扁平面板 + 发丝级分隔线，不用 QGroupBox 原生的"盒子套标题"外观（做不出干净的现代感，`toolbox/widgets.py` 里的 `section()` helper 是替代方案：一个小标题 label + 一条分隔线 + 内容）。
 
+**分区与层级（2026-09 定案，取代早先两次太低调的尝试）**：前两轮——① 通宽发丝分隔线、② Tab 面板 `#F7F8FA` 浅底——都被反馈为"整体没变化"，因为发丝线和近白浅底都太弱、造不出图底关系。最终定案用**三级色底分层**：白页卡 `#pageCard` → **分区卡片 `#sectionCard`（浅冷灰 #F3F5F9 + 发丝边 + 12px 圆角，`section()` 直接返回这张卡片）** → 卡片内的白色输入框/表格/文件列表。页面从此读作"一块块分组面板"而非"一长条满宽堆叠行"。配套三条：
+- **分区标题**：左侧 3px indigo 强调条（`role="hairline"` 框架仍保留在 `section()` 结构里、QSS 高度归 0，作契约用），不再画通宽线。
+- **页头图标芯片**：`page_shell()` 预留 `QLabel#pageHeaderIcon`（44px 圆角、`#EAEEF6` indigo 浅底），由 `MainWindow` 调 `widgets.apply_page_icon(page, spec.icon)` 填入该工具 glyph（`tinted_icon_pixmap` 染 indigo）——每页顶部唯一的彩色焦点；无图标时（首页/测试）自动隐藏，不留空色块。
+- **结果区空状态**：日志框统一用 `widgets.LogConsole`（继承 `QTextEdit`，仍带 `objectName('logConsole')`），无内容时 `paintEvent` 用 QPainter 图元画一个居中的"控制台"线稿图标 + 提示语（`set_empty_hint(...)`），消除大片死白；一有 `append()` 就恢复正常渲染。图标是 QPainter 画的，不用 icon 字体，规避 CJK/符号逐字回退问题。
+相关：Tab 面板回归纯白无边框（分组改由 `#sectionCard` 承担，浅底卡片必须坐在白面上才凸显）；表格 `alternate-background-color: #F7F8FA`、表头透明。原则：层级优先用**色底分层/强调条/图标**表达，边框只留给真正的输入框与结果盒；阴影规则不变（仍只有 `#pageCard` 与首页 tile hover 两处，`#sectionCard` 一律不加）。
+
 **阴影（2026-09 UI 现代化轮修订）**：早先在这里写的是"不做千篇一律的卡片+统一阴影"，防的是 SaaS 模板味道，但执行过头变成了零层级。现定案为**受控轻投影**：全应用只允许两处阴影，都是 ink 6%~10% 不透明度、≤14px 模糊、2~3px 下偏移（`QGraphicsDropShadowEffect`，QSS 没有 box-shadow）——① 每个工具页唯一的内容卡片（`widgets.page_shell()` 内建的 `#pageCard`）；② 首页工具卡片 **hover 时**（离开即取消）。输入框、按钮、表格、Tab 面板一律不许加阴影，出现第三处即为走偏。
 
 页面骨架：每个工具页的 `_build_ui()` 从 `toolbox.widgets.page_shell(标题, 副标题)` 开始——页头（`#pageTitle`/`#pageSubtitle`，QSS 定样式，不在 page.py 里写 inline setStyleSheet）+ 一张白色内容卡片包在 `QScrollArea` 里（小窗口不再裁切长表单）。返回值第一个元素就是页面往上加内容的 `outer` 布局，接法和旧的 `QVBoxLayout(self)` 一样。

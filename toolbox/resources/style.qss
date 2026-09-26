@@ -116,6 +116,14 @@ QWidget#pageCard {
     border: 1px solid #E3E6EB;
     border-radius: 10px;
 }
+/* Page-header icon chip: the tool glyph (tinted indigo, set in Python via
+ * widgets.apply_page_icon) on a soft indigo wash -- the one deliberate
+ * color focal point at the top of every tool page. Hidden until an icon
+ * lands, so a page without one shows no stray colored box. */
+QLabel#pageHeaderIcon {
+    background: #EAEEF6;
+    border-radius: 12px;
+}
 QScrollArea#pageScroll, QScrollArea#pageScroll > QWidget,
 QScrollArea#homeScroll, QScrollArea#homeScroll > QWidget {
     background: transparent;
@@ -143,10 +151,27 @@ QLabel#homeTileDesc {
 }
 
 /* ------------------------------------------------------------- sections */
+/* Each section() is a self-contained tinted card on the white page card --
+ * the decisive figure-ground layering that replaces the earlier hairline /
+ * near-white-tint attempts (both too subtle to read as a change). A page
+ * now scans as a set of grouped panels, and white input fields pop against
+ * the card's cool-gray wash. Flat + hairline only: no shadow (DESIGN.md
+ * §13 reserves shadow for the page card and home tiles). The title keeps a
+ * 3px indigo left accent bar; the old full-width hairline is collapsed to
+ * height 0 (kept in section()'s structure so the role="hairline" contract
+ * stays in sync for any future real divider). */
+QWidget#sectionCard {
+    background: #F3F5F9;
+    border: 1px solid #E4E8EF;
+    border-radius: 12px;
+}
 QLabel[role="sectionTitle"] {
     font-size: 14px;
     font-weight: 600;
     color: #4B5262;
+    border-left: 3px solid #2E4374;
+    border-radius: 1px;
+    padding-left: 8px;
 }
 QLabel[role="fieldLabel"] {
     color: #6B7280;
@@ -154,8 +179,8 @@ QLabel[role="fieldLabel"] {
 }
 QFrame[role="hairline"] {
     background: #E3E6EB;
-    max-height: 1px;
-    min-height: 1px;
+    max-height: 0px;
+    min-height: 0px;
     border: none;
 }
 
@@ -201,7 +226,7 @@ QCheckBox::indicator:checked {
 
 /* ------------------------------------------------------------------ tabs */
 /* The tab bar is styled as a standalone rounded "segmented control" that
- * floats above the content card (its own full border box, its own
+ * floats above the tab content (its own full border box, its own
  * background) rather than the traditional connected-notebook-tab look.
  * The old style only gave the *selected* tab a box; the other two just
  * sat on bare background with no border of their own, and pane's
@@ -211,26 +236,37 @@ QCheckBox::indicator:checked {
  * a border that just stops short exactly at the top-left. Two fully
  * separate rounded boxes with a real gap between them sidesteps that:
  * neither one depends on the other for its corners.
+ *
+ * 2026-09 polish: the pane used to be its own white bordered box sitting
+ * on the white page card -- a second frame nested inside the card's frame
+ * (and the tab widget's own rectangle), i.e. border-on-border-on-border.
+ * It is now a plain white, borderless surface: the grouping/depth work is
+ * done by the tinted #sectionCard blocks that live inside it, so the pane
+ * itself must stay white for those cards to pop (a tinted pane on a tinted
+ * card would flatten them back together). The segmented tab bar keeps its
+ * own box. QTabPane is listed alongside QTabWidget because the pane is a
+ * real child QWidget and the bare `QWidget { background: transparent }`
+ * rule above would otherwise win over a pane-less selector.
  */
-QTabWidget::pane {
-    border: 1px solid #E3E6EB;
-    border-radius: 8px;
+QTabWidget, QTabWidget > QTabPane, QTabWidget::pane {
     background: #FFFFFF;
+    border: none;
+    border-radius: 10px;
     top: 8px;
 }
 QTabBar {
     background: #EEF0F4;
-    border: 1px solid #E3E6EB;
-    border-radius: 9px;
-    padding: 3px;
+    border: none;
+    border-radius: 6px;
+    padding: 0;
 }
 QTabBar::tab {
     background: transparent;
     color: #6B7280;
     border: none;
     border-radius: 6px;
-    padding: 7px 18px;
-    margin: 0 1px;
+    padding: 8px 18px;
+    margin: 0;
 }
 QTabBar::tab:hover {
     color: #1A1D23;
@@ -239,6 +275,32 @@ QTabBar::tab:selected {
     background: #FFFFFF;
     color: #2E4374;
     font-weight: 600;
+}
+
+/* ------------------------------------------------------------- file lists */
+/* The "pick several files" lists (tm_maintenance 合并/对比, term_management
+ * 候选词提取). Bare QListWidget inherited transparent-background + no frame
+ * from the generic QWidget rule, so on the white card / tinted tab panel
+ * the drop zone had no visible boundary at all -- unlike its sibling line
+ * edits, which always read as fields. #sidebar rules below still win
+ * (objectName selectors outrank the bare type selector). */
+QListWidget {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EB;
+    border-radius: 8px;
+    padding: 4px;
+    outline: 0;
+}
+QListWidget::item {
+    padding: 6px 10px;
+    border-radius: 6px;
+}
+QListWidget::item:hover {
+    background: #F0F2F6;
+}
+QListWidget::item:selected {
+    background: #EAEEF6;
+    color: #2E4374;
 }
 
 /* --------------------------------------------------------------- buttons */
@@ -295,6 +357,17 @@ QTableWidget {
     selection-background-color: #EAEEF6;
     selection-color: #1A1D23;
 }
+/* Every results table on every page already calls
+   setAlternatingRowColors(True) in Python -- but without an explicit
+   alternate color the viewport just painted white-on-white and the flag
+   did nothing. One tinted row in a hairline-ruled table gives the eye a
+   scan rhythm without adding any line. The viewport itself needs the
+   color too (it is a separate QWidget and the bare QWidget rule above
+   makes it transparent otherwise). */
+QTableWidget, QTableWidget > QWidget#qt_tableviewport,
+QTableView, QTableView > QWidget#qt_tableviewport {
+    alternate-background-color: #F7F8FA;
+}
 QTableWidget::item {
     padding: 6px 10px;
 }
@@ -302,8 +375,13 @@ QTableWidget::item:selected {
     background: #EAEEF6;
     color: #1A1D23;
 }
+/* Header sits on whatever the table's container is (white card, tinted
+ * tab panel) instead of painting its own #F6F7F9 gray band -- with the
+ * tinted alternate rows below it, a tinted header strip made the table
+ * look like three stacked boxes. The bottom hairline is what separates
+ * header from rows. */
 QHeaderView::section {
-    background: #F6F7F9;
+    background: transparent;
     color: #6B7280;
     padding: 8px 10px;
     border: none;
