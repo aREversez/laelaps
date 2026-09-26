@@ -35,6 +35,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+      - name: Install Qt system libraries
+        # pytest-qt imports QtGui at pytest_configure time, so a missing
+        # libEGL/libGL aborts the whole session (pytest exit 3) before any
+        # test runs -- offscreen does not remove that load-time dependency.
+        # The runner's apt cache is stale, so update first.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libopengl1 libdbus-1-3 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libxkbcommon0 libfontconfig1
       - name: Install
         run: |
           python -m pip install --upgrade pip
@@ -44,6 +57,9 @@ jobs:
         # importorskip, so in this matrix it would surface as an
         # "environmental skip" every run; the dedicated `packaging` job
         # owns that coverage instead, so exclude it explicitly here.
+        # shell must be pinned: the Windows runner otherwise defaults to pwsh
+        # and fails to parse the POSIX `for ... do` loop below.
+        shell: bash
         run: |
           for i in 1 2 3; do
             echo "::group::pytest run $i/3"
@@ -60,6 +76,17 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+      - name: Install Qt system libraries
+        # Same reason as in the `test` job: this job's pytest session also
+        # loads pytest-qt, so it needs libEGL/libGL present on Linux.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libegl1 libgl1 libopengl1 libdbus-1-3 \
+            libxkbcommon-x11-0 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1 libxkbcommon0 libfontconfig1
       - name: Install
         run: |
           python -m pip install --upgrade pip
