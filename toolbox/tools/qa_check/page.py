@@ -928,7 +928,7 @@ class QaCheckPage(QWidget):
         # results exist yet, rather than crashing on an empty CSV write.
         if not self._last_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', self._last_dir, _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', settings.effective_start_dir(self._last_dir), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
@@ -958,7 +958,7 @@ class QaCheckPage(QWidget):
         if not self._last_units:
             return
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '导出报告', os.path.join(self._last_dir, 'QA报告'), _REPORT_FILTER)
+            self, '导出报告', os.path.join(settings.effective_start_dir(self._last_dir), 'QA报告'), _REPORT_FILTER)
         if not path:
             return
         if '.' not in os.path.basename(path):
@@ -976,7 +976,7 @@ class QaCheckPage(QWidget):
         if not self._last_units:
             return
         path, _selected_filter = QFileDialog.getSaveFileName(
-            self, '导出审阅文档', os.path.join(self._last_dir, '双语审阅文档'), _REVIEW_FILTER)
+            self, '导出审阅文档', os.path.join(settings.effective_start_dir(self._last_dir), '双语审阅文档'), _REVIEW_FILTER)
         if not path:
             return
         if '.' not in os.path.basename(path):

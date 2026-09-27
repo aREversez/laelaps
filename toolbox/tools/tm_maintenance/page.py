@@ -573,7 +573,7 @@ class TmMaintenancePage(QWidget):
             self._last_dir = os.path.dirname(path)
 
     def _browse_clean_output(self):
-        path, _ = QFileDialog.getSaveFileName(self, '另存为', self._last_dir, _SAVE_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '另存为', settings.effective_start_dir(self._last_dir), _SAVE_FILTER)
         if path:
             self.clean_output_edit.setText(path)
             self._last_dir = os.path.dirname(path)
@@ -592,7 +592,7 @@ class TmMaintenancePage(QWidget):
             self.merge_list.takeItem(self.merge_list.row(item))
 
     def _browse_merge_output(self):
-        path, _ = QFileDialog.getSaveFileName(self, '另存为', self._last_dir, _SAVE_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '另存为', settings.effective_start_dir(self._last_dir), _SAVE_FILTER)
         if path:
             self.merge_output_edit.setText(path)
             self._last_dir = os.path.dirname(path)
@@ -812,7 +812,7 @@ class TmMaintenancePage(QWidget):
         extension-dispatch ``tmtool``'s own ``--report`` flag uses).
         """
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '导出报告', os.path.join(self._last_dir, default_name), _REPORT_FILTER)
+            self, '导出报告', os.path.join(settings.effective_start_dir(self._last_dir), default_name), _REPORT_FILTER)
         if not path:
             return
         if '.' not in os.path.basename(path):
@@ -879,7 +879,7 @@ class TmMaintenancePage(QWidget):
     def _export_leverage_csv(self):
         if not self._leverage_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', self._last_dir, _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', settings.effective_start_dir(self._last_dir), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
@@ -944,7 +944,7 @@ class TmMaintenancePage(QWidget):
     def _export_compare_csv(self):
         if not self._compare_report or not self._compare_report['conflicts']:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出冲突 CSV', self._last_dir, _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '导出冲突 CSV', settings.effective_start_dir(self._last_dir), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):

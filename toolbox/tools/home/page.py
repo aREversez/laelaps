@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from toolbox import registry
+from toolbox import settings
 from toolbox.widgets import tinted_icon_pixmap
 
 # Responsive tile grid: up to 3 columns on a wide window, dropping to 2/1 as
@@ -160,6 +161,27 @@ class HomePage(QWidget):
         root.addWidget(greeting)
         root.addWidget(tagline)
 
+        # "最近使用" row (DESIGN.md 15.4 P2): reuses _ToolTile, rebuilt on
+        # every show (this page is kept alive in the stack, so navigating
+        # back re-reads the list). Hidden entirely when nothing's been
+        # recorded yet -- no empty block on first launch, matching the
+        # project's "no content, no space" convention. The list itself is
+        # recorded centrally in MainWindow.select_tool, not here.
+        self._spec_by_id = {spec.id: spec for spec in registry.discover()}
+        self._recent_host = QWidget()
+        recent_box = QVBoxLayout(self._recent_host)
+        recent_box.setContentsMargins(0, 0, 0, 0)
+        recent_box.setSpacing(8)
+        recent_title = QLabel('最近使用')
+        recent_title.setObjectName('homeSectionTitle')
+        recent_box.addWidget(recent_title)
+        self._recent_row = QHBoxLayout()
+        self._recent_row.setContentsMargins(0, 0, 0, 0)
+        self._recent_row.setSpacing(16)
+        recent_box.addLayout(self._recent_row)
+        self._recent_host.setVisible(False)
+        root.addWidget(self._recent_host)
+
         self._grid_host = QWidget()
         # Maximum (not Preferred) vertically: inside a widgetResizable scroll
         # area this keeps the grid at its natural height instead of stretching
@@ -212,6 +234,36 @@ class HomePage(QWidget):
 
         self._cols = 0  # 0 = nothing placed yet; first _reflow lays out
         self._reflow()
+        self._rebuild_recent()
+
+    def showEvent(self, event):
+        # This page lives on in the QStackedWidget after the first show, so
+        # the recently-used list is re-read every time it's navigated back
+        # to (DESIGN.md 15.4 P2).
+        self._rebuild_recent()
+        super().showEvent(event)
+
+    def _clear_recent_row(self):
+        while self._recent_row.count():
+            item = self._recent_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+    def _rebuild_recent(self):
+        self._clear_recent_row()
+        recent_ids = [tid for tid in settings.get_recent_tools()
+                      if tid != 'home' and tid in self._spec_by_id]
+        if not recent_ids:
+            self._recent_host.setVisible(False)
+            return
+        for tid in recent_ids:
+            spec = self._spec_by_id[tid]
+            tile = _ToolTile(spec)
+            tile.clicked.connect(lambda id_=tid: self.toolRequested.emit(id_))
+            self._recent_row.addWidget(tile)
+        self._recent_row.addStretch(1)
+        self._recent_host.setVisible(True)
 
     def eventFilter(self, obj, event):
         if obj is self._grid_scroll and event.type() == QEvent.Resize:

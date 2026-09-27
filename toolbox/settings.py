@@ -45,3 +45,49 @@ def get_int(key, default=0):
 
 def set_value(key, value):
     QSettings().setValue(key, value)
+
+
+# Cross-tool global keys (DESIGN.md 15.4 P2): the ``'global/'`` prefix sits
+# alongside the per-tool ``'<tool_id>/'`` convention for the handful of
+# values that aren't owned by one page's form -- home's recently-used list
+# and the shared default output directory.
+_GLOBAL_PREFIX = 'global/'
+_RECENT_KEY = 'home/recent_tools'
+_RECENT_MAX = 3
+
+
+def get_default_output_dir():
+    """The cross-tool default output directory (DESIGN.md 15.4 P2), or ''
+    when unset. Pages may use it as a fallback start dir for a save/browse
+    dialog when they haven't remembered their own last directory."""
+    return get_str(_GLOBAL_PREFIX + 'default_output_dir')
+
+
+def set_default_output_dir(path):
+    set_value(_GLOBAL_PREFIX + 'default_output_dir', path or '')
+
+
+def effective_start_dir(last_dir=''):
+    """A save/export dialog's starting directory: the page's own remembered
+    last dir if it has one, else the cross-tool 默认输出目录 (DESIGN.md 15.4
+    P2). Purely additive -- with no global default set it returns
+    ``last_dir`` unchanged, so a page that never adopted the global default
+    (or a user who left it blank) behaves exactly as before."""
+    return (last_dir or '').strip() or get_default_output_dir()
+
+
+def get_recent_tools():
+    """Most-recent-first list of tool ids last opened (max ``_RECENT_MAX``),
+    recorded centrally in ``MainWindow.select_tool`` -- the one convergence
+    point for every navigation route (sidebar, home tile, Ctrl+N) -- so
+    none of them has to remember to update it itself. Empty string / unknown
+    entries are dropped rather than shown as blank tiles."""
+    return [t for t in get_str(_RECENT_KEY).split(',') if t]
+
+
+def record_recent_tool(tool_id):
+    if not tool_id or tool_id == 'home':
+        return
+    items = [t for t in get_recent_tools() if t != tool_id]
+    items.insert(0, tool_id)
+    set_value(_RECENT_KEY, ','.join(items[:_RECENT_MAX]))

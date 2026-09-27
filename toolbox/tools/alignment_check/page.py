@@ -449,7 +449,7 @@ class AlignmentCheckPage(QWidget):
         # silent guard against a future caller invoking this directly.
         if not self._last_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', self._last_dir, _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', settings.effective_start_dir(self._last_dir), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
@@ -483,7 +483,7 @@ class AlignmentCheckPage(QWidget):
         if not self._last_units:
             return
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '导出报告', os.path.join(self._last_dir, '对齐检查报告'), _REPORT_FILTER)
+            self, '导出报告', os.path.join(settings.effective_start_dir(self._last_dir), '对齐检查报告'), _REPORT_FILTER)
         if not path:
             return
         if '.' not in os.path.basename(path):

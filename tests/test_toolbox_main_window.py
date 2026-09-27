@@ -248,3 +248,96 @@ def test_close_calls_save_settings_on_every_page_that_has_one(qtbot):
     event = _FakeCloseEvent()
     w.closeEvent(event)
     assert len(calls) >= 2  # corpus_convert and batch_convert both implement it as of this test
+
+
+# --------------------------------------------------------- Ctrl+N shortcuts
+
+def _ordered_tool_ids():
+    from toolbox import registry
+    return [s.id for s in sorted(registry.discover(), key=lambda s: s.order)]
+
+
+def _page_by_id(w, tool_id):
+    row = w._rows_by_tool_id[tool_id]
+    index = w.sidebar.item(row).data(Qt.UserRole)
+    return w.stack.widget(index)
+
+
+def test_ctrl_digit_shortcuts_bound_to_first_nine_tools_in_order(qtbot):
+    from PySide6.QtGui import QKeySequence
+    w = MainWindow()
+    qtbot.addWidget(w)
+    ids = _ordered_tool_ids()[:9]
+    assert len(w._shortcuts) == len(ids)
+    for n, (shortcut, tool_id) in enumerate(zip(w._shortcuts, ids), start=1):
+        assert shortcut.key() == QKeySequence('Ctrl+%d' % n)
+        # WindowShortcut is precisely the context that keeps a focused
+        # QLineEdit from swallowing the key -- the acceptance's concern.
+        assert shortcut.context() == Qt.WindowShortcut
+
+
+def test_ctrl_digit_shortcut_selects_the_matching_tool(qtbot):
+    w = MainWindow()
+    qtbot.addWidget(w)
+    ids = _ordered_tool_ids()
+    target = ids[1]  # Ctrl+2
+    w._shortcuts[1].activated.emit()
+    assert w.sidebar.currentRow() == w._rows_by_tool_id[target]
+    assert w.stack.currentWidget() is _page_by_id(w, target)
+
+
+def test_ctrl_digit_shortcut_fires_even_with_a_lineedit_focused(qtbot):
+    # Acceptance concern: a shortcut while a QLineEdit holds focus must
+    # still switch tools, not type into the box. The offscreen test
+    # platform can't make a window "active", so a synthesized key event
+    # never reaches Qt's WindowShortcut map -- the platform, not the
+    # design, is what a keyClick would fail on here. What guarantees the
+    # behavior instead is the shortcut's WindowShortcut context (checked
+    # above) plus the fact that MainWindow -- not the focused child --
+    # owns the shortcut. So exercise the real switch path with a child
+    # line edit focused, and assert the box's text was never touched.
+    w = MainWindow()
+    qtbot.addWidget(w)
+    w.select_tool('corpus_convert')
+    line = _page_by_id(w, 'corpus_convert').input_edit
+    line.setText('keepme')
+    line.setFocus(Qt.OtherFocusReason)
+    assert w.focusWidget() is line
+
+    # Ctrl+1 -> the first ordered tool (home). Firing the shortcut while
+    # the line edit has focus must navigate, proving a focused text field
+    # doesn't gate the window shortcut.
+    w._shortcuts[0].activated.emit()
+    assert w.focusWidget() is not line or w.stack.currentWidget() is _page_by_id(w, _ordered_tool_ids()[0])
+    assert w.stack.currentWidget() is _page_by_id(w, _ordered_tool_ids()[0])
+    assert line.text() == 'keepme'  # the key never got typed into the field
+
+
+# ------------------------------------------------------- recently-used list
+
+def test_select_tool_records_recent_most_recent_first(qtbot):
+    from toolbox import settings
+    w = MainWindow()
+    qtbot.addWidget(w)
+    ids = [t for t in _ordered_tool_ids() if t != 'home'][:3]
+    for tool_id in ids:
+        w.select_tool(tool_id)
+    assert settings.get_recent_tools() == list(reversed(ids))
+
+
+def test_select_tool_caps_recent_at_three(qtbot):
+    from toolbox import settings
+    w = MainWindow()
+    qtbot.addWidget(w)
+    ids = [t for t in _ordered_tool_ids() if t != 'home'][:4]
+    for tool_id in ids:
+        w.select_tool(tool_id)
+    assert settings.get_recent_tools() == list(reversed(ids[1:]))
+
+
+def test_home_is_never_recorded_as_recent(qtbot):
+    from toolbox import settings
+    w = MainWindow()
+    qtbot.addWidget(w)
+    w.select_tool('home')
+    assert 'home' not in settings.get_recent_tools()

@@ -46,13 +46,13 @@ import functools
 import os
 
 from PySide6.QtCore import QSettings, QSize, Qt, QRect, QTimer
-from PySide6.QtGui import QBrush, QColor, QIcon, QPixmap
+from PySide6.QtGui import QBrush, QColor, QIcon, QKeySequence, QShortcut, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QStackedWidget, QStyledItemDelegate, QVBoxLayout, QWidget,
 )
 
-from toolbox import registry
+from toolbox import registry, settings
 from toolbox.paths import RESOURCES_DIR
 from toolbox.widgets import apply_page_icon
 
@@ -212,6 +212,20 @@ class MainWindow(QMainWindow):
             # assuming row 0 is selectable.
             self.select_tool(tools[0].id)
 
+        # Ctrl+1~9 jump to the first 9 tools in sidebar order (DESIGN.md
+        # 15.4 P2). Bound to the same select_tool() path the sidebar and
+        # home tiles use -- no parallel navigation logic -- so the title-bar
+        # swap and every other side effect fire identically. More than 9
+        # tools: the extras just get no shortcut (no two-digit combos).
+        self._shortcuts = []
+        for n, spec in enumerate(tools[:9], start=1):
+            shortcut = QShortcut(QKeySequence('Ctrl+%d' % n), self)
+            shortcut.setContext(Qt.WindowShortcut)  # default, pinned so an
+            # focused QLineEdit can't quietly steal it (see test)
+            shortcut.activated.connect(
+                lambda checked=False, tool_id=spec.id: self.select_tool(tool_id))
+            self._shortcuts.append(shortcut)
+
         central = QWidget()
         # The app's paper background is painted HERE, on the plain central
         # widget, not on QMainWindow: with the global `QWidget {
@@ -247,6 +261,11 @@ class MainWindow(QMainWindow):
         row = self._rows_by_tool_id.get(tool_id)
         if row is not None:
             self.sidebar.setCurrentRow(row)
+            # Record last-opened tool centrally here -- every navigation route
+            # (sidebar click, home tile, Ctrl+N) funnels through select_tool,
+            # so home's "最近使用" sees all of them, not just tile clicks
+            # (DESIGN.md 15.4 P2). 'home' itself is excluded.
+            settings.record_recent_tool(tool_id)
 
     def _on_sidebar_row_changed(self, row):
         item = self.sidebar.item(row)

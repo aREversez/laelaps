@@ -78,6 +78,16 @@ def test_reflow_gives_every_used_column_equal_stretch(qtbot):
     widths even though every column in those rows held a tile."""
     page = HomePage()
     qtbot.addWidget(page)
+    # The bug only reproduces when the tile count doesn't divide evenly
+    # into the column count. Force an odd count deterministically so this
+    # regression doesn't silently stop exercising the bug's scenario every
+    # time a tool is added to (or removed from) the registry -- the grid
+    # size should not be part of what this test pins down.
+    if len(page._tiles) % 2 == 0:
+        extra = page._tiles.pop()
+        page._grid.removeWidget(extra)
+        extra.setParent(None)
+        extra.deleteLater()
     assert len(page._tiles) % 2 != 0  # otherwise this case can't reproduce the bug
 
     # Force the 2-column breakpoint (see _TILE_MIN_WIDTH/_columns_for).
@@ -99,3 +109,57 @@ def test_reflow_gives_every_used_column_equal_stretch(qtbot):
     assert page._cols == 3
     stretches = [page._grid.columnStretch(c) for c in range(page._cols)]
     assert len(set(stretches)) == 1 and stretches[0] > 0
+
+
+# ---------------------------------------------------- "最近使用" (P2)
+
+def _recent_tiles(page):
+    from toolbox.tools.home.page import _ToolTile
+    tiles = []
+    for i in range(page._recent_row.count()):
+        item = page._recent_row.itemAt(i)
+        widget = item.widget() if item is not None else None
+        if isinstance(widget, _ToolTile):
+            tiles.append(widget)
+    return tiles
+
+
+def test_recent_row_hidden_when_nothing_recorded(qtbot):
+    from toolbox import settings
+    page = HomePage()
+    qtbot.addWidget(page)
+    assert settings.get_recent_tools() == []
+    assert page._recent_host.isHidden()
+    assert _recent_tiles(page) == []
+
+
+def test_recent_row_shows_tiles_in_recorded_order(qtbot):
+    from toolbox import settings
+    settings.set_value('home/recent_tools', 'corpus_convert,qa_check')
+    page = HomePage()
+    qtbot.addWidget(page)
+    assert not page._recent_host.isHidden()
+    tiles = _recent_tiles(page)
+    assert len(tiles) == 2
+    names = [t._spec.id for t in tiles]
+    assert names == ['corpus_convert', 'qa_check']
+
+
+def test_recent_tile_click_navigates(qtbot):
+    from toolbox import settings
+    settings.set_value('home/recent_tools', 'qa_check')
+    page = HomePage()
+    qtbot.addWidget(page)
+    got = []
+    page.toolRequested.connect(got.append)
+    _recent_tiles(page)[0].clicked.emit()
+    assert got == ['qa_check']
+
+
+def test_unknown_recent_id_is_dropped_not_shown_as_blank_tile(qtbot):
+    from toolbox import settings
+    settings.set_value('home/recent_tools', 'no_such_tool')
+    page = HomePage()
+    qtbot.addWidget(page)
+    assert page._recent_host.isHidden()
+    assert _recent_tiles(page) == []

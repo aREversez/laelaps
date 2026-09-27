@@ -536,7 +536,7 @@ class TermManagementPage(QWidget):
 
     def _save_glossary_as(self):
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '另存为', self._last_dir, _GLOSSARY_SAVE_FILTER)
+            self, '另存为', settings.effective_start_dir(self._last_dir), _GLOSSARY_SAVE_FILTER)
         if not path:
             return
         self._last_dir = os.path.dirname(path)
@@ -604,7 +604,7 @@ class TermManagementPage(QWidget):
             return True
         if not self._glossary_path:
             path, selected_filter = QFileDialog.getSaveFileName(
-                self, '另存为', '', _GLOSSARY_SAVE_FILTER)
+                self, '另存为', settings.effective_start_dir(self._last_dir), _GLOSSARY_SAVE_FILTER)
             if not path:
                 return False
             return self._write_glossary(_pick_save_extension(path, selected_filter))
@@ -857,7 +857,7 @@ class TermManagementPage(QWidget):
     def _start_export(self):
         if not self._last_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', self._last_dir, _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', settings.effective_start_dir(self._last_dir), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
@@ -891,7 +891,7 @@ class TermManagementPage(QWidget):
         if not self._last_units:
             return
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '导出报告', os.path.join(self._last_dir, '术语检查报告'), _REPORT_FILTER)
+            self, '导出报告', os.path.join(settings.effective_start_dir(self._last_dir), '术语检查报告'), _REPORT_FILTER)
         if not path:
             return
         if '.' not in os.path.basename(path):

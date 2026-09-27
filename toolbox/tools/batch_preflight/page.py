@@ -408,7 +408,7 @@ class BatchPreflightPage(QWidget):
         if self._ran_count <= 0:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, '导出汇总 CSV', os.path.join(self._last_dir, '批量预检汇总'), _CSV_FILTER)
+            self, '导出汇总 CSV', os.path.join(settings.effective_start_dir(self._last_dir), '批量预检汇总'), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
