@@ -59,7 +59,7 @@ import os
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QCheckBox, QFileDialog,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
-    QPushButton, QTableWidget, QTableWidgetItem,
+    QMessageBox, QPushButton, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import Qt
@@ -76,7 +76,7 @@ from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import (
     CORPUS_FILTER, LOG_COLORS, CurrentPageTabWidget, columns, compact_combo,
-    labeled_field, LogConsole, page_shell, section,
+    labeled_field, LogConsole, page_shell, section, set_button_busy,
 )
 from toolbox.workers import CallableWorker, wait_for_running
 
@@ -124,6 +124,29 @@ def _merge_job(input_paths, output_path, strategy):
     return report
 
 
+def _clean_preview_job(input_path, normalize, dedupe, remove_empty, remove_identical):
+    """只算不写的预览路径（DESIGN.md 15.4 P0）：读文件 + 跑
+    ``clean_module.clean()`` 拿回数字 report，但**绝不调用
+    ``tm_io.write_corpus()``**——写盘留给用户显式确认后的 ``_clean_job``。
+    核心 ``clean()`` 本身就不写文件，拆“预览/执行”两段因此全部在
+    GUI 层完成，无需改 ``language_tools.tm.*`` 的函数签名。
+    """
+    units = tm_io.read_corpus(input_path)
+    _, report = clean_module.clean(
+        units, normalize=normalize, dedupe=dedupe,
+        remove_empty=remove_empty, remove_identical=remove_identical)
+    return report
+
+
+def _merge_preview_job(input_paths, strategy):
+    """``_clean_preview_job`` 的合并版：读入多个文件 + 跑
+    ``merge_module.merge()`` 拿回 report，不写盘。
+    """
+    unit_lists = [tm_io.read_corpus(p) for p in input_paths]
+    _, report = merge_module.merge(unit_lists, strategy=strategy)
+    return report
+
+
 def _stats_job(input_path):
     units = tm_io.read_corpus(input_path)
     return stats_module.compute(units)
@@ -150,6 +173,12 @@ class TmMaintenancePage(QWidget):
         self._leverage_worker = None
         self._compare_worker = None
         self._stats_worker = None
+        # 预览 worker（P0）：清理/合并各多一个"只算不写"的阶段，跑在
+        # 真正写盘的 worker 之前，两者共用同一个按钮忙碌态。
+        self._clean_preview_worker = None
+        self._merge_preview_worker = None
+        self._clean_pending = None   # 确认后要跑的 _clean_job kwargs
+        self._merge_pending = None   # 确认后要跑的 _merge_job kwargs
         self._leverage_units = None    # last leverage analyze() result, for export
         self._compare_report = None    # last compare() result, for export
         self._last_stats = None        # last stats.compute() result, for export
@@ -603,13 +632,14 @@ class TmMaintenancePage(QWidget):
     def cleanup(self):
         """Called by ``main_window.py`` on a real window close. See
         ``toolbox.workers.wait_for_running()`` for why a page with a
-        worker needs this -- this page has five separate ones (one per
-        tab's action), any of which could be running when the window
-        closes.
+        worker needs this -- this page has one worker slot per tab action
+        plus two 预览 slots（清理/合并的只算不写阶段）, any of which could
+        be running when the window closes.
         """
         wait_for_running(
             self._clean_worker, self._merge_worker, self._leverage_worker,
-            self._compare_worker, self._stats_worker)
+            self._compare_worker, self._stats_worker,
+            self._clean_preview_worker, self._merge_preview_worker)
 
     # ---------------------------------------------------------- settings
     def restore_settings(self):
@@ -657,22 +687,49 @@ class TmMaintenancePage(QWidget):
 
         input_path = self.clean_input_edit.text().strip()
         output_path = self.clean_output_edit.text().strip() or input_path
-        fn_kwargs = dict(
-            input_path=input_path, output_path=output_path,
+        opts = dict(
             normalize=self.clean_chk_normalize.isChecked(),
             dedupe=self.clean_chk_dedupe.isChecked(),
             remove_empty=self.clean_chk_remove_empty.isChecked(),
             remove_identical=self.clean_chk_remove_identical.isChecked(),
         )
-        self.clean_btn.setEnabled(False)
+        # 缓存好参数，确认后第二个 worker 直接拿它跑含写盘的 _clean_job。
+        self._clean_pending = dict(input_path=input_path, output_path=output_path, **opts)
+        # 预览阶段：只算不写，按钮忙碌态（禁用 + "清理中…"）贯穿预览与
+        # 确认后的写盘两个阶段，只在最终 ok/err/取消时才恢复。
+        set_button_busy(self.clean_btn, True, '清理中…')
+        self._log('正在预览清理结果…')
+        self._clean_preview_worker = CallableWorker(
+            lambda: _clean_preview_job(input_path, **opts), parent=self)
+        self._clean_preview_worker.finished_ok.connect(self._on_clean_preview_ok)
+        self._clean_preview_worker.finished_err.connect(self._on_clean_err)
+        self._clean_preview_worker.start()
+
+    def _on_clean_preview_ok(self, report):
+        """摆出数字化预览让人确认（P0），确认后才起含写盘的第二个 worker。"""
+        text = (
+            '将删除 重复 %d / 空段 %d / 原文=译文 %d 条（共 %d → %d），并标准化 %d 条。\n'
+            '输出：%s\n\n是否继续？'
+            % (report['removed_duplicate'], report['removed_empty'],
+               report['removed_identical'], report['input'], report['output'],
+               report['normalized'], self._clean_pending['output_path']))
+        answer = QMessageBox.question(
+            self, '确认清理', text,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            set_button_busy(self.clean_btn, False)
+            self._log('已取消，文件未改动')
+            return
+        params = self._clean_pending
         self._log('正在清理…')
-        self._clean_worker = CallableWorker(lambda: _clean_job(**fn_kwargs), parent=self)
+        self._clean_worker = CallableWorker(
+            lambda: _clean_job(**params), parent=self)
         self._clean_worker.finished_ok.connect(self._on_clean_ok)
         self._clean_worker.finished_err.connect(self._on_clean_err)
         self._clean_worker.start()
 
     def _on_clean_ok(self, report):
-        self.clean_btn.setEnabled(True)
+        set_button_busy(self.clean_btn, False)
         self._log(
             '清理完成：%d 条 -> %d 条（去重 %d，去空段 %d，去原文=译文 %d，标准化 %d 条）'
             % (report['input'], report['output'], report['removed_duplicate'],
@@ -681,7 +738,7 @@ class TmMaintenancePage(QWidget):
         self._log('已保存到 %s' % report['output_path'])
 
     def _on_clean_err(self, message):
-        self.clean_btn.setEnabled(True)
+        set_button_busy(self.clean_btn, False)
         self._log('出错了：%s' % message, 'error')
 
     # ----------------------------------------------------------- merge
@@ -701,17 +758,42 @@ class TmMaintenancePage(QWidget):
         input_paths = [self.merge_list.item(i).text() for i in range(self.merge_list.count())]
         output_path = self.merge_output_edit.text().strip()
         strategy = self.merge_strategy_combo.currentData()
-        fn_kwargs = dict(input_paths=input_paths, output_path=output_path, strategy=strategy)
+        self._merge_pending = dict(
+            input_paths=input_paths, output_path=output_path, strategy=strategy)
+        # 预览阶段：只算不写，按钮忙碌态贯穿预览与确认后的写盘两阶段。
+        set_button_busy(self.merge_btn, True, '合并中…')
+        self._log('正在预览合并结果…')
+        self._merge_preview_worker = CallableWorker(
+            lambda: _merge_preview_job(input_paths, strategy), parent=self)
+        self._merge_preview_worker.finished_ok.connect(self._on_merge_preview_ok)
+        self._merge_preview_worker.finished_err.connect(self._on_merge_err)
+        self._merge_preview_worker.start()
 
-        self.merge_btn.setEnabled(False)
-        self._log('正在合并 %d 个文件…' % len(input_paths))
-        self._merge_worker = CallableWorker(lambda: _merge_job(**fn_kwargs), parent=self)
+    def _on_merge_preview_ok(self, report):
+        """摆出数字化预览让人确认（P0），确认后才起含写盘的第二个 worker。"""
+        text = (
+            '将合并 %d 个文件：%d → %d 条（策略 %s，解决冲突 %d 处）。\n'
+            '输出：%s\n\n是否继续？'
+            % (len(self._merge_pending['input_paths']), report['input'],
+               report['output'], self._merge_pending['strategy'],
+               report['conflicts_resolved'], self._merge_pending['output_path']))
+        answer = QMessageBox.question(
+            self, '确认合并', text,
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            set_button_busy(self.merge_btn, False)
+            self._log('已取消，文件未改动')
+            return
+        params = self._merge_pending
+        self._log('正在合并 %d 个文件…' % len(params['input_paths']))
+        self._merge_worker = CallableWorker(
+            lambda: _merge_job(**params), parent=self)
         self._merge_worker.finished_ok.connect(self._on_merge_ok)
         self._merge_worker.finished_err.connect(self._on_merge_err)
         self._merge_worker.start()
 
     def _on_merge_ok(self, report):
-        self.merge_btn.setEnabled(True)
+        set_button_busy(self.merge_btn, False)
         self._log(
             '合并完成：%d 条 -> %d 条（策略：%s，解决冲突 %d 处）'
             % (report['input'], report['output'], report['strategy'], report['conflicts_resolved']),
@@ -719,7 +801,7 @@ class TmMaintenancePage(QWidget):
         self._log('已保存到 %s' % report['output_path'])
 
     def _on_merge_err(self, message):
-        self.merge_btn.setEnabled(True)
+        set_button_busy(self.merge_btn, False)
         self._log('出错了：%s' % message, 'error')
 
     # ------------------------------------------------------- report export
@@ -770,7 +852,7 @@ class TmMaintenancePage(QWidget):
 
         candidate_path = self.leverage_input_edit.text().strip()
         tm_path = self.leverage_tm_edit.text().strip()
-        self.leverage_btn.setEnabled(False)
+        set_button_busy(self.leverage_btn, True, '分析中…')
         self._log('正在分析…')
         self._leverage_worker = CallableWorker(
             lambda: _leverage_job(candidate_path, tm_path), parent=self)
@@ -779,7 +861,7 @@ class TmMaintenancePage(QWidget):
         self._leverage_worker.start()
 
     def _on_leverage_ok(self, candidate_units):
-        self.leverage_btn.setEnabled(True)
+        set_button_busy(self.leverage_btn, False)
         self._leverage_units = candidate_units
         s = leverage_module.summarize(candidate_units)
         rows = [(band, str(s['bands'][band]['count']), str(s['bands'][band]['words']))
@@ -790,7 +872,7 @@ class TmMaintenancePage(QWidget):
         self._log('分析完成：共 %d 句，%d 字' % (s['total'], s['total_words']), 'success')
 
     def _on_leverage_err(self, message):
-        self.leverage_btn.setEnabled(True)
+        set_button_busy(self.leverage_btn, False)
         self._set_leverage_table_rows([])
         self._log('出错了：%s' % message, 'error')
 
@@ -833,7 +915,7 @@ class TmMaintenancePage(QWidget):
             return
 
         input_paths = [self.compare_list.item(i).text() for i in range(self.compare_list.count())]
-        self.compare_btn.setEnabled(False)
+        set_button_busy(self.compare_btn, True, '对比中…')
         self._log('正在对比 %d 个文件…' % len(input_paths))
         self._compare_worker = CallableWorker(lambda: _compare_job(input_paths), parent=self)
         self._compare_worker.finished_ok.connect(self._on_compare_ok)
@@ -841,7 +923,7 @@ class TmMaintenancePage(QWidget):
         self._compare_worker.start()
 
     def _on_compare_ok(self, report):
-        self.compare_btn.setEnabled(True)
+        set_button_busy(self.compare_btn, False)
         self._compare_report = report
         self.compare_summary_label.setText(
             '共 %d 个文件，%d 处一致，%d 处冲突'
@@ -855,7 +937,7 @@ class TmMaintenancePage(QWidget):
         self._log('对比完成', 'success')
 
     def _on_compare_err(self, message):
-        self.compare_btn.setEnabled(True)
+        set_button_busy(self.compare_btn, False)
         self._set_dynamic_table_rows([], [])
         self._log('出错了：%s' % message, 'error')
 
@@ -895,7 +977,7 @@ class TmMaintenancePage(QWidget):
             return
 
         input_path = self.stats_input_edit.text().strip()
-        self.stats_btn.setEnabled(False)
+        set_button_busy(self.stats_btn, True, '统计中…')
         self._log('正在统计…')
         self._stats_worker = CallableWorker(lambda: _stats_job(input_path), parent=self)
         self._stats_worker.finished_ok.connect(self._on_stats_ok)
@@ -903,7 +985,7 @@ class TmMaintenancePage(QWidget):
         self._stats_worker.start()
 
     def _on_stats_ok(self, s):
-        self.stats_btn.setEnabled(True)
+        set_button_busy(self.stats_btn, False)
         self._last_stats = s
         self.stats_export_report_btn.setEnabled(True)
         rows = [
@@ -925,7 +1007,7 @@ class TmMaintenancePage(QWidget):
         self._log('统计完成', 'success')
 
     def _on_stats_err(self, message):
-        self.stats_btn.setEnabled(True)
+        set_button_busy(self.stats_btn, False)
         self._set_stats_table_rows([])
         self._log('出错了：%s' % message, 'error')
 

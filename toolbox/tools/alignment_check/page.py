@@ -82,7 +82,7 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QHBoxLayout,
-    QHeaderView, QLabel, QLineEdit, QPushButton, QTableWidget,
+    QHeaderView, QLabel, QLineEdit, QMenu, QPushButton, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -95,6 +95,8 @@ from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, section, set_lang_combo_code
 from toolbox.widgets import LogConsole
+from toolbox.widgets import copy_row_text, copy_to_clipboard
+from toolbox.widgets import set_button_busy
 from toolbox.workers import CallableWorker, wait_for_running
 
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
@@ -241,6 +243,8 @@ class AlignmentCheckPage(QWidget):
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setMinimumHeight(120)
+        self.results_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.results_table.customContextMenuRequested.connect(self._show_entry_context_menu)
         results_layout.addWidget(self.results_table, 1)
 
         outer.addWidget(section('对齐结果', results_content), 1)
@@ -322,7 +326,7 @@ class AlignmentCheckPage(QWidget):
         src_lang = lang_combo_code(self.src_edit)
         tgt_lang = lang_combo_code(self.tgt_edit)
 
-        self.check_btn.setEnabled(False)
+        set_button_busy(self.check_btn, True, '对齐中…')
         self._log('正在对齐…')
         self._check_worker = CallableWorker(
             lambda: align_report.run(input_path, src_lang, tgt_lang, reader_opts=reader_opts),
@@ -332,7 +336,7 @@ class AlignmentCheckPage(QWidget):
         self._check_worker.start()
 
     def _on_check_ok(self, units):
-        self.check_btn.setEnabled(True)
+        set_button_busy(self.check_btn, False)
         self._last_units = units
         s = align_report.summarize(units)
         self._last_summary = s
@@ -353,7 +357,7 @@ class AlignmentCheckPage(QWidget):
             self._log('检查完成', 'success')
 
     def _on_check_err(self, message):
-        self.check_btn.setEnabled(True)
+        set_button_busy(self.check_btn, False)
         self._log('出错了：%s' % message, 'error')
 
     # ----------------------------------------------------------- filtering
@@ -409,6 +413,35 @@ class AlignmentCheckPage(QWidget):
             qa_text = '、'.join(qa_module.ISSUE_LABELS.get(code, code) for code in issues) if issues else '-'
             self.results_table.setItem(row, 5, QTableWidgetItem(qa_text))
 
+    def _show_entry_context_menu(self, pos):
+        """结果表格右键菜单（DESIGN.md 15.4 P1-c）：沿用 term_management/
+        tm_editor 已验证的命名与接线；本表 6 列都是普通 item。高亮页同类的
+        "复制原文/复制译文"也一并拆出。"""
+        row = self.results_table.rowAt(pos.y())
+        if row < 0:
+            return
+        menu = QMenu(self)
+        copy_row_action = menu.addAction('复制该行')
+        menu.addSeparator()
+        copy_src_action = menu.addAction('复制原文')
+        copy_tgt_action = menu.addAction('复制译文')
+        chosen = menu.exec(self.results_table.viewport().mapToGlobal(pos))
+        if chosen == copy_row_action:
+            self._copy_entry_row(row)
+        elif chosen == copy_src_action:
+            self._copy_entry_cell(row, 1)
+        elif chosen == copy_tgt_action:
+            self._copy_entry_cell(row, 2)
+
+    def _copy_entry_row(self, row):
+        if 0 <= row < self.results_table.rowCount():
+            copy_to_clipboard(copy_row_text(self.results_table, row))
+
+    def _copy_entry_cell(self, row, col):
+        if 0 <= row < self.results_table.rowCount():
+            item = self.results_table.item(row, col)
+            copy_to_clipboard(item.text() if item is not None else '')
+
     # ------------------------------------------------------------ export
     def _start_export(self):
         # export_btn is only ever enabled after a successful check sets
@@ -426,7 +459,7 @@ class AlignmentCheckPage(QWidget):
         units = self._last_units
         src_lang = lang_combo_code(self.src_edit) or 'SRC'
         tgt_lang = lang_combo_code(self.tgt_edit) or 'TGT'
-        self.export_btn.setEnabled(False)
+        set_button_busy(self.export_btn, True, '导出中…')
         self._log('正在导出…')
         self._export_worker = CallableWorker(
             lambda: csv_writer.write(path, units, src_lang, tgt_lang, include_qa=True, include_align=True),
@@ -436,11 +469,11 @@ class AlignmentCheckPage(QWidget):
         self._export_worker.start()
 
     def _on_export_ok(self, path):
-        self.export_btn.setEnabled(True)
+        set_button_busy(self.export_btn, False)
         self._log('已导出到 %s' % path, 'success')
 
     def _on_export_err(self, message):
-        self.export_btn.setEnabled(True)
+        set_button_busy(self.export_btn, False)
         self._log('导出失败：%s' % message, 'error')
 
     def _start_export_report(self):

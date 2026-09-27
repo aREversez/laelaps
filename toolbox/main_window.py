@@ -42,10 +42,11 @@ same way as the hooks above and connected here to ``select_tool()`` --
 still no hardcoded knowledge of any specific tool, ``select_tool()``
 looks ids up in the same registry the sidebar was built from.
 """
+import functools
 import os
 
-from PySide6.QtCore import QSettings, QSize, Qt, QRect
-from PySide6.QtGui import QColor, QIcon, QPixmap
+from PySide6.QtCore import QSettings, QSize, Qt, QRect, QTimer
+from PySide6.QtGui import QBrush, QColor, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QStackedWidget, QStyledItemDelegate, QVBoxLayout, QWidget,
@@ -85,6 +86,11 @@ _SECTION_ROLE = Qt.UserRole + 1
 _SLATE = '#6B7280'
 _HAIRLINE = '#E3E6EB'
 _SIDEBAR_SURFACE = '#FFFFFF'
+
+# Sidebar completion-flash semantic colors (DESIGN.md 15.4 P1-a): mirror
+# the success/danger tokens already documented in style.qss' header.
+_SUCCESS = '#2F855A'
+_DANGER = '#B23B3B'
 
 
 class _SidebarDelegate(QStyledItemDelegate):
@@ -151,6 +157,8 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self._rows_by_tool_id = {}
         self._titles_by_index = {}
+        # 侧边栏完成回色的短暂恢复定时器，按行存（DESIGN.md 15.4 P1-a）。
+        self._flash_timers = {}
 
         tools = sorted(registry.discover(), key=lambda s: s.order)
         if not tools:
@@ -188,6 +196,12 @@ class MainWindow(QMainWindow):
             tool_requested = getattr(page, 'toolRequested', None)
             if tool_requested:
                 tool_requested.connect(self.select_tool)
+            # 软约定：页任务跑完时 emit taskFinished(bool)，侧边栏对应行短暂
+            # 回色——用户切走这一页去干别的时也能看到完成/失败（P1-a）。
+            task_finished = getattr(page, 'taskFinished', None)
+            if task_finished:
+                task_finished.connect(
+                    functools.partial(self._flash_task_finished, self._rows_by_tool_id[spec.id]))
 
         self.sidebar.currentRowChanged.connect(self._on_sidebar_row_changed)
         if tools:
@@ -244,6 +258,28 @@ class MainWindow(QMainWindow):
         # name), so it no longer duplicates the sidebar header's fixed
         # "语言工具箱" -- and Alt-Tab / the taskbar gain real context.
         self.setWindowTitle(self._titles_by_index.get(index, _APP_TITLE))
+
+    def _flash_task_finished(self, row, ok):
+        """侧边栏某行短暂回色（DESIGN.md 15.4 P1-a）：成功绿/失败红几秒后
+        恢复默认色，不弹系统级 toast。同一行重复触发时先取消上一个恢复
+        定时器再重新开始。"""
+        item = self.sidebar.item(row)
+        if item is None:
+            return
+        item.setForeground(QBrush(QColor(_SUCCESS if ok else _DANGER)))
+        timer = self._flash_timers.get(row)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            self._flash_timers[row] = timer
+            timer.timeout.connect(lambda r=row: self._restore_row_color(r))
+        timer.start(3000)
+
+    def _restore_row_color(self, row):
+        item = self.sidebar.item(row)
+        if item is not None:
+            # 清掉 ForegroundRole 数据，回到 style.qss 默认侧边栏文字色。
+            item.setData(Qt.ForegroundRole, None)
 
     def _pages(self):
         return [self.stack.widget(i) for i in range(self.stack.count())]

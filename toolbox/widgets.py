@@ -61,7 +61,7 @@ on the stack.
 """
 import os
 
-from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtCore import QEvent, QObject, QRect, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
@@ -76,6 +76,156 @@ LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
 # Shared by every tool page's "open an existing tmx/sdltm" file dialog.
 CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
+
+
+def set_button_busy(button, running, running_text=None):
+    """Shared busy-state handling for a tool page's action button while a
+    ``QThread`` worker is running (DESIGN.md 15.4 P1 "忙碌态反馈"): on
+    ``running`` the button is disabled *and* its text swaps to
+    ``running_text`` (e.g. "转换中…") so a slow task reads as in-progress
+    rather than just a greyed-out control; on restore it goes back to
+    ``enabled`` + its original text.
+
+    The original text is remembered on the button itself the first time
+    ``running`` is set (a dynamic ``_laelaps_original_text`` attribute) --
+    callers never have to thread the label string through, and re-running
+    doesn't overwrite the remembered value with a running text. Pages call
+    this once when starting a worker and once from every terminal handler
+    (success/error/cancel); multi-stage actions (e.g. tm_maintenance's
+    preview-then-write) stay busy across both stages and only restore at
+    the final one.
+    """
+    if running:
+        if not hasattr(button, '_laelaps_original_text'):
+            button._laelaps_original_text = button.text()
+        button.setEnabled(False)
+        if running_text is not None:
+            button.setText(running_text)
+    else:
+        button.setEnabled(True)
+        original = getattr(button, '_laelaps_original_text', None)
+        if original is not None:
+            button.setText(original)
+
+
+def copy_to_clipboard(text):
+    """把文本写进系统剪贴板（结果表格右键"复制"的统一入口，纯 Qt 自带的
+    ``QApplication.clipboard()``，不引入任何第三方依赖）。"""
+    from PySide6.QtWidgets import QApplication
+    QApplication.clipboard().setText(text)
+
+
+def copy_row_text(table, row):
+    """拼接 ``table`` 中 ``row`` 这一行**可见列**的文本，制表符分隔（跳过
+    被隐藏列）。仅适用于单元格是普通 ``QTableWidgetItem`` 的表格；
+    原文/译文被渲染成 ``setCellWidget`` 的页面（qa_check/alignment_check）
+    应从自己保存的行模型取文本，不走这里（item() 对 cellWidget 列返回
+    None）。"""
+    parts = []
+    for c in range(table.columnCount()):
+        if table.isColumnHidden(c):
+            continue
+        item = table.item(row, c)
+        parts.append(item.text() if item is not None else '')
+    return '\t'.join(parts)
+
+
+def join_row_cells(cells, table):
+    """把一个字符串列表 ``cells``（一页自己的行模型）按 ``table`` 当前
+    可见列拼接成一行文本。与 :func:`copy_row_text` 同形状，但数据来自
+    页面缓存而非单元格 item，适配高亮/cellWidget 列的页面。"""
+    return '\t'.join(
+        cells[c] if c < len(cells) else ''
+        for c in range(table.columnCount()) if not table.isColumnHidden(c))
+
+
+# Drag-highlight border colors -- reuse the two tokens already in
+# style.qss (indigo accent for "合法、可放下", danger red for "不支持的
+# 类型"), never a new hue (DESIGN.md 15.4 P1-b).
+_DROP_BORDER_INDIGO = '#2E4374'
+_DROP_BORDER_DANGER = '#B23B3B'
+
+
+class _FileDropFilter(QObject):
+    """事件过滤器实现（DESIGN.md 15.4 P1-b）：由 :func:`install_file_drop`
+    装在容器 widget 上，把从系统文件管理器拖进来的本地文件 URL 接住，校验
+    后缀在允许集内后交给 ``on_drop(path)``（应走与手动选文件完全相同的
+    联动逻辑）。不支持的类型不接受（光标显示禁止）+ danger 红边框瞬时反馈
+    并回呼 ``on_reject(path)``，不是静默无反应。高亮只改容器局部样式，
+    不新增阴影（§13 阴影纪律）。"""
+
+    def __init__(self, widget, allowed_exts, on_drop, on_reject):
+        super().__init__(widget)
+        self._widget = widget
+        self._allowed = {e.lower() for e in allowed_exts}
+        self._on_drop = on_drop
+        self._on_reject = on_reject
+        self._border = ''
+
+    def _first_path(self, event):
+        mime = event.mimeData()
+        if mime is None or not mime.hasUrls():
+            return None
+        for url in mime.urls():
+            path = url.toLocalFile()
+            if path:
+                return path
+        return None
+
+    def _is_allowed(self, path):
+        return os.path.splitext(path)[1].lower() in self._allowed
+
+    def _set_border(self, color):
+        border = 'border: 2px solid %s; border-radius: 6px;' % color
+        if border != self._border:
+            self._border = border
+            self._widget.setStyleSheet(border)
+
+    def _clear_border(self):
+        if self._border:
+            self._border = ''
+            self._widget.setStyleSheet('')
+
+    def eventFilter(self, obj, event):
+        etype = event.type()
+        if etype in (QEvent.DragEnter, QEvent.DragMove):
+            path = self._first_path(event)
+            if path is not None and self._is_allowed(path):
+                self._set_border(_DROP_BORDER_INDIGO)
+                event.acceptProposedAction()
+            else:
+                self._set_border(_DROP_BORDER_DANGER)
+            return True
+        if etype == QEvent.Drop:
+            self._clear_border()
+            path = self._first_path(event)
+            if path is not None and self._is_allowed(path):
+                self._on_drop(path)
+                event.acceptProposedAction()
+            elif path is not None and self._on_reject is not None:
+                self._on_reject(path)
+            return True
+        if etype == QEvent.Leave:
+            self._clear_border()
+        return super().eventFilter(obj, event)
+
+
+def install_file_drop(widget, line_edit, allowed_exts, on_drop, on_reject=None):
+    """给容器 ``widget`` 装文件拖拽支持（参照实现在 corpus_convert）。
+
+    ``line_edit`` 的路径输入框关掉它自己的 drop 处理（Qt 默认 QLineEdit
+    会吃掉文本/URL drop），让 URL drop 冒泡到 ``widget``，由装在其上的
+    :class:`_FileDropFilter` 接住。``on_drop(path)`` 只在后缀合法时调用，
+    应该走与手动选文件完全相同的一条逻辑（比如 ``line_edit.setText(path)``
+    触发已有的 textChanged 联动），不绕过现有校验。
+    """
+    widget.setAcceptDrops(True)
+    line_edit.setAcceptDrops(False)
+    drop_filter = _FileDropFilter(widget, allowed_exts, on_drop, on_reject)
+    widget.installEventFilter(drop_filter)
+    # 挂在 widget 上保留引用，避免 filter 被 GC 提前回收而静默失效。
+    widget._laelaps_drop_filter = drop_filter
+    return drop_filter
 
 
 def section(title, content_widget):

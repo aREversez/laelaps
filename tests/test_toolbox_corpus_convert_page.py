@@ -385,3 +385,87 @@ def test_browse_input_uses_and_updates_last_dir(qtbot, tmp_path, monkeypatch):
 
     assert seen_start_dir['value'] == '/wherever/i/was'  # dialog opened where we left off
     assert page._last_dir == str(tmp_path)  # ...and moved to wherever we just picked from
+
+
+# ---------------------------------------------- P1-a busy-state + taskFinished
+
+def test_convert_btn_shows_running_text_then_restores(qtbot, tmp_path):
+    """起 worker 时按钮文案变“…中…”，完成后恢复原文案（DESIGN.md 15.4 P1-a
+    忙碌态反馈）。click() 返回时事件循环尚未推进，worker 还在另一个线程，
+    所以此刻按钮仍是禁用 + 运行中文案，可断言。"""
+    src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
+
+    page.convert_btn.click()
+    assert not page.convert_btn.isEnabled()
+    assert '中' in page.convert_btn.text()
+
+    qtbot.waitUntil(lambda: page.convert_btn.isEnabled(), timeout=5000)
+    assert page.convert_btn.text() == '开始转换'
+
+
+def test_task_finished_emits_true_on_success(qtbot, tmp_path):
+    src = shutil.copy(fixture_path('basic.docx'), tmp_path / 'basic.docx')
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    page.input_edit.setText(str(src))
+    page.src_edit.setEditText('en-US')
+    page.tgt_edit.setEditText('zh-CN')
+
+    with qtbot.waitSignal(page.taskFinished, timeout=5000) as blocker:
+        page.convert_btn.click()
+    assert blocker.args == [True]
+
+
+def test_task_finished_emits_false_on_error(qtbot):
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    with qtbot.waitSignal(page.taskFinished, timeout=1000) as blocker:
+        page._on_error('boom')
+    assert blocker.args == [False]
+
+
+# ------------------------------------------------------- P1-b file drop
+
+def _make_drop_event(path):
+    from PySide6.QtCore import QUrl, Qt, QPointF, QMimeData
+    from PySide6.QtGui import QDropEvent
+
+    url = QUrl.fromLocalFile(path)
+    mime = QMimeData()
+    mime.setUrls([url])
+    event = QDropEvent(QPointF(10, 10), Qt.CopyAction, mime, Qt.LeftButton, Qt.NoModifier)
+    # QDropEvent 只持有 mimeData 的非拥有指针；把 mime 担在事件上防止被 GC，
+    # 否则函数返回后 mime 先死 → eventFilter 访空 → access violation。
+    event._mime = mime
+    # 回环后的本地路径（on_drop 收到的就是它），避开 Windows 路径分隔差异。
+    event._expected = url.toLocalFile()
+    return event
+
+
+def test_drop_valid_file_fills_input_and_syncs_formats(qtbot):
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    file_row = page.input_edit.parentWidget()
+    drop_filter = file_row._laelaps_drop_filter
+
+    event = _make_drop_event('/some/path/memory.tmx')
+    drop_filter.eventFilter(file_row, event)
+    assert page.input_edit.text() == event._expected
+    # 走与浏览…完全相同的联动：.tmx 会灰掉 tmx 输出勾选
+    assert page.chk_tmx.isEnabled() is False
+
+
+def test_drop_unsupported_type_rejected_without_filling_input(qtbot):
+    page = CorpusConvertPage()
+    qtbot.addWidget(page)
+    file_row = page.input_edit.parentWidget()
+    drop_filter = file_row._laelaps_drop_filter
+
+    drop_filter.eventFilter(file_row, _make_drop_event('/some/path/notes.txt'))
+    assert page.input_edit.text() == ''  # 未写入
+    assert '不支持的文件类型' in page.log.toPlainText()  # 非静默反馈

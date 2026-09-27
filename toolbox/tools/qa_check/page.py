@@ -205,7 +205,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QAbstractTextDocumentLayout, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPushButton, QStyle,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QPushButton, QStyle,
     QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
@@ -217,7 +217,10 @@ from language_tools.tm import io as tm_io
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
 from toolbox import settings
-from toolbox.widgets import CORPUS_FILTER, LOG_COLORS, LogConsole, page_shell, section
+from toolbox.widgets import (
+    CORPUS_FILTER, LOG_COLORS, LogConsole, copy_to_clipboard, join_row_cells,
+    page_shell, section, set_button_busy,
+)
 from toolbox.workers import CallableWorker, wait_for_running
 
 _CSV_FILTER = 'CSV (*.csv)'
@@ -496,6 +499,10 @@ class QaCheckPage(QWidget):
         self._last_units = None
         self._check_worker = None
         self._export_worker = None
+        # 当前展示行的文本快照（P1-c 右键复制）：每行存 [#, 原文, 译文,
+        # 问题类型, 置信度] 五个字符串 + 原文/译文裸文本。高亮/wrap 态下
+        # 原文/译文列是 cellWidget，不能从 item() 取，所以菜单从这里读。
+        self._displayed_rows = []
         self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
         # Debounced (not immediate) window-resize handling -- see
         # resizeEvent() below for why.
@@ -632,6 +639,8 @@ class QaCheckPage(QWidget):
         self.results_table.setShowGrid(False)
         self.results_table.setAlternatingRowColors(True)
         self.results_table.setItemDelegate(_QaTextDelegate(self.results_table))
+        self.results_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.results_table.customContextMenuRequested.connect(self._show_entry_context_menu)
         # Window-resize handling (re-flowing wrap-mode row heights and
         # re-eliding non-wrap highlighted rows against the table's new
         # column widths) happens via this page's own resizeEvent(), not
@@ -705,7 +714,7 @@ class QaCheckPage(QWidget):
             return
 
         input_path = self.input_edit.text().strip()
-        self.check_btn.setEnabled(False)
+        set_button_busy(self.check_btn, True, '检查中…')
         self._log('正在检查…')
         self._check_worker = CallableWorker(lambda: qa_report_module.run(input_path), parent=self)
         self._check_worker.finished_ok.connect(self._on_check_ok)
@@ -713,7 +722,7 @@ class QaCheckPage(QWidget):
         self._check_worker.start()
 
     def _on_check_ok(self, units):
-        self.check_btn.setEnabled(True)
+        set_button_busy(self.check_btn, False)
         self._last_units = units
         s = qa_report_module.summarize(units)
         rate = (s['flagged'] / s['total'] * 100) if s['total'] else 0.0
@@ -726,7 +735,7 @@ class QaCheckPage(QWidget):
         self._log('检查完成', 'success')
 
     def _on_check_err(self, message):
-        self.check_btn.setEnabled(True)
+        set_button_busy(self.check_btn, False)
         self._log('出错了：%s' % message, 'error')
 
     # ----------------------------------------------------------- filtering
@@ -735,6 +744,7 @@ class QaCheckPage(QWidget):
                    f'has_units={bool(self._last_units)})')
         self.results_table.setRowCount(0)
         if not self._last_units:
+            self._displayed_rows = []
             self.highlight_hint_label.setVisible(False)
             return
 
@@ -756,9 +766,12 @@ class QaCheckPage(QWidget):
             any(highlightable_types.intersection(issues) for _, _, issues in rows))
 
         self.results_table.setRowCount(len(rows))
+        self._displayed_rows = []
         for row, (i, u, issues) in enumerate(rows):
             conf = u.meta.get('qa_confidence', 1.0)
             issue_text = '、'.join(_issue_label(code) for code in issues) if issues else '-'
+            self._displayed_rows.append(
+                [str(i), u.src_text, u.tgt_text, issue_text, '%.2f' % conf])
             self.results_table.setItem(row, 0, QTableWidgetItem(str(i)))
             highlight = bool(highlightable_types.intersection(issues))
             if wrap:
@@ -782,6 +795,34 @@ class QaCheckPage(QWidget):
                        f'{self.results_table.columnWidth(1)}, '
                        f'{self.results_table.columnWidth(2)})')
             self._wrap_reflow.start()
+
+    def _show_entry_context_menu(self, pos):
+        """结果表格右键菜单（DESIGN.md 15.4 P1-c）：沿用 term_management/
+        tm_editor 已验证的 ``_show_entry_context_menu`` 命名与接线。文本命中高亮
+        页额外拆出"复制原文/复制译文"。表格是 NoSelection，从 rowAt 定位行。"""
+        row = self.results_table.rowAt(pos.y())
+        if row < 0 or row >= len(self._displayed_rows):
+            return
+        menu = QMenu(self)
+        copy_row_action = menu.addAction('复制该行')
+        menu.addSeparator()
+        copy_src_action = menu.addAction('复制原文')
+        copy_tgt_action = menu.addAction('复制译文')
+        chosen = menu.exec(self.results_table.viewport().mapToGlobal(pos))
+        if chosen == copy_row_action:
+            self._copy_entry_row(row)
+        elif chosen == copy_src_action:
+            self._copy_entry_cell(row, 1)
+        elif chosen == copy_tgt_action:
+            self._copy_entry_cell(row, 2)
+
+    def _copy_entry_row(self, row):
+        if 0 <= row < len(self._displayed_rows):
+            copy_to_clipboard(join_row_cells(self._displayed_rows[row], self.results_table))
+
+    def _copy_entry_cell(self, row, col):
+        if 0 <= row < len(self._displayed_rows):
+            copy_to_clipboard(self._displayed_rows[row][col])
 
     def _reflow_wrapped_rows(self):
         if not self.wrap_chk.isChecked() or not self.results_table.rowCount():
@@ -896,7 +937,7 @@ class QaCheckPage(QWidget):
 
         units = self._last_units
         src_lang, tgt_lang = tm_io.infer_langs(units)
-        self.export_btn.setEnabled(False)
+        set_button_busy(self.export_btn, True, '导出中…')
         self._log('正在导出…')
         self._export_worker = CallableWorker(
             lambda: csv_writer.write(path, units, src_lang or 'SRC', tgt_lang or 'TGT', include_qa=True),
@@ -906,11 +947,11 @@ class QaCheckPage(QWidget):
         self._export_worker.start()
 
     def _on_export_ok(self, path):
-        self.export_btn.setEnabled(True)
+        set_button_busy(self.export_btn, False)
         self._log('已导出到 %s' % path, 'success')
 
     def _on_export_err(self, message):
-        self.export_btn.setEnabled(True)
+        set_button_busy(self.export_btn, False)
         self._log('导出失败：%s' % message, 'error')
 
     def _start_export_report(self):

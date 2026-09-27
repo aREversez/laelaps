@@ -60,6 +60,7 @@ from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import section as _section
+from toolbox.widgets import set_button_busy
 from toolbox.workers import wait_for_running
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
@@ -412,6 +413,7 @@ class BatchConvertPage(QWidget):
         self.summary_label.setText('正在转换 %d 个文件…' % len(self._paths))
         self.summary_label.setStyleSheet('color: #4B5262;')
         self._set_controls_enabled(False)
+        set_button_busy(self.start_btn, True, '转换中…')
 
         self._worker = BatchConvertWorker(list(self._paths), shared_kwargs, parent=self)
         self._worker.file_done.connect(self._on_file_done)
@@ -424,6 +426,7 @@ class BatchConvertPage(QWidget):
 
     def _on_all_done(self, succeeded, failed):
         self._set_controls_enabled(True)
+        set_button_busy(self.start_btn, False)
         if failed == 0:
             text = '全部完成：%d 个文件都转换成功' % succeeded
             kind = 'success'

@@ -40,10 +40,10 @@ add pattern) with the differences preflight's narrower scope calls for:
 import csv
 import os
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFileDialog, QHBoxLayout, QHeaderView,
+    QAbstractItemView, QFileDialog, QHBoxLayout, QHeaderView, QMenu,
     QLabel, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -52,6 +52,7 @@ from toolbox import settings
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import section as _section
+from toolbox.widgets import copy_row_text, copy_to_clipboard
 from toolbox.workers import wait_for_running
 
 _DOCX_FILTER = 'DOCX files (*.docx)'
@@ -168,6 +169,8 @@ class BatchPreflightPage(QWidget):
         self.file_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.file_table.setShowGrid(False)
         self.file_table.setAlternatingRowColors(True)
+        self.file_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.file_table.customContextMenuRequested.connect(self._show_entry_context_menu)
         list_layout.addWidget(self.file_table, 1)
 
         outer.addWidget(_section('待检查文件（仅 .docx）', list_widget), 1)
@@ -260,6 +263,28 @@ class BatchPreflightPage(QWidget):
         name_item.setToolTip(path)
         self.file_table.setItem(row, 0, name_item)
         self._set_row_status(row, _STATUS_PENDING, 'info')
+
+    def _show_entry_context_menu(self, pos):
+        """结果表格右键菜单（DESIGN.md 15.4 P1-c）：把 term_management/
+        tm_editor 已验证的 ``_show_entry_context_menu`` 接线方式推广到这张
+        遗漏页。至少统一提供"复制该行"；多行选中时改为"复制选中行"。"""
+        table = self.file_table
+        row = table.rowAt(pos.y())
+        if row < 0:
+            return
+        if row not in {idx.row() for idx in table.selectedIndexes()}:
+            table.selectRow(row)
+        selected = sorted({idx.row() for idx in table.selectedIndexes()})
+        menu = QMenu(self)
+        if len(selected) > 1:
+            action = menu.addAction('复制选中 %d 行' % len(selected))
+        else:
+            action = menu.addAction('复制该行')
+        if menu.exec(table.viewport().mapToGlobal(pos)) is action:
+            self._copy_rows(selected)
+
+    def _copy_rows(self, rows):
+        copy_to_clipboard('\n'.join(copy_row_text(self.file_table, r) for r in rows))
 
     def _remove_selected(self):
         rows = sorted({idx.row() for idx in self.file_table.selectedIndexes()}, reverse=True)

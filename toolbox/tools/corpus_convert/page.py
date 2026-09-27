@@ -75,10 +75,13 @@ from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_fie
 from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import LogConsole
 from toolbox.widgets import section as _section
+from toolbox.widgets import install_file_drop, set_button_busy
 from toolbox.workers import wait_for_running
 
 _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.sdltm)'
+# 拖拽白名单：与 _SUPPORTED_FILTER 可选的输入格式一致。
+_SUPPORTED_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv', '.tmx', '.sdltm'}
 
 _QA_TOOLTIP = '检查漏译、数字不一致等问题'
 _FORMAT_TOOLTIPS = {
@@ -110,6 +113,12 @@ class ConvertWorker(QThread):
 
 
 class CorpusConvertPage(QWidget):
+    # 后台任务结束时的软约定信号（DESIGN.md 15.4 P1-a）：与 home 页的
+    # toolRequested(id) 一样走 getattr 接线——MainWindow 监听到就把侧边栏对应
+    # 那一行短暂回色（成功/失败），让用户切走这一页去干别的时也能看到
+    # 任务跑完了。与各页自己的 _log 并存，不替换它。
+    taskFinished = Signal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._worker = None
@@ -142,6 +151,11 @@ class CorpusConvertPage(QWidget):
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
         file_layout.addWidget(browse_btn)
+        # 拖拽参照实现（DESIGN.md 15.4 P1-b）：往这一行拖入合法文件→
+        # _apply_dropped_file 走与浏览…完全相同的一条逻辑（setText 触发
+        # textChanged 联动）。
+        install_file_drop(file_row, self.input_edit, _SUPPORTED_EXTS,
+                          self._apply_dropped_file, self._reject_dropped_file)
         outer.addWidget(_section('选择文件', file_row))
 
         # --- language + docx layout, all inline in one row ---
@@ -263,6 +277,16 @@ class CorpusConvertPage(QWidget):
             self.input_edit.setText(path)  # triggers _sync_format_checkboxes via textChanged
             self._last_dir = os.path.dirname(path)
 
+    def _apply_dropped_file(self, path):
+        """拖拽命中合法后缀时的落地动作：与 _browse_input 选到文件完全同
+        一条路径（setText 触发 textChanged 联动，不绕过校验）。"""
+        self.input_edit.setText(path)
+        self._last_dir = os.path.dirname(path)
+
+    def _reject_dropped_file(self, path):
+        """拖入不支持类型时的反馈（不是静默无反应）。"""
+        self._log('不支持的文件类型：%s' % os.path.basename(path), 'error')
+
     def _sync_format_checkboxes(self, input_path):
         """Grey out (disable + uncheck) the 生成格式 checkbox matching the
         chosen input file's own format -- converting a .tmx to .tmx (or a
@@ -354,7 +378,7 @@ class CorpusConvertPage(QWidget):
             qa=self.chk_qa.isChecked(),
         )
 
-        self.convert_btn.setEnabled(False)
+        set_button_busy(self.convert_btn, True, '转换中…')
         self._log('正在转换…')
         self._worker = ConvertWorker(kwargs, parent=self)
         self._worker.finished_ok.connect(self._on_done)
@@ -362,7 +386,7 @@ class CorpusConvertPage(QWidget):
         self._worker.start()
 
     def _on_done(self, result):
-        self.convert_btn.setEnabled(True)
+        set_button_busy(self.convert_btn, False)
         units, exported = result['units'], result['exported']
         if exported == units:
             self._log('转换完成！共对齐 %d 组双语句子，全部导出。' % units, 'success')
@@ -372,7 +396,9 @@ class CorpusConvertPage(QWidget):
                 % (units, exported, units - exported), 'success')
         for fmt, count in result['written'].items():
             self._log('· 生成了 %s 文件，共 %d 条' % (fmt, count))
+        self.taskFinished.emit(True)
 
     def _on_error(self, message):
-        self.convert_btn.setEnabled(True)
+        set_button_busy(self.convert_btn, False)
         self._log('出错了：%s' % message, 'error')
+        self.taskFinished.emit(False)

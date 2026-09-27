@@ -1,8 +1,10 @@
 from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QMessageBox
 
 from language_tools.corpus_readers import tmx_reader
 from language_tools.model import TranslationUnit
 from language_tools.writers import tmx_writer
+from toolbox.tools.tm_maintenance import page as tm_page
 from toolbox.tools.tm_maintenance.page import TmMaintenancePage
 
 
@@ -36,7 +38,9 @@ def test_clean_no_options_checked_shows_validation_error(qtbot, tmp_path):
     assert '至少勾选一项清理选项' in page.log.toPlainText()
 
 
-def test_clean_end_to_end_overwrites_input_by_default(qtbot, tmp_path):
+def test_clean_end_to_end_overwrites_input_by_default(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *a, **kw: QMessageBox.Yes)
+
     src = tmp_path / 'in.tmx'
     _write_tmx(src, [_u('Hello', '你好'), _u('Hello', '你好'), _u('Bye', '再见')])
 
@@ -53,7 +57,9 @@ def test_clean_end_to_end_overwrites_input_by_default(qtbot, tmp_path):
     assert len(units) == 2
 
 
-def test_clean_end_to_end_saves_to_output_path_when_given(qtbot, tmp_path):
+def test_clean_end_to_end_saves_to_output_path_when_given(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *a, **kw: QMessageBox.Yes)
+
     src = tmp_path / 'in.tmx'
     out = tmp_path / 'out.tmx'
     _write_tmx(src, [_u('Hello', '你好'), _u('Hello', '你好')])
@@ -68,6 +74,72 @@ def test_clean_end_to_end_saves_to_output_path_when_given(qtbot, tmp_path):
     assert out.exists()
     assert len(tmx_reader.read(str(src))) == 2  # input untouched
     assert len(tmx_reader.read(str(out))) == 1  # deduped output
+
+
+# ---------------------------------------- clean: P0 预览/确认/取消
+
+def test_clean_preview_job_never_writes(qtbot, tmp_path):
+    """只算不写的预览路径（P0）：直接调模块级函数，断言输入文件字节
+    完全不变（预览根本不调 write_corpus）。"""
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好'), _u('Hello', '你好'), _u('Bye', '再见')])
+    before = src.read_bytes()
+
+    report = tm_page._clean_preview_job(
+        str(src), normalize=True, dedupe=True,
+        remove_empty=True, remove_identical=False)
+
+    assert report['removed_duplicate'] == 1
+    assert src.read_bytes() == before  # 预览不写文件
+
+
+def test_clean_confirm_writes_after_preview(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *a, **kw: QMessageBox.Yes)
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好'), _u('Hello', '你好'), _u('Bye', '再见')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.clean_input_edit.setText(str(src))
+    page.clean_btn.click()
+    # 预览与写盘是两次独立 worker；按钮只在最终恢复，isEnabled 是汇合点。
+    qtbot.waitUntil(lambda: page.clean_btn.isEnabled(), timeout=5000)
+
+    assert '清理完成' in page.log.toPlainText()
+    assert len(tmx_reader.read(str(src))) == 2
+
+
+def test_clean_cancel_leaves_file_byte_identical(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *a, **kw: QMessageBox.No)
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好'), _u('Hello', '你好'), _u('Bye', '再见')])
+    before = src.read_bytes()
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.clean_input_edit.setText(str(src))
+    page.clean_btn.click()
+    qtbot.waitUntil(lambda: page.clean_btn.isEnabled(), timeout=5000)
+
+    assert '已取消' in page.log.toPlainText()
+    assert '清理完成' not in page.log.toPlainText()
+    assert src.read_bytes() == before  # 取消后一个字节都没变
+
+
+def test_clean_button_shows_running_text_then_restores(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *a, **kw: QMessageBox.Yes)
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好'), _u('Hello', '你好')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.clean_input_edit.setText(str(src))
+    page.clean_btn.click()
+    # click() 只起了预览 worker（异步），此时按钮应显示"运行中"态。
+    assert not page.clean_btn.isEnabled()
+    assert page.clean_btn.text() == '清理中…'
+    qtbot.waitUntil(lambda: page.clean_btn.isEnabled(), timeout=5000)
+    assert page.clean_btn.text() == '开始清理'  # 完成/确认后恢复原文字
 
 
 # ------------------------------------------------------------------ merge
@@ -125,7 +197,9 @@ def test_merge_strategy_combo_items_have_detail_tooltips(qtbot):
         assert tip, 'strategy option %d has no tooltip' % i
 
 
-def test_merge_end_to_end_keep_all(qtbot, tmp_path):
+def test_merge_end_to_end_keep_all(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *a, **kw: QMessageBox.Yes)
+
     a = tmp_path / 'a.tmx'
     b = tmp_path / 'b.tmx'
     out = tmp_path / 'merged.tmx'
@@ -146,7 +220,9 @@ def test_merge_end_to_end_keep_all(qtbot, tmp_path):
     assert len(tmx_reader.read(str(out))) == 2
 
 
-def test_merge_end_to_end_prefer_last_resolves_conflict(qtbot, tmp_path):
+def test_merge_end_to_end_prefer_last_resolves_conflict(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *a, **kw: QMessageBox.Yes)
+
     a = tmp_path / 'a.tmx'
     b = tmp_path / 'b.tmx'
     out = tmp_path / 'merged.tmx'
@@ -165,6 +241,43 @@ def test_merge_end_to_end_prefer_last_resolves_conflict(qtbot, tmp_path):
     units = tmx_reader.read(str(out))
     assert len(units) == 1
     assert units[0].tgt_text == '准备好了'
+
+
+# ------------------------------------------- merge: P0 预览/确认/取消
+
+def test_merge_preview_job_never_writes(qtbot, tmp_path):
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    _write_tmx(a, [_u('Ready', '已就绪')])
+    _write_tmx(b, [_u('Ready', '准备好了')])
+    out = tmp_path / 'merged.tmx'
+
+    report = tm_page._merge_preview_job([str(a), str(b)], 'prefer-last')
+
+    assert report['input'] == 2
+    assert report['output'] == 1
+    assert not out.exists()  # 预览不写盘
+
+
+def test_merge_cancel_leaves_output_absent(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setattr(QMessageBox, 'question', lambda *a, **kw: QMessageBox.No)
+    a = tmp_path / 'a.tmx'
+    b = tmp_path / 'b.tmx'
+    out = tmp_path / 'merged.tmx'
+    _write_tmx(a, [_u('Hello', '你好')])
+    _write_tmx(b, [_u('Bye', '再见')])
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.merge_list.addItem(str(a))
+    page.merge_list.addItem(str(b))
+    page.merge_output_edit.setText(str(out))
+    page.merge_btn.click()
+    qtbot.waitUntil(lambda: page.merge_btn.isEnabled(), timeout=5000)
+
+    assert '已取消' in page.log.toPlainText()
+    assert '合并完成' not in page.log.toPlainText()
+    assert not out.exists()  # 取消后目标文件不应被生成
 
 
 # --------------------------------------------------------------- leverage
