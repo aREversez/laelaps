@@ -299,6 +299,25 @@ def test_leverage_no_tm_shows_validation_error(qtbot, tmp_path):
     assert '请选择参考 TM' in page.log.toPlainText()
 
 
+def test_result_log_is_scoped_per_tab(qtbot, tmp_path):
+    """回归：共享结果栏的内容按标签页分存——杠杆分析缺参考 TM 的提示
+    切到清理标签后不应残留，切回杠杆标签又应重新看到它。"""
+    src = tmp_path / 'in.tmx'
+    _write_tmx(src, [_u('Hello', '你好')])
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(2)  # 杠杆分析
+    page.leverage_input_edit.setText(str(src))
+    page.leverage_btn.click()
+    assert '请选择参考 TM' in page.log.toPlainText()
+
+    page.tabs.setCurrentIndex(0)  # 清理
+    assert '请选择参考 TM' not in page.log.toPlainText()
+
+    page.tabs.setCurrentIndex(2)  # 切回杠杆，内容按页保留
+    assert '请选择参考 TM' in page.log.toPlainText()
+
+
 def test_leverage_end_to_end_fills_bands_table_and_enables_export(qtbot, tmp_path):
     tm = tmp_path / 'tm.tmx'
     candidate = tmp_path / 'in.tmx'

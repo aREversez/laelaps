@@ -18,12 +18,14 @@ Copy and layout conventions follow ``corpus_convert/page.py`` (see that
 file's docstring for the reasoning): short section titles, explanation in
 tooltips, ``section()`` (from ``toolbox.widgets``) for headers,
 ``objectName('primaryButton')`` for the action button,
-``objectName('logConsole')`` for output -- shared here across all five
-tabs rather than one log per tab, so the user has a single place to look
-regardless of which action they just ran.
+``objectName('logConsole')`` for output -- one shared log widget, but its
+*content* is kept per tab (see ``_on_tab_changed``): switching tabs swaps
+the console to that tab's own lines, so a validation error raised on 杠杆
+分析 ("请选择参考 TM") doesn't linger when the user moves to 清理/合并 and
+reads as if it belonged to the newly-selected tab.
 
-The stats/leverage/compare tabs are the exceptions to "results go in the
-log": each produces several distinct numbers/rows at once, which reads as
+The per-tab stats/leverage/compare result tables (below) are the
+exceptions to "results go in the log": each produces several distinct numbers/rows at once, which reads as
 a wall of text in a scrolling console and is hard to scan back to after
 the fact -- so each gets its own ``QTableWidget`` instead, populated
 fresh on every run. leverage's table is fixed-shape (one row per
@@ -206,6 +208,24 @@ class TmMaintenancePage(QWidget):
         self.log.setMinimumHeight(110)
         self.log.set_empty_hint('操作结果会显示在这里')
         outer.addWidget(section('结果', self.log), 1)
+
+        # 结果栏只有一个共享的 LogConsole widget，但内容按标签页分存：
+        # 切换标签时把 console 换成该页自己的行，避免某一页的校验提示
+        # （如杠杆的"请选择参考 TM"）残留到另一页、被误读成该页的结果。
+        self._log_tab_index = self.tabs.currentIndex()
+        self._tab_log_lines = {}
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    def _on_tab_changed(self, new_index):
+        """把共享结果栏切换到 ``new_index`` 标签页自己的内容。
+
+        ``_log`` 已按当前显示的标签页把每条消息记进 ``_tab_log_lines``，
+        所以这里只需记住新页并重放它的行（无则清空，回到空状态提示）。
+        """
+        self._log_tab_index = new_index
+        self.log.clear()
+        for fragment in self._tab_log_lines.get(new_index, []):
+            self.log.append(fragment)
 
     def _build_clean_tab(self):
         tab = QWidget()
@@ -563,7 +583,10 @@ class TmMaintenancePage(QWidget):
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
         color = LOG_COLORS.get(kind, LOG_COLORS['info'])
-        self.log.append('<span style="color:%s;">%s</span>' % (color, html.escape(message)))
+        fragment = '<span style="color:%s;">%s</span>' % (color, html.escape(message))
+        # 归到当前显示的标签页名下，切换标签时按页重放。
+        self._tab_log_lines.setdefault(self._log_tab_index, []).append(fragment)
+        self.log.append(fragment)
 
     # ------------------------------------------------------- file dialogs
     def _browse_clean_input(self):
