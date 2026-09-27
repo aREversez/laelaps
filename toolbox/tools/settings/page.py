@@ -67,6 +67,12 @@ class SettingsPage(QWidget):
         vbox.addWidget(hint)
 
         outer.addWidget(section('默认输出目录', body))
+        # Trailing stretch: page_shell's card fills the scroll viewport, so
+        # without this a lone short section gets stretched to full height and
+        # its title label absorbs the slack -- a cavernous accent bar with the
+        # field floating at the bottom. The stretch keeps the card hugging its
+        # content at the top like every other page.
+        outer.addStretch(1)
 
         # Load the persisted value once, at construction (a global pref is
         # this page's own whole subject, so it doesn't wait for the shell's
