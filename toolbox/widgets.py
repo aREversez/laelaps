@@ -74,6 +74,15 @@ from PySide6.QtWidgets import (
 # progress note, red for a failure, green for a success.
 LOG_COLORS = {'info': '#6B7280', 'error': '#B23B3B', 'success': '#2F855A'}
 
+# Semantic text colors a *result table* uses to split "待核实" (warning,
+# amber -- suspicious/needs a human's eye, not necessarily wrong) from
+# genuine "缺陷" (danger, red) hits (DESIGN.md 15.4 P3). danger/success
+# mirror the existing tokens; warning is the deliberate third and last
+# semantic color -- no fourth status color is introduced.
+WARNING_COLOR = '#B45309'
+DANGER_COLOR = '#B23B3B'
+SUCCESS_COLOR = '#2F855A'
+
 # Shared by every tool page's "open an existing tmx/sdltm" file dialog.
 CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 

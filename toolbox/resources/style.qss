@@ -9,6 +9,9 @@
  *   hairline  #E3E6EB   borders / dividers
  *   indigo    #2E4374   the one accent -- primary actions, selection, focus
  *   success   #2F855A / danger #B23B3B -- semantic only, not decorative
+ *   warning   #B45309 -- "待核实/suspicious" (needs a human's eye, not a
+ *               definite defect); the third and LAST semantic color
+ *               (DESIGN.md 15.4 P3), same tonal range as the others
  *
  * Elevation (added 2026-09,修订了 DESIGN.md §13 早先"完全不用阴影"的
  * 决策): ONE light shadow -- ink at 6-10% alpha, 2-3px offset, <=14px
@@ -172,6 +175,12 @@ QLabel[role="sectionTitle"] {
     border-left: 3px solid #2E4374;
     border-radius: 1px;
     padding-left: 8px;
+}
+/* DESIGN.md 15.4 P3 (optional polish): a whisper-quiet hover state on a
+ * section's indigo accent bar -- same hue nudged lighter, no shadow (§13
+ * reserves shadow for the page card + home tiles), no new color. */
+QLabel[role="sectionTitle"]:hover {
+    border-left: 3px solid #3E5899;
 }
 QLabel[role="fieldLabel"] {
     color: #6B7280;

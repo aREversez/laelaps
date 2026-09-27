@@ -91,6 +91,7 @@ import html
 import os
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QFileDialog, QFormLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
@@ -108,7 +109,8 @@ from language_tools.terms.model import STATUSES, TermEntry
 from language_tools.tm import io as tm_io
 from language_tools.writers import csv_writer
 from toolbox import settings
-from toolbox.widgets import (CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo,
+from toolbox.widgets import (CORPUS_FILTER, DANGER_COLOR, LANG_TOOLTIP, LOG_COLORS,
+                             WARNING_COLOR, compact_combo,
                              labeled_field, LogConsole, page_shell)
 from toolbox.widgets import lang_combo_code, make_lang_combo, section, set_lang_combo_code
 from toolbox.workers import CallableWorker, wait_for_running
@@ -852,7 +854,15 @@ class TermManagementPage(QWidget):
             self.check_table.setItem(row, 0, QTableWidgetItem(str(i)))
             self.check_table.setItem(row, 1, QTableWidgetItem(u.src_text))
             self.check_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
-            self.check_table.setItem(row, 3, QTableWidgetItem(hit_text))
+            hit_item = QTableWidgetItem(hit_text)
+            if hits:
+                # "待核实"（未用推荐译法=approved） vs "缺陷"（禁用译法
+                # =forbidden）用不同语义色一眼区分（DESIGN.md 15.4 P3）；
+                # 混合行以缺陷（danger）优先。
+                statuses = {h.get('status', 'forbidden') for h in hits}
+                color = DANGER_COLOR if 'forbidden' in statuses else WARNING_COLOR
+                hit_item.setForeground(QBrush(QColor(color)))
+            self.check_table.setItem(row, 3, hit_item)
 
     def _start_export(self):
         if not self._last_units:

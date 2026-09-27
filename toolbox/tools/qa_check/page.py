@@ -202,7 +202,7 @@ import os
 import sys
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAbstractTextDocumentLayout, QTextDocument
+from PySide6.QtGui import QAbstractTextDocumentLayout, QBrush, QColor, QTextDocument
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMenu, QPushButton, QStyle,
@@ -218,7 +218,8 @@ from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import (
-    CORPUS_FILTER, LOG_COLORS, LogConsole, copy_to_clipboard, join_row_cells,
+    CORPUS_FILTER, DANGER_COLOR, LOG_COLORS, WARNING_COLOR, LogConsole,
+    copy_to_clipboard, join_row_cells,
     page_shell, section, set_button_busy,
 )
 from toolbox.workers import CallableWorker, wait_for_running
@@ -266,6 +267,14 @@ _CELL_TOP_PADDING = 6
 # module docstring for why), to stay inside that existing, disciplined
 # palette rather than inventing a decorative one for this.
 _ISSUE_HIGHLIGHT_STYLE = 'color:#B23B3B; font-weight:600;'
+
+# QA issue codes that are a "待核实/suspicious" flag -- a heuristic or a
+# conflict a human has to eyeball, not a definite defect -- get the amber
+# warning color in the 问题类型 column instead of the danger red (DESIGN.md
+# 15.4 P3). A row mixing one of these with a hard mismatch still reads as
+# danger (the defect wins). The inline 原文/译文 span highlight is untouched
+# (still one danger color, per that scheme's own rationale above).
+_SUSPICIOUS_ISSUES = {'LENGTH_RATIO_OUTLIER', 'SOURCE_CONFLICT', 'TARGET_CONFLICT'}
 
 _HIGHLIGHT_HINT = (
     '提示：红色文字为"数字不匹配/占位符不匹配/URL 不匹配/括号引号不成对/'
@@ -785,7 +794,15 @@ class QaCheckPage(QWidget):
             else:
                 self.results_table.setItem(row, 1, QTableWidgetItem(u.src_text))
                 self.results_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
-            self.results_table.setItem(row, 3, QTableWidgetItem(issue_text))
+            issue_item = QTableWidgetItem(issue_text)
+            if issues:
+                # 行里只要含一个硬缺陷就用 danger；全是“待核实”类则用
+                # warning（DESIGN.md 15.4 P3）。
+                if any(code not in _SUSPICIOUS_ISSUES for code in issues):
+                    issue_item.setForeground(QBrush(QColor(DANGER_COLOR)))
+                else:
+                    issue_item.setForeground(QBrush(QColor(WARNING_COLOR)))
+            self.results_table.setItem(row, 3, issue_item)
             self.results_table.setItem(row, 4, QTableWidgetItem('%.2f' % conf))
         if wrap:
             # Let the delegate measure each item after Qt has settled the
