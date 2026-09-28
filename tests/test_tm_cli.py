@@ -1115,3 +1115,22 @@ def test_quote_without_mono_still_reads_docx_as_bilingual(tmp_path):
                    '--src', 'en-US', '--tgt', 'zh-CN'])
     assert result.returncode == 0, result.stderr
     assert 'Segments=' in result.stdout
+
+
+def test_leverage_monolingual_csv_export_has_tm_match_columns_but_corpus_export_does_not(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    doc = _mono_docx(tmp_path, 'Click OK to continue.', 'Something entirely different.')
+    mono_csv = tmp_path / 'mono.csv'
+    result = _run(['leverage', doc, '--tm', str(tm), '--src', 'en-US', '--export', str(mono_csv)])
+    assert result.returncode == 0, result.stderr
+    lines = mono_csv.read_text(encoding='utf-8-sig').splitlines()
+    assert lines[0].endswith('leverage_band,match_pct,tm_source,tm_target')
+    assert 'Click OK to continue.,点击确定以继续。' in lines[1]
+    assert lines[2].endswith(',no_match,0.0,,')
+
+    cand = tmp_path / 'cand.tmx'
+    _write_tmx(cand, [_u('Click OK to continue.', 'x')])
+    corpus_csv = tmp_path / 'corpus.csv'
+    result = _run(['leverage', str(cand), '--tm', str(tm), '--export', str(corpus_csv)])
+    assert result.returncode == 0, result.stderr
+    assert corpus_csv.read_text(encoding='utf-8-sig').splitlines()[0].endswith('leverage_band,match_pct')

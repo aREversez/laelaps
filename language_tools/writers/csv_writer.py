@@ -64,6 +64,12 @@ only have come from the forbidden direction, so ``.get``-defaulting to
 ``issues``/``align_move``) -- the band names ('exact', '95-99',
 'repetition', ...) are already the whole vocabulary a PM/translator
 needs, not internal codes standing in for something more readable.
+``include_leverage_match=True`` (opt-in, meant to accompany
+``include_leverage``) further appends tm_source/tm_target: the TM entry each
+segment matched, from ``meta['leverage_tm_src']``/``['leverage_tm_tgt']`` --
+blank for No Match and Repetition. Off by default so an existing corpus-input
+export keeps exactly its previous columns; used for monolingual input, where
+the candidate itself has no translation to show.
 
 ``include_semantic=True`` appends a semantic_issues column from
 ``semantic_review.attach()``'s ``meta['semantic_issues']``. Same
@@ -109,7 +115,8 @@ def _format_semantic_hit(issue):
 
 
 def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include_align=False,
-          include_terms=False, include_leverage=False, include_semantic=False):
+          include_terms=False, include_leverage=False, include_semantic=False,
+          include_leverage_match=False):
     with open(path, 'w', encoding='utf-8-sig', newline='') as f:
         w = csv.writer(f)
         header = ['No', src_label, tgt_label]
@@ -121,6 +128,8 @@ def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include
             header += ['term_issues']
         if include_leverage:
             header += ['leverage_band', 'match_pct']
+        if include_leverage_match:
+            header += ['tm_source', 'tm_target']
         if include_semantic:
             header += ['semantic_issues']
         w.writerow(header)
@@ -138,6 +147,8 @@ def write(path, units, src_label='EN', tgt_label='ZH', include_qa=False, include
                 row += [';'.join(_format_term_hit(h) for h in hits)]
             if include_leverage:
                 row += [u.meta.get('leverage_band', ''), u.meta.get('leverage_match_pct', '')]
+            if include_leverage_match:
+                row += [u.meta.get('leverage_tm_src') or '', u.meta.get('leverage_tm_tgt') or '']
             if include_semantic:
                 hits = u.meta.get('semantic_issues', [])
                 row += [';'.join(_format_semantic_hit(h) for h in hits)]

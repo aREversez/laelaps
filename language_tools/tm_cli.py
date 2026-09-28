@@ -315,7 +315,11 @@ def _cmd_leverage(args):
     if args.export:
         src_lang, tgt_lang = tm_io.infer_langs(candidate_units)
         csv_writer.write(args.export, candidate_units, src_lang or 'SRC', tgt_lang or 'TGT',
-                          include_leverage=True)
+                          include_leverage=True,
+                          # a monolingual input has no translation of its own, so the
+                          # matched TM entry is what the reviewer wants beside each
+                          # sentence; a corpus input keeps its previous columns
+                          include_leverage_match=mono_module.is_monolingual(args.input))
         print('Wrote %s' % args.export)
     if args.report:
         rc = _write_report(args.report, report_adapters.from_leverage_summary(s))

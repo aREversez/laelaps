@@ -69,6 +69,12 @@ def read_source(path, src_lang, tgt_lang, *, granularity='sentence', repair_path
     ]
 
 
+def is_monolingual(path):
+    """True if ``path``'s extension is a monolingual source format (so a
+    leverage input needs language codes and is analyzed as one language)."""
+    return os.path.splitext(path)[1].lower() in MONOLINGUAL_READERS
+
+
 def read_candidates(path, src_lang=None, tgt_lang=None, *, granularity='sentence', repair_path=None,
                     tm_units=None):
     """Leverage-analysis input dispatch: a .tmx/.sdltm corpus is read as it
