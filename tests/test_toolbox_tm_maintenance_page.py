@@ -208,6 +208,7 @@ def test_merge_end_to_end_keep_all(qtbot, tmp_path, monkeypatch):
 
     page = TmMaintenancePage()
     qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(1)  # 结果栏按页分存：像真实用户一样先切到该页
     page.merge_list.addItem(str(a))
     page.merge_list.addItem(str(b))
     page.merge_output_edit.setText(str(out))
@@ -269,6 +270,7 @@ def test_merge_cancel_leaves_output_absent(qtbot, tmp_path, monkeypatch):
 
     page = TmMaintenancePage()
     qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(1)  # 结果栏按页分存：像真实用户一样先切到该页
     page.merge_list.addItem(str(a))
     page.merge_list.addItem(str(b))
     page.merge_output_edit.setText(str(out))
@@ -318,6 +320,45 @@ def test_result_log_is_scoped_per_tab(qtbot, tmp_path):
     assert '请选择参考 TM' in page.log.toPlainText()
 
 
+def test_tab_constants_match_tab_order(qtbot):
+    """_TAB_* 常量必须与 addTab 的顺序一致——异步回调靠它们把消息记到所属页。"""
+    from toolbox.tools.tm_maintenance import page as page_module
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    assert page.tabs.tabText(page_module._TAB_CLEAN) == '清理'
+    assert page.tabs.tabText(page_module._TAB_MERGE) == '合并'
+    assert page.tabs.tabText(page_module._TAB_LEVERAGE) == '杠杆分析'
+    assert page.tabs.tabText(page_module._TAB_COMPARE) == '对比'
+    assert page.tabs.tabText(page_module._TAB_STATS) == '统计'
+
+
+def test_async_result_lands_on_originating_tab_after_switch(qtbot):
+    """回归：清理在跑的时候用户切去杠杆标签，worker 回来的结果属于清理页——
+    不能出现在杠杆页的结果栏里，切回清理页时必须看得到。"""
+    from toolbox.tools.tm_maintenance import page as page_module
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(page_module._TAB_LEVERAGE)  # 用户已切走
+
+    page._on_clean_err('boom')  # 清理 worker 此刻才出错返回
+
+    assert '出错了：boom' not in page.log.toPlainText()  # 没串到当前页
+    page.tabs.setCurrentIndex(page_module._TAB_CLEAN)
+    assert '出错了：boom' in page.log.toPlainText()
+
+
+def test_async_result_on_visible_tab_still_shows_immediately(qtbot):
+    """不切标签时行为不变：所属页就是当前页，消息立刻出现在 console。"""
+    from toolbox.tools.tm_maintenance import page as page_module
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(page_module._TAB_STATS)
+
+    page._on_stats_err('kaboom')
+
+    assert '出错了：kaboom' in page.log.toPlainText()
+
+
 def test_leverage_end_to_end_fills_bands_table_and_enables_export(qtbot, tmp_path):
     tm = tmp_path / 'tm.tmx'
     candidate = tmp_path / 'in.tmx'
@@ -327,6 +368,7 @@ def test_leverage_end_to_end_fills_bands_table_and_enables_export(qtbot, tmp_pat
 
     page = TmMaintenancePage()
     qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(2)  # 结果栏按页分存：像真实用户一样先切到该页
     page.leverage_input_edit.setText(str(candidate))
     page.leverage_tm_edit.setText(str(tm))
     page.leverage_btn.click()
@@ -417,6 +459,7 @@ def test_compare_end_to_end_fills_summary_and_conflict_table(qtbot, tmp_path):
 
     page = TmMaintenancePage()
     qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(3)  # 结果栏按页分存：像真实用户一样先切到该页
     page.compare_list.addItem(str(a))
     page.compare_list.addItem(str(b))
     page.compare_btn.click()
@@ -505,6 +548,7 @@ def test_stats_end_to_end(qtbot, tmp_path):
 
     page = TmMaintenancePage()
     qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(4)  # 结果栏按页分存：像真实用户一样先切到该页
     page.stats_input_edit.setText(str(src))
     page.stats_btn.click()
     qtbot.waitUntil(lambda: page.stats_btn.isEnabled(), timeout=5000)
@@ -681,6 +725,7 @@ def test_cleanup_waits_for_running_stats_instead_of_crashing(qtbot, tmp_path):
 
     page = TmMaintenancePage()
     qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(4)  # 结果栏按页分存：像真实用户一样先切到该页
     page.stats_input_edit.setText(str(src))
     page.stats_btn.click()
     page.cleanup()  # simulates closeEvent() landing mid-run

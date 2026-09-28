@@ -86,6 +86,9 @@ _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
 _CSV_FILTER = 'CSV (*.csv)'
 _REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
 _SETTINGS_PREFIX = 'tm_maintenance/'
+# 标签页下标，与 __init__ 里 addTab 的顺序一一对应（测试里有断言守着）。
+# 异步回调用它们指明"这条消息属于哪一页"，见 _log_for。
+_TAB_CLEAN, _TAB_MERGE, _TAB_LEVERAGE, _TAB_COMPARE, _TAB_STATS = range(5)
 
 _CLEAN_TOOLTIPS = {
     'normalize': 'Unicode/空白标准化，让格式不同但内容相同的条目能被正确识别为重复',
@@ -582,11 +585,22 @@ class TmMaintenancePage(QWidget):
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
+        """记到**当前显示**的标签页名下。只给用户在当前页上直接触发、
+        同步产生的消息用（校验提示、导出对话框的结果等）。"""
+        self._log_for(self._log_tab_index, message, kind)
+
+    def _log_for(self, tab, message, kind='info'):
+        """把消息记到 ``tab`` 名下；只有 ``tab`` 恰好是当前显示的页时才
+        同时写进 console。
+
+        异步 worker 的完成/出错回调必须走这里并显式带上自己所属的标签：
+        它们回来时用户可能已经切到别的标签，按"当前页"归属会把清理页的
+        结果记到杠杆页下，切回清理页反而看不到。"""
         color = LOG_COLORS.get(kind, LOG_COLORS['info'])
         fragment = '<span style="color:%s;">%s</span>' % (color, html.escape(message))
-        # 归到当前显示的标签页名下，切换标签时按页重放。
-        self._tab_log_lines.setdefault(self._log_tab_index, []).append(fragment)
-        self.log.append(fragment)
+        self._tab_log_lines.setdefault(tab, []).append(fragment)
+        if tab == self._log_tab_index:
+            self.log.append(fragment)
 
     # ------------------------------------------------------- file dialogs
     def _browse_clean_input(self):
@@ -741,10 +755,10 @@ class TmMaintenancePage(QWidget):
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if answer != QMessageBox.Yes:
             set_button_busy(self.clean_btn, False)
-            self._log('已取消，文件未改动')
+            self._log_for(_TAB_CLEAN, '已取消，文件未改动')
             return
         params = self._clean_pending
-        self._log('正在清理…')
+        self._log_for(_TAB_CLEAN, '正在清理…')
         self._clean_worker = CallableWorker(
             lambda: _clean_job(**params), parent=self)
         self._clean_worker.finished_ok.connect(self._on_clean_ok)
@@ -753,16 +767,17 @@ class TmMaintenancePage(QWidget):
 
     def _on_clean_ok(self, report):
         set_button_busy(self.clean_btn, False)
-        self._log(
+        self._log_for(
+            _TAB_CLEAN,
             '清理完成：%d 条 -> %d 条（去重 %d，去空段 %d，去原文=译文 %d，标准化 %d 条）'
             % (report['input'], report['output'], report['removed_duplicate'],
                report['removed_empty'], report['removed_identical'], report['normalized']),
             'success')
-        self._log('已保存到 %s' % report['output_path'])
+        self._log_for(_TAB_CLEAN, '已保存到 %s' % report['output_path'])
 
     def _on_clean_err(self, message):
         set_button_busy(self.clean_btn, False)
-        self._log('出错了：%s' % message, 'error')
+        self._log_for(_TAB_CLEAN, '出错了：%s' % message, 'error')
 
     # ----------------------------------------------------------- merge
     def _validate_merge(self):
@@ -805,10 +820,10 @@ class TmMaintenancePage(QWidget):
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if answer != QMessageBox.Yes:
             set_button_busy(self.merge_btn, False)
-            self._log('已取消，文件未改动')
+            self._log_for(_TAB_MERGE, '已取消，文件未改动')
             return
         params = self._merge_pending
-        self._log('正在合并 %d 个文件…' % len(params['input_paths']))
+        self._log_for(_TAB_MERGE, '正在合并 %d 个文件…' % len(params['input_paths']))
         self._merge_worker = CallableWorker(
             lambda: _merge_job(**params), parent=self)
         self._merge_worker.finished_ok.connect(self._on_merge_ok)
@@ -817,15 +832,16 @@ class TmMaintenancePage(QWidget):
 
     def _on_merge_ok(self, report):
         set_button_busy(self.merge_btn, False)
-        self._log(
+        self._log_for(
+            _TAB_MERGE,
             '合并完成：%d 条 -> %d 条（策略：%s，解决冲突 %d 处）'
             % (report['input'], report['output'], report['strategy'], report['conflicts_resolved']),
             'success')
-        self._log('已保存到 %s' % report['output_path'])
+        self._log_for(_TAB_MERGE, '已保存到 %s' % report['output_path'])
 
     def _on_merge_err(self, message):
         set_button_busy(self.merge_btn, False)
-        self._log('出错了：%s' % message, 'error')
+        self._log_for(_TAB_MERGE, '出错了：%s' % message, 'error')
 
     # ------------------------------------------------------- report export
     def _start_export_report(self, report, default_name):
@@ -892,12 +908,12 @@ class TmMaintenancePage(QWidget):
         self._set_leverage_table_rows(rows)
         self.leverage_export_csv_btn.setEnabled(bool(candidate_units))
         self.leverage_export_report_btn.setEnabled(bool(candidate_units))
-        self._log('分析完成：共 %d 句，%d 字' % (s['total'], s['total_words']), 'success')
+        self._log_for(_TAB_LEVERAGE, '分析完成：共 %d 句，%d 字' % (s['total'], s['total_words']), 'success')
 
     def _on_leverage_err(self, message):
         set_button_busy(self.leverage_btn, False)
         self._set_leverage_table_rows([])
-        self._log('出错了：%s' % message, 'error')
+        self._log_for(_TAB_LEVERAGE, '出错了：%s' % message, 'error')
 
     def _export_leverage_csv(self):
         if not self._leverage_units:
@@ -957,12 +973,12 @@ class TmMaintenancePage(QWidget):
         self._set_dynamic_table_rows(columns, rows)
         self.compare_export_csv_btn.setEnabled(bool(report['conflicts']))
         self.compare_export_report_btn.setEnabled(True)
-        self._log('对比完成', 'success')
+        self._log_for(_TAB_COMPARE, '对比完成', 'success')
 
     def _on_compare_err(self, message):
         set_button_busy(self.compare_btn, False)
         self._set_dynamic_table_rows([], [])
-        self._log('出错了：%s' % message, 'error')
+        self._log_for(_TAB_COMPARE, '出错了：%s' % message, 'error')
 
     def _export_compare_csv(self):
         if not self._compare_report or not self._compare_report['conflicts']:
@@ -1027,12 +1043,12 @@ class TmMaintenancePage(QWidget):
             for domain, count in sorted(s['lang_pair_by_domain'][pair].items()):
                 rows.append(('%s / %s' % (pair, domain), '%d 条' % count))
         self._set_stats_table_rows(rows)
-        self._log('统计完成', 'success')
+        self._log_for(_TAB_STATS, '统计完成', 'success')
 
     def _on_stats_err(self, message):
         set_button_busy(self.stats_btn, False)
         self._set_stats_table_rows([])
-        self._log('出错了：%s' % message, 'error')
+        self._log_for(_TAB_STATS, '出错了：%s' % message, 'error')
 
     def _export_stats_report(self):
         if not self._last_stats:
