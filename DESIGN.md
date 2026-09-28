@@ -273,9 +273,9 @@ toolbox/                    # 与 language_tools/ 同仓库同级，GUI层
     ├── corpus_convert/       # 第一个工具，包装 language_tools.api.convert()
     │   ├── __init__.py       # 注册 ToolSpec
     │   └── page.py            # QWidget 表单 + QThread worker（避免转换时卡UI）
-    ├── tm_maintenance/       # 第二个工具，包装 language_tools.tm.*（清理/合并/统计）
+    ├── tm_maintenance/       # 第二个工具，包装 language_tools.tm.*（清理/合并/杠杆分析/对比/统计）
     │   ├── __init__.py       # 注册 ToolSpec
-    │   └── page.py            # 三个标签页（清理/合并/统计），共用一个通用 CallableWorker
+    │   └── page.py            # 五个标签页（清理/合并/杠杆分析/对比/统计），共用一个通用 CallableWorker；清理/合并带"先预览后写盘"两段式
     ├── qa_check/             # 第三个工具，包装 language_tools.tm.qa_report（对已有语料库跑 QA）
     │   ├── __init__.py       # 注册 ToolSpec
     │   └── page.py            # 结果表格 + 筛选（问题类型/只看有问题的）+ 导出 CSV
@@ -498,11 +498,13 @@ class TermEntry:
 
 **SRX：挂起，零改动**。"导入导出"这个动作名掩盖了真实工作量：`split_en`/`split_zh` 不是规则引擎，是 `ABBREV` 集合加几条正则手写的启发式（历史上那个"单字母缩写"bug 是靠删掉一个错误的正则子句修的，不是靠规则声明），做 SRX 读写等于把分句核心做一次性结构改写，不是旁边加一个 writer。触发条件：分句准确率被反复反馈为具体痛点（目前没有这个信号），**且** XLIFF 落地后仍成立——XLIFF/TMX 输入是预分句的，根本接触不到分句器，对接外部数据越深，SRX 的需求根基越薄，所以排在 XLIFF 之后几乎是零机会成本的。届时第一步是先把 `split_en`/`split_zh` 内部重构成"规则表 + 执行器"的形状（规则表哪怕仍是纯 Python 数据结构、不对外暴露），SRX 读写只是那个重构完成之后的序列化层；不要在当前这套硬编码实现上直接叠一层转换。
 
-### 15.4 UI/UX 打磨 backlog（2026-09，待实现，交付要求见各条"验收标准"）
+### 15.4 UI/UX 打磨 backlog（2026-09，九条已全部落地 ✅，各条尾部追加落地注记）
 
 2026-09 UI 现代化轮（§13"分区与层级"定案）之后的一轮复查：现有的三级色底分层、阴影纪律、空状态、首页可键盘操作、侧边栏分组、窗口几何记忆、未保存改动软契约这些都已经落地且工作正常，**下面是在这个基础上补的缺口，不是推翻重做**。每条都标了现状（已用 grep/代码走读核实，不是猜测）、方案（点名要复用哪个现成 helper/约定，禁止另起一套）、涉及文件、验收标准。按对"用户信任这个工具"的影响程度排了个粗略优先级，不是强制顺序。
 
-#### P0 — 破坏性操作缺少预览/确认
+**本节状态（2026-09 追记）**：P0/P1/P2/P3 共九条已全部实现并通过验收（含各条配套测试），原条目的现状/方案/验收标准原样保留作为交付时的决策记录，每条末尾追加"落地"注记说明实际实现与原方案的出入。P0 引入的确认弹窗后来暴露过一个 QSS 级联 bug（弹窗全黑、文字不可见），修复与回归测试一并记录在 P0 的落地注记里。
+
+#### P0 — 破坏性操作缺少预览/确认 ✅
 
 **现状**：`toolbox/tools/tm_maintenance/page.py` 的清理/合并两个 tab（走 `CallableWorker` 直接调用 `language_tools.tm.*` 清理/合并函数）目前点按钮之后直接执行并落盘覆盖，代码里没有 `QMessageBox`、没有 dry-run 预览这一步（已用 `grep -n "QMessageBox\|dry.run" toolbox/tools/tm_maintenance/page.py` 核实为空）。对比之下 `tm_editor/page.py` 的 `_NearDupDialog`（近重复去重）已经是"结果表格逐簇勾选 → 确认应用"两段式，是本项目里已经验证过的正确模式，只是没有推广到 `tm_maintenance`。
 
@@ -513,7 +515,9 @@ class TermEntry:
 
 **验收标准**：清理/合并按钮点击后，用户必须先看到一个明确的数字化预览（删除/合并的条目数，不是"即将处理"这种空话），点确认/取消都能正常工作，取消后语料库文件不应有任何改动；配套单测覆盖"预览不写文件""确认后才写文件""取消后文件字节不变"三种路径，参照 `tests/test_toolbox_tm_editor_page.py` 里 `_NearDupDialog` 的测试写法。
 
-#### P1 — 后台任务的忙碌态反馈太弱
+**落地**（2026-09）✅：与原方案预判的最大出入是"工作量最大的部分"（核心库拆 dry_run/计算+应用两段）实际不存在——`language_tools/tm/clean.py`/`merge.py` 的 `clean()`/`merge()` 本来就只算不写，写盘一直是 GUI 层调 `tm_io.write_corpus()` 的职责，所以预览路径全部在 GUI 层完成（`tm_maintenance/page.py` 的模块级 `_clean_preview_job`/`_merge_preview_job`，同一套 kwargs 确认后原样传给写盘的 `_clean_job`/`_merge_job`），没有动任何库签名。确认框用 `QMessageBox.question`（Yes/No，默认 No），预览文案带具体条数（"将删除 重复 N / 空段 M / 原文=译文 K 条（共 X → Y），并标准化 Z 条"）；`set_button_busy` 忙碌态贯穿预览与写盘两阶段，取消/出错才恢复。测试 `tests/test_toolbox_tm_maintenance_page.py`：`test_clean_preview_job_never_writes`/`test_clean_confirm_writes_after_preview`/`test_clean_cancel_leaves_file_byte_identical` 及合并侧对称两条。**后续修复记录**：这个确认弹窗上线后暴露了一个 QSS 级联 bug——弹窗背景全黑、文字不可见。根因是 `style.qss` 里 `QMainWindow, QDialog, QMessageBox { background: #F6F7F9 }` 声明在泛 `QWidget { background: transparent }` 规则之前：类型选择器匹配子类，两者同特异性时后声明者胜，对话框表面因此被 transparent 覆盖、完全不绘制（离屏取证：表面像素 rgba(0,0,0,0)），Windows 上合成显示为纯黑，而文字色仍是深墨色。修复是把对话框表面规则移到 QWidget 规则之后并在注释里声明"顺序是承重的"，回归测试 `tests/test_toolbox_dialog_surface.py` 同时守住规则顺序（文本断言）和真实渲染像素（离屏 grab 断言表面为 paper 色）两层。
+
+#### P1 — 后台任务的忙碌态反馈太弱 ✅
 
 **现状**：`corpus_convert/page.py` 点击转换后只做了 `self.convert_btn.setEnabled(False)` + 在自己的 `LogConsole` 里 `self._log('正在转换…')`（已用 `grep -n "setEnabled\|QProgressBar" toolbox/tools/corpus_convert/page.py` 核实，没有进度条，没有 spinner，按钮文字本身不变）。这个模式在其它跑 `QThread`/`CallableWorker` 的工具页上大概率是同一套（`ConvertWorker`/`CallableWorker` 是共享基础设施，各页大概率复制的是同一个写法），需要在改之前先逐页确认一遍，不要只改 `corpus_convert` 一个就算完工。
 
@@ -525,7 +529,9 @@ class TermEntry:
 
 **验收标准**：任意一个跑 worker 的工具页，运行期间按钮文字/状态肉眼可辨（不只是变灰）；至少 `corpus_convert` 一个工具页实现切走再切回后仍能看到完成状态（先做一个作为参照实现，其它页照抄，不需要一次性全改）。
 
-#### P1 — 表单输入缺少拖拽文件
+**落地**（2026-09）✅：两个子项都做了，且都超出了"先做一个参照"的最小范围。忙碌态：`toolbox/widgets.py` 的 `set_button_busy(button, running, running_text=None)`——禁用 + 文字换"xx中…"（可传文案），完成/出错/取消统一恢复，`corpus_convert`/`batch_convert`/`alignment_check`/`batch_alignment_check`/`qa_check`/`tm_maintenance` 各页所有跑 worker 的按钮都已接上。切页反馈：按原方案走软约定——页面类可 emit `taskFinished(bool)` 信号，`main_window.py` 在加载每页时检测并 connect 到 `_flash_task_finished(row, ok)`，对应侧边栏行短暂用 success/danger 语义色重画一次文字（`_flash_timers` 定时恢复原色），与 `toolRequested` 同一套"可选接入、没有就当没有"的接线方式。日志侧的配套是各页自己的 `LogConsole` 内容按标签页分存（`tm_maintenance` 的 `_log_for`/`_on_tab_changed`），切走再切回不丢结果。
+
+#### P1 — 表单输入缺少拖拽文件 ✅
 
 **现状**：全项目搜索 `dragEnterEvent`/`dropEvent`/`setAcceptDrops` 均为空（已核实），所有文件输入只能走 Browse 按钮的原生文件对话框。
 
@@ -535,7 +541,9 @@ class TermEntry:
 
 **验收标准**：`corpus_convert` 页面能接受从系统文件管理器拖入的合法文件并自动填入路径、触发和手动选择完全一致的后续逻辑；拖入不支持的文件类型有明确的拒绝反馈（不是静默无反应）；配套 GUI 测试（`qtbot` 模拟 drag/drop 事件，或至少直接调用 `dropEvent` 传入构造好的 `QDropEvent`）参照 `tests/test_toolbox_corpus_convert_page.py` 现有测试的写法。
 
-#### P1 — 结果表格右键菜单：补齐而非新建
+**落地**（2026-09）✅：按 backlog 的范围要求做成参照实现 + 可复用安装器：`toolbox/widgets.py` 的 `install_file_drop(widget, line_edit, allowed_exts, on_drop, on_reject)`（内部 `_FileDropFilter` 事件过滤器，注释标明 15.4 P1-b），装在承载路径输入框的容器上；合法拖入 indigo 边框高亮、后缀不允许时 danger 红框 + `on_reject` 回调提示，两个颜色都是 style.qss 既有 token（`_DROP_BORDER_INDIGO`/`_DROP_BORDER_DANGER`），没有新色相。先落在 `corpus_convert` 页（用得最频繁的工具），其余多文件/单文件页按 backlog 原文"验证手感后再推广"，推广本身不在本轮范围。
+
+#### P1 — 结果表格右键菜单：补齐而非新建 ✅
 
 **现状**：`term_management/page.py` 和 `tm_editor/page.py` 的条目表格**已经**有 `setContextMenuPolicy(Qt.CustomContextMenu)` + `customContextMenuRequested.connect(self._show_entry_context_menu)`（已核实存在），但 `qa_check`/`alignment_check`/`batch_alignment_check`/`batch_preflight` 这几个"结果表格 + 筛选"模式的页面里没有搜到同样的接线。这条不是从零做，是把已经验证过的模式推广到遗漏的页面。
 
@@ -543,7 +551,9 @@ class TermEntry:
 
 **验收标准**：上述四个页面的结果表格右键都能弹出菜单且至少支持复制当前行；不引入新的第三方依赖，纯 `QMenu` + `QAction`。
 
-#### P2 — 全局快捷键（先做工具切换，命令面板列为后续项）
+**落地**（2026-09）✅：四个遗漏页（`qa_check`/`alignment_check`/`batch_alignment_check`/`batch_preflight`）全部接上 `setContextMenuPolicy(Qt.CustomContextMenu)`，与 `tm_editor`/`term_management` 既有接线一致；复制行用通用 helper（`toolbox/widgets.py`，适配高亮/cellWidget 列），无新依赖。
+
+#### P2 — 全局快捷键（先做工具切换，命令面板列为后续项）✅
 
 **现状**：全项目搜索 `QShortcut`/`QKeySequence` 均为空（已核实），除了首页卡片自己实现的 Enter/Space 键盘激活（`home/page.py` 里 `_ToolTile` 自己处理的键盘事件），应用层面没有任何全局快捷键。
 
@@ -553,7 +563,9 @@ class TermEntry:
 
 **验收标准**：`Ctrl+1`~`Ctrl+9`（工具数不足 9 个时按实际数量）能正确跳转到对应工具页，与侧边栏点击行为完全一致（包括标题栏文字切换等副作用）；快捷键在任意工具页聚焦状态下都生效，不被输入框抢占（`QShortcut` 默认 `Qt.WindowShortcut` 已经是这个语义，不需要额外处理，但要写一个测试覆盖"焦点在某个 QLineEdit 里时快捷键仍生效"这个场景，因为这是最容易被隐性打破的部分）。
 
-#### P2 — 全局设置工具页
+**落地**（2026-09）✅：`main_window.py` 按 `registry.TOOLS` 顺序注册 `Ctrl+1`~`Ctrl+9`，触发同一条 `select_tool()` 路径；焦点在输入框时仍生效的场景有专门测试覆盖（`tests/test_toolbox_main_window.py`）。`Ctrl+K` 命令面板按原判断继续后置，未做。
+
+#### P2 — 全局设置工具页 ✅
 
 **现状**：`toolbox/settings.py` 已经有一套"`'<tool_id>/<field>'` 扁平 key + `get_str`/`get_bool`/`get_int`/`set_value` 类型安全包装"的持久化约定，但目前只被各工具页的 `restore_settings()`/`save_settings()` 软契约调用，没有一个独立的、用户能主动打开去看/改这些值的界面；`toolbox/tools/` 目录下没有 `settings` 这个工具（已核实，当前 11 个子目录里没有）。
 
@@ -563,7 +575,9 @@ class TermEntry:
 
 **验收标准**：侧边栏能看到并打开这个新工具页；至少"默认输出目录"一项可读可写、重启应用后仍保留；不影响任何现有工具页已有的 `restore_settings()`/`save_settings()` 行为（回归测试跑一遍现有的 `tests/test_toolbox_*_page.py` 全绿）。
 
-#### P2 — 首页"最近使用"
+**落地**（2026-09）✅：`toolbox/tools/settings/` 按 §13 最小步骤接入，`group=''` 落在"其它"组、`order=900` 排侧边栏最后，没有碰 `main_window.py`。范围按原方案收窄：只做了"默认输出目录"一项（`settings.get/set_default_output_dir()`，key `global/default_output_dir`），配套 `effective_start_dir(last_dir)` 让各页自记的"上次目录"优先、全局默认只在没记过时兑底（纯增量，没设全局默认时行为与之前逐字节一致）；界面缩放那条按 backlog 原判断继续单独评估，未做。现有 `tests/test_toolbox_*_page.py` 全绿。
+
+#### P2 — 首页"最近使用" ✅
 
 **现状**：`home/page.py` 目前所有工具卡片等权重平铺（`_MAX_TILE_COLUMNS` 响应式网格，已读代码确认没有排序优先级逻辑）。
 
@@ -571,7 +585,9 @@ class TermEntry:
 
 **验收标准**：连续打开 3 个不同工具后回到首页，能看到"最近使用"区域按最近到最远排列这 3 个工具；首次启动（无记录）时首页布局跟现在完全一样，不多出空白区域。
 
-#### P3 — QA 语义色补一个 `warning`
+**落地**（2026-09）✅：按原方案落位：记录逻辑在 `MainWindow.select_tool()`（`settings.set_recent_tools`，侧边栏/首页卡片/`Ctrl+N` 快捷键的汇合点，不在 `home/page.py` 单独记），首页"最近使用"行复用 `_ToolTile`，`settings.get_recent_tools()` 为空时整行不渲染，不留空区块。
+
+#### P3 — QA 语义色补一个 `warning` ✅
 
 **现状**：`toolbox/resources/style.qss` 顶部 design tokens 目前只有 `success #2F855A`/`danger #B23B3B` 两个语义色（已核实）。但 `language_tools` 侧已经有好几类"不是错误、是待核实提示"的命中——术语检查的 `approved` 方向（`未用推荐译法`）、QA 里"可疑但不确定"这类判断，目前这些在 GUI 结果表格里大概率被迫复用 `danger` 红色（因为只有两档），语义上会跟"真正的错误/缺陷"（比如 `TERM_FORBIDDEN`、`TAG_MISMATCH`）混在一起，用户没法一眼分辨"这个必须改"还是"这个瞄一眼就行"。
 
@@ -579,10 +595,14 @@ class TermEntry:
 
 **验收标准**：`qa_check`/`term_management`（至少这两个已知有"待核实"语义命中的页面）里，"待核实"类命中用新的 `warning` 色，"错误/缺陷"类命中保持 `danger` 色，两者在同一张结果表格里能一眼区分；不新增除这三个语义色之外的第四个状态色。
 
-#### P3 — `sectionCard` 悬停微反馈（可选，锦上添花，非必做）
+**落地**（2026-09）✅：`style.qss` 顶部 design tokens 新增第三个语义色 `warning #B45309`（琥珀系，与 indigo/success/danger 同饱和度区间），`qa_check`/`term_management` 的"待核实"类命中（`approved` 方向术语命中、可疑但不确定类）改用 warning，缺陷类维持 danger；未引入第四个状态色。
+
+#### P3 — `sectionCard` 悬停微反馈（可选，锦上添花，非必做）✅
 
 **现状**：`section()` 返回的 `#sectionCard` 目前是静态的（浅冷灰 `#F3F5F9` + 发丝边 + 12px 圆角 + indigo 强调条，§13"分区与层级"定案），没有 hover/focus 态。
 
 **方案**：给分区标题左侧的 indigo 强调条加一个极轻的 hover 态（鼠标悬停在该 `#sectionCard` 区域时强调条透明度或明度微调），纯 QSS `:hover` 伪状态即可，不需要 `QPropertyAnimation`。**这条优先级最低，是否做、什么时候做都不影响其它条目**，如果时间有限可以跳过，不要为了做这条挤占 P0/P1 的时间。
 
 **验收标准**：仅视觉细节，无功能性验收标准；确认不违反 §13 阴影纪律（"全应用只允许两处阴影"）——这条改动本身不应该新增任何阴影。
+
+**落地**（2026-09）✅：`style.qss` 的 `QLabel[role="sectionTitle"]:hover`——分区标题左侧 indigo 强调条同色相提亮（`#2E4374 → #3E5899`），纯 QSS 伪状态，无 `QPropertyAnimation`、无新阴影，不违反 §13 阴影纪律。

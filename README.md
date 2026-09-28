@@ -9,7 +9,7 @@
 - 内置 Gale-Church 式句级对齐算法，处理常见缩写（a.m./e.g./U.S. 等）不误切句
 - **对齐检查**：不写文件，单独预览一个双语文档会被怎样对齐——哪些段落被合并/拆分、哪句完全没找到对应（GAP），转换前先心里有数（`tmtool align` / 桌面 GUI「对齐检查」页），命令行版本额外支持 `--fail-on-issues` 退出码，方便脚本批量检查一堆文档
 - QA 检查：空值、长度比异常、重复条目（源冲突/译文冲突）、数字不匹配、占位符不匹配（`{name}`/`%s` 等）、URL 丢失或改动、inline 标签不匹配（TMX 带格式标记时）——转换时可选勾选，也可以单独对着一个已有的 tmx/sdltm 跑（`tmtool qa` / 桌面 GUI「QA 检查」页），支持导出 CSV 审阅报告。另有一个**专家级可选外挂**：`tmtool qa --semantic-review` 可注入一个自备的外部语义 reviewer（规则 QA 抓不住的语义错译/漏译一类"待核实提示"）——默认关闭，本仓库不内置任何实现、不含任何模型/网络代码，注入什么由用户自己负责（GUI 刻意没有这个入口），见 [DESIGN.md](./DESIGN.md) 第 15.3 节
-- **TM 维护**（`tmtool` 命令行 + 桌面 GUI「语料维护」页）：清理（去重/去空/normalize）、多文件合并（可选冲突策略）、语料统计、对齐检查
+- **TM 维护**（`tmtool` 命令行 + 桌面 GUI「语料维护」页）：清理（去重/去空/normalize）、多文件合并（可选冲突策略）、语料统计、杠杆分析（对照一份已有 TM 估算新内容能复用多少，按 Exact/95-99/85-94/… 行业标准分档报条数和字数）、多 TM 对比（合并前先看哪些原文在各库之间译文有分歧，可导出冲突审阅 CSV）。GUI 里清理/合并都是"先预览将改动多少条、确认后才写盘"的两段式。另见上面对齐检查一条（`tmtool align` 是独立子命令/独立页）
 - **术语管理**（`tmtool term-check` + 桌面 GUI「术语管理」页）：维护双语术语表（csv/xlsx），对照一个已有 tmx/sdltm 检查禁用译法——默认只做"原文出现术语、译文出现明确禁用的错译"这一个方向（几乎不会误报）；`approved` 方向（原文出现术语、译文未用推荐译法）可选开启（`--check-approved` / GUI 复选框），因为同义改写就可能触发，定位为"待核实提示"而非缺陷判定。见 [DESIGN.md](./DESIGN.md) 第 15.1 节为什么范围这么定
 - **报告导出**：对齐检查、QA 检查、杠杆分析、多 TM 对比、术语一致性检查的汇总结果都能导出为 HTML 或 PDF（`tmtool … --report PATH` / 各页"导出报告…"按钮），给非技术干系人看；CSV 导出仍是逐条目审阅的完整报告格式
 - 桌面 GUI（PySide6），也可以纯命令行/脚本调用
@@ -32,16 +32,18 @@ pip install -e ".[gui]"       # 再加上桌面GUI
 python -m toolbox.main
 ```
 
-侧边栏八个工具：
+侧边栏工具（按侧边栏分组顺序）：
 
 - **语料转换**：浏览选择文件 → 双语源文件需要填源/目标语言（语料库文件可留空自动识别）→ 需要的话调整 docx 版式 → 勾选输出格式 → 点转换。
 - **批量转换**：一次选多个文件/一个文件夹，批量跑语料转换（同上参数），逐行报告每个文件的成败。
+- **语料维护**：清理（去重/去空/normalize，先弹数字化预览、确认后才写盘）、合并（多文件 + 四种冲突处理策略，同样先预览确认）、杠杆分析（待分析文件 × 参考 TM，分档条数/字数表，可导出逐句匹配 CSV）、对比（至少 2 个 TM，独有/一致/冲突三类句段统计 + 冲突明细表，可导出冲突 CSV）、统计（含语言对分布、按修改年份的语料老龄化、语言对×领域交叉表），五个标签页对应 `tmtool` 的五个子命令；杠杆分析/对比/统计支持导出 HTML/PDF 报告。
 - **对齐检查**：对着一个双语文档（docx/xlsx/csv/tsv）预览句子对齐结果，不生成任何文件——转换前先看看"这段落是不是被拆/合并对了"。结果表格默认只显示 GAP（某一侧完全没对应句子）或被 QA 标记的行，可按对齐方式（1:1/合并/拆分/GAP）筛选，可导出完整 CSV 或 HTML/PDF 报告。
 - **批量对齐检查**：一次选多个双语文档逐个跑对齐检查，表格逐行报“对齐正常/需检查/检查失败”，可导出汇总 CSV——把 shell 循环 `tmtool align --fail-on-issues` 的批量筛查搬到 GUI。
-- **QA 检查**：对着一个已有的 tmx/sdltm 单独跑全部 QA 检查（不需要经过转换），结果按"只显示有问题的条目"默认筛选，可按问题类型进一步筛选，可导出完整 CSV 报告（含未标记问题的条目，不受当前筛选影响）。
-- **语料维护**：清理（去重/去空/normalize）、合并（多文件+冲突策略）、统计，三个标签页对应 `tmtool` 的三个子命令。
+- **批量预检**：选多个 docx 逐个跑转换前预检（三种版式的置信度、合并单元格/空表格、语言方向异常），表格逐行绿/红着色，问题详情在 tooltip 里，可导出汇总 CSV。
+- **QA 检查**：对着一个已有的 tmx/sdltm 单独跑全部 QA 检查（不需要经过转换），结果按"只显示有问题的条目"默认筛选，可按问题类型进一步筛选，可导出完整 CSV 报告（含未标记问题的条目，不受当前筛选影响）或 HTML/PDF 报告，也可导出只含有问题条目、带命中字符标红的 HTML 审阅文档。
 - **条目编辑**：打开一个 TM 逐条浏览/手动改或删单条（去重后导出）。
-- **术语管理**：「术语库」标签页维护一份双语术语表（新增/编辑走弹窗表单，不支持表格内直接改，改动通过表单校验后才落到表里）、导入导出 csv/xlsx；「一致性检查」标签页选一个 tmx/sdltm + 一份术语库，跑检查（可勾选“同时检查推荐译法未使用”开启 `approved` 方向），结果按"只显示有问题的条目"默认筛选，可导出完整 CSV 或 HTML/PDF 报告。
+- **术语管理**：「术语库」标签页维护一份双语术语表（新增/编辑走弹窗表单，不支持表格内直接改，改动通过表单校验后才落到表里）、导入导出 csv/xlsx；「一致性检查」标签页选一个 tmx/sdltm + 一份术语库，跑检查（可勾选“同时检查推荐译法未使用”开启 `approved` 方向），结果按"只显示有问题的条目"默认筛选，可导出完整 CSV 或 HTML/PDF 报告；「候选词提取」标签页从语料里提取术语候选、勾选后直接提升进术语库。
+- **设置**：跨工具共享的默认输出目录（各工具页自己记的"上次目录"优先，从没记过时才用这个全局默认值兜底）。
 
 ### 命令行
 
@@ -57,7 +59,7 @@ biconvert input.docx --src en-US --tgt zh-CN --min-confidence 0.6   # 低质量�
 
 ### TM 维护（`tmtool` 命令行 / GUI「语料维护」「对齐检查」页）
 
-`clean`/`merge`/`stats`/`qa` 四个子命令只处理 tmx/sdltm 语料库文件，不涉及双语源文件转换，所以命令行是独立的 `tmtool`，不是 `biconvert` 的子选项；GUI 里对应侧边栏的「语料维护」，三个标签页（清理/合并/统计）分别对应下面前三个子命令，内部调的是同一套 `language_tools.tm.*` 函数。`align` 子命令是个例外——它处理的是双语源文件（docx/xlsx/csv/tsv），不是语料库，参数和 `biconvert` 的双语源文件那部分（`--layout`/`--sheet`/`--src-col`/`--tgt-col`/`--delimiter`/`--header`）是同一套，跟 GUI「对齐检查」页调的是同一个 `language_tools.align_report`。
+`clean`/`merge`/`leverage`/`compare`/`stats`/`qa` 这些子命令只处理 tmx/sdltm 语料库文件，不涉及双语源文件转换，所以命令行是独立的 `tmtool`，不是 `biconvert` 的子选项；GUI 里对应侧边栏的「语料维护」，五个标签页（清理/合并/杠杆分析/对比/统计）分别对应下面前五个子命令，内部调的是同一套 `language_tools.tm.*` 函数。`align` 子命令是个例外——它处理的是双语源文件（docx/xlsx/csv/tsv），不是语料库，参数和 `biconvert` 的双语源文件那部分（`--layout`/`--sheet`/`--src-col`/`--tgt-col`/`--delimiter`/`--header`）是同一套，跟 GUI「对齐检查」页调的是同一个 `language_tools.align_report`。
 
 ```bash
 tmtool clean a.tmx                                    # 原地清理：normalize + 去重 + 去空段
@@ -65,7 +67,11 @@ tmtool clean a.tmx -o cleaned.tmx                      # 清理后另存，不�
 tmtool clean a.tmx --remove-identical                  # 连 source==target 的条目也去掉（默认保留）
 tmtool merge a.tmx b.tmx c.tmx -o merged.tmx           # 合并，默认策略 keep-all（全保留，不解决冲突）
 tmtool merge a.tmx b.tmx -o merged.tmx --strategy prefer-newer  # 同源不同译时按 modified_at 取较新的
-tmtool stats a.tmx                                     # 打印条目数/去重率/空段/语言对分布
+tmtool leverage new.tmx --tm ref.tmx                    # 杠杆分析：new 里每句能在 ref TM 里复用多少，按 Exact/95-99/…/无匹配分档报条数和字数
+tmtool leverage new.tmx --tm ref.tmx --export report.csv  # 逐句导出匹配等级/匹配率 CSV（报价、工作量评估用）
+tmtool compare a.tmx b.tmx c.tmx                        # 多 TM 对比：独有/一致/冲突句段统计，冲突=同一原文在不同库译文不一致
+tmtool compare a.tmx b.tmx --export conflicts.csv      # 导出冲突审阅 CSV（一行一个冲突原文，一列一个库）
+tmtool stats a.tmx b.tmx                                # 条目数/去重率/空段/语言对分布/语料老龄化/语言对×领域交叉表（多文件算总账）
 tmtool qa a.tmx                                        # 跑全部 QA 检查，打印问题条数和分类统计
 tmtool qa a.tmx --export report.csv                     # 同上，并导出完整 CSV 报告（含未标记问题的条目）
 tmtool qa a.tmx --semantic-review 'mymod:MyReviewer()'  # 可选外挂：注入自备的外部语义 reviewer，结果进 CSV 的 semantic_issues 列（默认不传 = 完全不跑）
