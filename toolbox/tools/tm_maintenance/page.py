@@ -66,6 +66,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from language_tools import mono as mono_module
 from language_tools.reports import adapters as report_adapters
 from language_tools.reports import render as report_render
 from language_tools.tm import clean as clean_module
@@ -77,14 +78,18 @@ from language_tools.tm import stats as stats_module
 from language_tools.writers import csv_writer
 from toolbox import settings
 from toolbox.widgets import (
-    CORPUS_FILTER, LOG_COLORS, CurrentPageTabWidget, columns, compact_combo,
-    labeled_field, LogConsole, page_shell, section, set_button_busy,
+    CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, CurrentPageTabWidget, columns, compact_combo,
+    labeled_field, lang_combo_code, LogConsole, make_lang_combo, page_shell, section,
+    set_button_busy, set_lang_combo_code,
 )
 from toolbox.workers import CallableWorker, wait_for_running
 
 _SAVE_FILTER = 'TMX (*.tmx);;SDLTM (*.sdltm)'
 _CSV_FILTER = 'CSV (*.csv)'
 _REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
+# 杠杆分析的待分析文件：单语文档（新内容，尚未翻译）或已有语料库，两者都收。
+_LEVERAGE_INPUT_FILTER = ('Word 文档或语料库 (*.docx *.tmx *.sdltm);;Word 文档 (*.docx);;'
+                          + CORPUS_FILTER)
 _SETTINGS_PREFIX = 'tm_maintenance/'
 # 标签页下标，与 __init__ 里 addTab 的顺序一一对应（测试里有断言守着）。
 # 异步回调用它们指明"这条消息属于哪一页"，见 _log_for。
@@ -157,9 +162,12 @@ def _stats_job(input_path):
     return stats_module.compute(units)
 
 
-def _leverage_job(candidate_path, tm_path):
+def _leverage_job(candidate_path, tm_path, src_lang=None, tgt_lang=None):
     tm_units = tm_io.read_corpus(tm_path)
-    candidate_units = tm_io.read_corpus(candidate_path)
+    # 同一个入口 CLI 也用：语料库照旧读；单语文档按 src/tgt 切句，并先跟 TM 里
+    # 实际有的语言对核对（对不上就报错，而不是整份判成"无匹配"）。
+    candidate_units = mono_module.read_candidates(
+        candidate_path, src_lang, tgt_lang, tm_units=tm_units)
     leverage_module.analyze(tm_units, candidate_units)
     return candidate_units
 
@@ -185,6 +193,7 @@ class TmMaintenancePage(QWidget):
         self._clean_pending = None   # 确认后要跑的 _clean_job kwargs
         self._merge_pending = None   # 确认后要跑的 _merge_job kwargs
         self._leverage_units = None    # last leverage analyze() result, for export
+        self._leverage_mono = False    # whether that analysis read a monolingual document
         self._compare_report = None    # last compare() result, for export
         self._last_stats = None        # last stats.compute() result, for export
         self._last_dir = ''  # overwritten by restore_settings() when wired through MainWindow
@@ -374,12 +383,32 @@ class TmMaintenancePage(QWidget):
         candidate_layout = QHBoxLayout(candidate_row)
         candidate_layout.setContentsMargins(0, 0, 0, 0)
         self.leverage_input_edit = QLineEdit()
-        self.leverage_input_edit.setPlaceholderText('要评估的新内容（tmx/sdltm）…')
+        self.leverage_input_edit.setPlaceholderText('要评估的新内容（docx 文档，或 tmx/sdltm 语料库）…')
+        self.leverage_input_edit.setToolTip(
+            'docx：一份还没翻译的单语文档，会先切成句子再去跟 TM 匹配；tmx/sdltm：已有的语料库')
+        self.leverage_input_edit.textChanged.connect(self._sync_leverage_lang_row)
         candidate_browse_btn = QPushButton('浏览…')
         candidate_browse_btn.clicked.connect(self._browse_leverage_input)
         candidate_layout.addWidget(self.leverage_input_edit, 1)
         candidate_layout.addWidget(candidate_browse_btn)
         layout.addWidget(section('待分析文件', candidate_row))
+
+        # 语言只对单语 docx 有意义（语料库自带语言对），所以选了 docx 才显示。
+        lang_row = QWidget()
+        lang_layout = QHBoxLayout(lang_row)
+        lang_layout.setContentsMargins(0, 0, 0, 0)
+        lang_layout.setSpacing(28)
+        self.leverage_src_combo = make_lang_combo('en-US')
+        self.leverage_tgt_combo = make_lang_combo('zh-CN')
+        for combo in (self.leverage_src_combo, self.leverage_tgt_combo):
+            combo.setToolTip(LANG_TOOLTIP + '\n需要和参考 TM 里存的语言代码完全一致（比如 en-US 与 en 不同）')
+            compact_combo(combo)
+        lang_layout.addLayout(labeled_field('原文语言', self.leverage_src_combo))
+        lang_layout.addLayout(labeled_field('译文语言', self.leverage_tgt_combo))
+        lang_layout.addStretch(1)
+        self.leverage_lang_section = section('语言（单语文档需要）', lang_row)
+        self.leverage_lang_section.setVisible(False)
+        layout.addWidget(self.leverage_lang_section)
 
         tm_row = QWidget()
         tm_layout = QHBoxLayout(tm_row)
@@ -635,7 +664,7 @@ class TmMaintenancePage(QWidget):
             self._last_dir = os.path.dirname(path)
 
     def _browse_leverage_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, _LEVERAGE_INPUT_FILTER)
         if path:
             self.leverage_input_edit.setText(path)
             self._last_dir = os.path.dirname(path)
@@ -692,6 +721,10 @@ class TmMaintenancePage(QWidget):
             settings.get_str(_SETTINGS_PREFIX + 'mergeStrategy', 'keep-all'))
         if idx >= 0:
             self.merge_strategy_combo.setCurrentIndex(idx)
+        set_lang_combo_code(self.leverage_src_combo,
+                            settings.get_str(_SETTINGS_PREFIX + 'leverageSrcLang', 'en-US'))
+        set_lang_combo_code(self.leverage_tgt_combo,
+                            settings.get_str(_SETTINGS_PREFIX + 'leverageTgtLang', 'zh-CN'))
         self._last_dir = settings.get_str(_SETTINGS_PREFIX + 'lastDir', '')
 
     def save_settings(self):
@@ -702,6 +735,8 @@ class TmMaintenancePage(QWidget):
         settings.set_value(_SETTINGS_PREFIX + 'cleanRemoveIdentical',
                             self.clean_chk_remove_identical.isChecked())
         settings.set_value(_SETTINGS_PREFIX + 'mergeStrategy', self.merge_strategy_combo.currentData())
+        settings.set_value(_SETTINGS_PREFIX + 'leverageSrcLang', lang_combo_code(self.leverage_src_combo))
+        settings.set_value(_SETTINGS_PREFIX + 'leverageTgtLang', lang_combo_code(self.leverage_tgt_combo))
         settings.set_value(_SETTINGS_PREFIX + 'lastDir', self._last_dir)
 
     # ----------------------------------------------------------- clean
@@ -865,6 +900,10 @@ class TmMaintenancePage(QWidget):
         self._log('已导出报告到 %s' % path, 'success')
 
     # -------------------------------------------------------- leverage
+    def _sync_leverage_lang_row(self):
+        self.leverage_lang_section.setVisible(
+            mono_module.is_monolingual(self.leverage_input_edit.text().strip()))
+
     def _validate_leverage(self):
         candidate_path = self.leverage_input_edit.text().strip()
         tm_path = self.leverage_tm_edit.text().strip()
@@ -876,6 +915,8 @@ class TmMaintenancePage(QWidget):
             return '请选择参考 TM'
         if not os.path.exists(tm_path):
             return '找不到参考 TM 文件，请重新选择'
+        if mono_module.is_monolingual(candidate_path) and not lang_combo_code(self.leverage_src_combo):
+            return '请选择原文语言'
         return None
 
     def _start_leverage(self):
@@ -891,10 +932,15 @@ class TmMaintenancePage(QWidget):
 
         candidate_path = self.leverage_input_edit.text().strip()
         tm_path = self.leverage_tm_edit.text().strip()
+        src_lang = lang_combo_code(self.leverage_src_combo)
+        tgt_lang = lang_combo_code(self.leverage_tgt_combo)
+        # 记下这次分析的输入类型：导出 CSV 时据此决定要不要带 TM 匹配原文/译文列，
+        # 不能到导出时再去读输入框（用户可能已经改了路径）。
+        self._leverage_mono = mono_module.is_monolingual(candidate_path)
         set_button_busy(self.leverage_btn, True, '分析中…')
         self._log('正在分析…')
         self._leverage_worker = CallableWorker(
-            lambda: _leverage_job(candidate_path, tm_path), parent=self)
+            lambda: _leverage_job(candidate_path, tm_path, src_lang, tgt_lang), parent=self)
         self._leverage_worker.finished_ok.connect(self._on_leverage_ok)
         self._leverage_worker.finished_err.connect(self._on_leverage_err)
         self._leverage_worker.start()
@@ -926,7 +972,7 @@ class TmMaintenancePage(QWidget):
         self._last_dir = os.path.dirname(path)
         src_lang, tgt_lang = tm_io.infer_langs(self._leverage_units)
         csv_writer.write(path, self._leverage_units, src_lang or 'SRC', tgt_lang or 'TGT',
-                          include_leverage=True)
+                          include_leverage=True, include_leverage_match=self._leverage_mono)
         self._log('已导出到 %s' % path, 'success')
 
     def _export_leverage_report(self):

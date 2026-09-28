@@ -407,6 +407,138 @@ def test_leverage_export_csv_writes_leverage_columns(qtbot, tmp_path, monkeypatc
     assert 'exact' in content
 
 
+def _mono_docx(tmp_path, *paragraphs, name='new.docx'):
+    from tests import docx_builder as d
+    return d.write(tmp_path / name, ''.join(d.para(p) for p in paragraphs))
+
+
+def _run_leverage(qtbot, page, candidate, tm):
+    page.leverage_input_edit.setText(str(candidate))
+    page.leverage_tm_edit.setText(str(tm))
+    page.leverage_btn.click()
+    qtbot.waitUntil(lambda: page.leverage_btn.isEnabled(), timeout=5000)
+
+
+def _band_rows(page):
+    return {page.leverage_table.item(r, 0).text():
+            (page.leverage_table.item(r, 1).text(), page.leverage_table.item(r, 2).text())
+            for r in range(page.leverage_table.rowCount())}
+
+
+def test_leverage_language_row_shows_only_for_a_monolingual_document(qtbot, tmp_path):
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.show()
+    page.tabs.setCurrentIndex(2)  # isVisible() is False for anything on a background tab
+    assert not page.leverage_lang_section.isVisible()
+    page.leverage_input_edit.setText(str(tmp_path / 'new.docx'))
+    assert page.leverage_lang_section.isVisible()
+    page.leverage_input_edit.setText(str(tmp_path / 'corpus.tmx'))
+    assert not page.leverage_lang_section.isVisible()
+    page.leverage_input_edit.setText('')
+    assert not page.leverage_lang_section.isVisible()
+
+
+def test_leverage_monolingual_docx_end_to_end(qtbot, tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])
+    doc = _mono_docx(tmp_path, 'Click OK to continue. Totally unrelated text.')
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(2)
+    _run_leverage(qtbot, page, doc, tm)  # default language combos are en-US -> zh-CN
+
+    assert '分析完成：共 2 句' in page.log.toPlainText()
+    rows = _band_rows(page)
+    assert rows['exact'] == ('1', '4')
+    assert rows['no_match'][0] == '1'
+    assert page.leverage_export_csv_btn.isEnabled()
+
+
+def test_leverage_monolingual_language_mismatch_is_reported_not_all_no_match(qtbot, tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])
+    doc = _mono_docx(tmp_path, 'Click OK to continue.')
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.tabs.setCurrentIndex(2)
+    page.leverage_src_combo.setCurrentText('en')
+    page.leverage_tgt_combo.setCurrentText('zh')
+    _run_leverage(qtbot, page, doc, tm)
+
+    log_text = page.log.toPlainText()
+    assert '出错了' in log_text and 'en-US->zh-CN' in log_text
+    assert '分析完成' not in log_text
+    assert not page.leverage_export_csv_btn.isEnabled()
+
+
+def test_leverage_monolingual_missing_source_language_is_a_validation_error(qtbot, tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Hi', '你好')])
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.leverage_src_combo.setCurrentText('')
+    page.leverage_input_edit.setText(_mono_docx(tmp_path, 'Hi.'))
+    page.leverage_tm_edit.setText(str(tm))
+    page.leverage_btn.click()
+    assert '请选择原文语言' in page.log.toPlainText()
+
+
+def test_leverage_monolingual_csv_export_includes_the_matched_tm_entry(qtbot, tmp_path, monkeypatch):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])
+    doc = _mono_docx(tmp_path, 'Click OK to continue.', 'Totally unrelated text.')
+    out = tmp_path / 'report.csv'
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    _run_leverage(qtbot, page, doc, tm)
+    monkeypatch.setattr('toolbox.tools.tm_maintenance.page.QFileDialog.getSaveFileName',
+                        lambda *a, **kw: (str(out), ''))
+    page.leverage_export_csv_btn.click()
+    lines = out.read_text(encoding='utf-8-sig').splitlines()
+    assert lines[0].endswith('leverage_band,match_pct,tm_source,tm_target')
+    assert '点击确定继续。' in lines[1] and 'exact' in lines[1]
+    assert lines[2].endswith(',no_match,0.0,,')
+
+
+def test_leverage_corpus_csv_export_keeps_its_original_columns(qtbot, tmp_path, monkeypatch):
+    tm = tmp_path / 'tm.tmx'
+    candidate = tmp_path / 'in.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])
+    _write_tmx(candidate, [_u('Click OK to continue.', '点击确定继续。')])
+    out = tmp_path / 'report.csv'
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    _run_leverage(qtbot, page, candidate, tm)
+    monkeypatch.setattr('toolbox.tools.tm_maintenance.page.QFileDialog.getSaveFileName',
+                        lambda *a, **kw: (str(out), ''))
+    page.leverage_export_csv_btn.click()
+    header = out.read_text(encoding='utf-8-sig').splitlines()[0]
+    assert header.endswith('leverage_band,match_pct') and 'tm_source' not in header
+
+
+def test_leverage_csv_export_follows_the_analysis_not_the_current_input_box(qtbot, tmp_path, monkeypatch):
+    # Analyze a docx, then retarget the input box at a corpus before exporting:
+    # the export must still describe the analysis that produced the units.
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定继续。')])
+    doc = _mono_docx(tmp_path, 'Click OK to continue.')
+    out = tmp_path / 'report.csv'
+
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    _run_leverage(qtbot, page, doc, tm)
+    page.leverage_input_edit.setText(str(tmp_path / 'other.tmx'))
+    monkeypatch.setattr('toolbox.tools.tm_maintenance.page.QFileDialog.getSaveFileName',
+                        lambda *a, **kw: (str(out), ''))
+    page.leverage_export_csv_btn.click()
+    assert 'tm_source' in out.read_text(encoding='utf-8-sig').splitlines()[0]
+
+
 def test_leverage_export_report_writes_html(qtbot, tmp_path, monkeypatch):
     tm = tmp_path / 'tm.tmx'
     candidate = tmp_path / 'in.tmx'
@@ -709,6 +841,21 @@ def test_save_then_restore_settings_round_trips(qtbot):
     assert fresh.clean_chk_remove_identical.isChecked() is True
     assert fresh.merge_strategy_combo.currentData() == 'prefer-last'
     assert fresh._last_dir == '/some/folder'
+
+
+def test_leverage_language_choice_survives_a_settings_round_trip(qtbot):
+    page = TmMaintenancePage()
+    qtbot.addWidget(page)
+    page.leverage_src_combo.setCurrentText('zh-CN')
+    page.leverage_tgt_combo.setCurrentText('en-US')
+    page.save_settings()
+
+    fresh = TmMaintenancePage()
+    qtbot.addWidget(fresh)
+    fresh.restore_settings()
+    from toolbox.widgets import lang_combo_code
+    assert lang_combo_code(fresh.leverage_src_combo) == 'zh-CN'
+    assert lang_combo_code(fresh.leverage_tgt_combo) == 'en-US'
 
 
 def test_cleanup_waits_for_running_stats_instead_of_crashing(qtbot, tmp_path):
