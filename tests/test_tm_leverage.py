@@ -134,3 +134,103 @@ def test_summarize_empty_candidates_does_not_raise():
     assert s['total_words'] == 0
     for band in leverage_module.BANDS:
         assert s['bands'][band] == {'count': 0, 'words': 0}
+
+
+# ---- matched-TM-entry reporting and the exact-match short-circuit -------------
+
+def test_matched_tm_entry_is_reported_for_exact_and_fuzzy():
+    tm = [_u('Click OK to continue.', '点击确定以继续。'),
+          _u('The quick brown fox jumps over the lazy dog.', '敏捷的棕色狐狸跳过了懒狗。')]
+    candidates = [_u('click ok  to continue.', ''), _u('The quick brown fox jumps over a lazy dog.', '')]
+    leverage_module.analyze(tm, candidates)
+    assert candidates[0].meta['leverage_band'] == 'exact'
+    # the TM entry's own text, not the normalized comparison key
+    assert candidates[0].meta['leverage_tm_src'] == 'Click OK to continue.'
+    assert candidates[0].meta['leverage_tm_tgt'] == '点击确定以继续。'
+    assert candidates[1].meta['leverage_tm_src'] == 'The quick brown fox jumps over the lazy dog.'
+    assert candidates[1].meta['leverage_tm_tgt'] == '敏捷的棕色狐狸跳过了懒狗。'
+
+
+def test_no_match_and_repetition_report_no_tm_entry():
+    tm = [_u('Completely unrelated sentence about weather.', 'x')]
+    candidates = [_u('Save changes before exiting.', ''), _u('Save changes before exiting.', '')]
+    leverage_module.analyze(tm, candidates)
+    for c in candidates:
+        assert c.meta['leverage_tm_src'] is None and c.meta['leverage_tm_tgt'] is None
+
+
+def test_first_tm_entry_wins_when_several_share_one_normalized_source():
+    tm = [_u('Click OK.', 'first'), _u('click  ok.', 'second')]
+    candidates = [_u('Click OK.', '')]
+    leverage_module.analyze(tm, candidates)
+    assert candidates[0].meta['leverage_tm_tgt'] == 'first'
+
+
+def test_out_of_range_fuzzy_floor_is_rejected_even_when_nothing_would_be_compared():
+    import pytest
+    for bad in (-0.1, 1.5):
+        with pytest.raises(ValueError, match='cutoff'):
+            leverage_module.analyze([], [_u('x', '')], fuzzy_floor=bad)
+
+
+def _reference_analyze(tm_units, candidates, fuzzy_floor):
+    """The pre-optimization algorithm, verbatim in behavior: scan the whole
+    per-pair pool with get_close_matches for every candidate. The oracle the
+    exact-match short-circuit and pool de-duplication are checked against."""
+    import difflib
+    by_pair = {}
+    for u in tm_units:
+        by_pair.setdefault((u.src_lang, u.tgt_lang), []).append(leverage_module._normalize(u.src_text))
+    seen, out = set(), []
+    for u in candidates:
+        norm = leverage_module._normalize(u.src_text)
+        if norm and norm in seen:
+            out.append(('repetition', 100.0, True))
+            continue
+        if norm:
+            seen.add(norm)
+        pool = by_pair.get((u.src_lang, u.tgt_lang), [])
+        matches = difflib.get_close_matches(norm, pool, n=1, cutoff=fuzzy_floor) if norm and pool else []
+        if not matches:
+            out.append(('no_match', 0.0, False))
+            continue
+        ratio = difflib.SequenceMatcher(None, norm, matches[0]).ratio()
+        pct = round(ratio * 100, 1)
+        band = 'exact' if ratio >= 1.0 else leverage_module._band_for_pct(min(pct, 99.9))
+        out.append((band, pct, False))
+    return out
+
+
+def test_analyze_agrees_with_the_full_scan_reference_on_random_data():
+    import random
+    rng = random.Random(20260928)
+    vocab = 'click save file mesh density boundary condition select enter value the a of to 点击 保存 文件 网格'.split()
+
+    def sentence():
+        return ' '.join(rng.choice(vocab) for _ in range(rng.randint(1, 9)))
+
+    compared = 0
+    for _ in range(120):
+        tm = [_u(sentence().upper() if rng.random() < 0.2 else sentence(), 't') for _ in range(rng.randint(0, 40))]
+        if tm:
+            tm.append(_u(tm[0].src_text, 'duplicate source'))
+        candidates = []
+        for _ in range(rng.randint(1, 40)):
+            roll = rng.random()
+            if tm and roll < 0.3:
+                text = rng.choice(tm).src_text
+            elif tm and roll < 0.6:
+                words = rng.choice(tm).src_text.split()
+                words[rng.randrange(len(words))] = rng.choice(vocab)
+                text = ' '.join(words)
+            else:
+                text = sentence()
+            candidates.append(_u(text, '', tgt_lang='zh-CN' if rng.random() > 0.1 else 'de-DE'))
+        floor = rng.choice([0.0, 0.5, 0.75, 0.9, 1.0])
+        expected = _reference_analyze(tm, candidates, floor)
+        leverage_module.analyze(tm, candidates, fuzzy_floor=floor)
+        got = [(c.meta['leverage_band'], c.meta['leverage_match_pct'], c.meta['leverage_repetition'])
+               for c in candidates]
+        assert got == expected
+        compared += len(candidates)
+    assert compared > 1000  # the loop really exercised a meaningful sample

@@ -24,7 +24,9 @@ pair isn't leverage, it's noise.
 
 Same mutate-in-place contract as ``qa.run()``/the aligner: ``analyze()``
 populates ``meta['leverage_band']`` / ``meta['leverage_match_pct']`` /
-``meta['leverage_repetition']`` on each candidate unit; ``summarize()``
+``meta['leverage_repetition']`` (and, for a matched segment, the TM entry it
+matched: ``meta['leverage_tm_src']`` / ``meta['leverage_tm_tgt']``, ``None``
+for No Match and Repetition) on each candidate unit; ``summarize()``
 turns that into the aggregate counts a CLI/GUI report wants.
 """
 import difflib
@@ -97,15 +99,26 @@ def analyze(tm_units, candidate_units, *, fuzzy_floor=0.50):
     checked, later identical ones don't need re-checking, matching how
     CAT tools report internal repetitions separately from TM leverage.
     """
-    # Index TM source texts (normalized) per language pair, once, rather
-    # than re-filtering tm_units for every candidate.
+    # difflib raises this for an out-of-range cutoff, but only once it has a
+    # non-empty candidate *and* TM pool to run against; check up front so a
+    # bad value fails the same way whatever the data turns out to be.
+    if not 0.0 <= fuzzy_floor <= 1.0:
+        raise ValueError('cutoff must be in [0.0, 1.0]: %r' % (fuzzy_floor,))
+
+    # Index TM entries per language pair by normalized source text, once,
+    # rather than re-filtering tm_units for every candidate. Several TM
+    # entries can share one normalized source; the first in TM order is kept
+    # as the one reported in meta['leverage_tm_src'/'leverage_tm_tgt'] (the
+    # match *score* is the same whichever of them is picked).
     by_pair = {}
     for u in tm_units:
-        by_pair.setdefault((u.src_lang, u.tgt_lang), []).append(_normalize(u.src_text))
+        by_pair.setdefault((u.src_lang, u.tgt_lang), {}).setdefault(_normalize(u.src_text), u)
 
     seen = set()
     for u in candidate_units:
         norm = _normalize(u.src_text)
+        u.meta['leverage_tm_src'] = None
+        u.meta['leverage_tm_tgt'] = None
 
         if norm and norm in seen:
             u.meta['leverage_band'] = 'repetition'
@@ -116,14 +129,22 @@ def analyze(tm_units, candidate_units, *, fuzzy_floor=0.50):
             seen.add(norm)
         u.meta['leverage_repetition'] = False
 
-        pool = by_pair.get((u.src_lang, u.tgt_lang), [])
-        matches = difflib.get_close_matches(norm, pool, n=1, cutoff=fuzzy_floor) if norm and pool else []
-        if not matches:
-            u.meta['leverage_band'] = 'no_match'
-            u.meta['leverage_match_pct'] = 0.0
-            continue
-
-        ratio = difflib.SequenceMatcher(None, norm, matches[0]).ratio()
+        pool = by_pair.get((u.src_lang, u.tgt_lang), {})
+        if norm and norm in pool:
+            # An identical normalized source is always the best match (ratio
+            # 1.0 means identical text), so skip the scan of the whole pool;
+            # the result is what get_close_matches would have returned.
+            best, ratio = norm, 1.0
+        else:
+            matches = difflib.get_close_matches(norm, pool, n=1, cutoff=fuzzy_floor) if norm and pool else []
+            if not matches:
+                u.meta['leverage_band'] = 'no_match'
+                u.meta['leverage_match_pct'] = 0.0
+                continue
+            best = matches[0]
+            ratio = difflib.SequenceMatcher(None, norm, best).ratio()
+        u.meta['leverage_tm_src'] = pool[best].src_text
+        u.meta['leverage_tm_tgt'] = pool[best].tgt_text
         pct = round(ratio * 100, 1)
         u.meta['leverage_match_pct'] = pct
         # Band the 'exact' cut off the un-rounded ratio, not pct: round()
