@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+MC_NS = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
 
 
 def w(tag):
@@ -108,3 +109,74 @@ def iter_body_tables_with_merge_flags(path):
                         merged += 1
             rows.append(cells)
         yield rows, merged
+
+
+# Subtrees the monolingual walk never enters: text-box content (a drawing
+# anchored inside a body paragraph -- its text is not part of the running
+# body text, and ``iter_body_paragraphs`` above would report it twice, once
+# inside the anchoring paragraph and once as a paragraph of its own) and
+# markup-compatibility fallbacks (the legacy-renderer copy of content that
+# ``mc:Choice`` already carries, e.g. the same text box drawn a second time
+# as VML).
+_MONO_SKIP = {w('txbxContent'), '{%s}Fallback' % MC_NS}
+# Elements that separate words visually but carry no <w:t> of their own.
+_MONO_SPACE = {w('tab'), w('br'), w('cr')}
+
+
+def _visible_text(elem, out):
+    for child in elem:
+        tag = child.tag
+        if tag in _MONO_SKIP:
+            continue
+        if tag == w('t'):
+            out.append(child.text or '')
+        elif tag in _MONO_SPACE:
+            out.append(' ')
+        elif tag == w('noBreakHyphen'):
+            out.append('-')
+        else:
+            _visible_text(child, out)
+
+
+def _mono_paragraphs(elem):
+    for child in elem:
+        tag = child.tag
+        if tag in _MONO_SKIP:
+            continue
+        if tag == w('p'):
+            out = []
+            _visible_text(child, out)
+            yield ''.join(out)
+        else:
+            yield from _mono_paragraphs(child)
+
+
+def iter_text_paragraphs(path):
+    """Yield the running body text of a .docx, one string per <w:p>, in
+    document order, for *monolingual* consumers (leverage analysis).
+
+    Differs from ``iter_body_paragraphs`` -- which the bilingual readers
+    depend on and which is deliberately left unchanged -- in three ways:
+
+    - Paragraphs inside table cells and content controls are included (same
+      as before), but text-box content and ``mc:Fallback`` copies are not,
+      so nothing is counted twice or pulled in out of reading order.
+    - ``<w:tab/>``, ``<w:br/>`` and ``<w:cr/>`` become a space. The bilingual
+      readers concatenate runs with no separator ("Name<tab>Value" reads as
+      "NameValue"), a documented limitation that is harmless for pairing but
+      would make a sentence unmatchable against a TM built from clean text.
+    - Deleted tracked-change text is not visible text (it lives in
+      ``<w:delText>``, not ``<w:t>``), so this reads the document as if all
+      revisions were accepted; inserted text is included.
+
+    Text is NBSP-normalized and stripped; empty paragraphs are yielded as
+    ``''`` (callers decide whether to drop them). Headers, footers,
+    footnotes, endnotes and comments live in other package parts and are not
+    read.
+    """
+    root = _doc_root(path)
+    body = root.find(w('body'))
+    if body is None:
+        return
+    for text in _mono_paragraphs(body):
+        yield text.replace('\u00a0', ' ').strip()
