@@ -80,7 +80,8 @@ class _ToolTile(QWidget):
 
         icon_label = QLabel()
         if spec.icon:
-            pixmap = tinted_icon_pixmap(spec.icon, _TILE_ICON_PX)
+            pixmap = tinted_icon_pixmap(
+                spec.icon, _TILE_ICON_PX, icon_label.devicePixelRatioF())
             icon_label.setPixmap(pixmap)
         name_row = QHBoxLayout()
         name_row.setSpacing(8)

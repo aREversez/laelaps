@@ -455,26 +455,81 @@ _GLYPH_SLATE = '#6B7280'
 _GLYPH_INDIGO = '#2E4374'
 
 
-def tinted_icon_pixmap(icon_path, size):
+def _default_dpr():
+    """The primary screen's device pixel ratio (1.0 when there is no
+    QGuiApplication yet, e.g. a bare import). Callers that have a widget
+    at hand should pass ``widget.devicePixelRatioF()`` instead."""
+    from PySide6.QtGui import QGuiApplication
+
+    screen = QGuiApplication.primaryScreen()
+    return screen.devicePixelRatio() if screen is not None else 1.0
+
+
+def svg_pixmap(svg_path, size, dpr=None, replace=None):
+    """Render an SVG file into a crisp ``size`` x ``size`` (logical px)
+    pixmap on a screen with device pixel ratio ``dpr``.
+
+    ``QPixmap(svg_path).scaled(...)`` rasterizes at the SVG's intrinsic size
+    and then resamples, and a plain 34px render is only 34 *device* pixels --
+    on a 125%/150%/200% Windows display Qt stretches either one up and the
+    glyph goes soft. Here the renderer draws straight into a
+    ``size * dpr`` image tagged with ``devicePixelRatio`` so one logical
+    pixel is backed by the real number of device pixels.
+
+    ``replace`` is an optional ``{old: new}`` string swap applied to the SVG
+    source first (see ``tinted_icon_pixmap``).
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QImage, QPainter, QPixmap
+    from PySide6.QtSvg import QSvgRenderer
+
+    if dpr is None:
+        dpr = _default_dpr()
+    with open(svg_path, encoding='utf-8') as f:
+        svg = f.read()
+    for old, new in (replace or {}).items():
+        svg = svg.replace(old, new)
+
+    device_px = max(1, round(size * dpr))
+    image = QImage(device_px, device_px, QImage.Format_ARGB32_Premultiplied)
+    image.fill(Qt.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.Antialiasing)
+    QSvgRenderer(svg.encode('utf-8')).render(painter)
+    painter.end()
+    image.setDevicePixelRatio(dpr)
+    return QPixmap.fromImage(image)
+
+
+def tinted_icon_pixmap(icon_path, size, dpr=None):
     """Render an icon SVG at ``size`` with its slate stroke swapped to
     the accent indigo -- home-page tiles only, sidebar glyphs stay quiet.
     String-level swap on the SVG source (the one documented glyph color,
     never a color-management surprise) then QSvgRenderer from the edited
     string keeps anti-aliasing and the two-tone white-fill details.
     """
-    from PySide6.QtCore import Qt
-    from PySide6.QtGui import QImage, QPainter, QPixmap
-    from PySide6.QtSvg import QSvgRenderer
+    return svg_pixmap(icon_path, size, dpr, {_GLYPH_SLATE: _GLYPH_INDIGO})
 
-    with open(icon_path, encoding='utf-8') as f:
-        svg = f.read().replace(_GLYPH_SLATE, _GLYPH_INDIGO)
 
-    image = QImage(size, size, QImage.Format_ARGB32_Premultiplied)
-    image.fill(Qt.transparent)
-    painter = QPainter(image)
-    QSvgRenderer(svg.encode('utf-8')).render(painter)
-    painter.end()
-    return QPixmap.fromImage(image)
+def sidebar_icon(icon_path):
+    """QIcon for a sidebar row that looks the same selected or not.
+
+    A plain ``QIcon(svg)`` gets a *generated* Selected-mode pixmap: Qt
+    blends the palette highlight over the whole glyph, which is invisible on
+    a bare stroke but turns the opaque white fills of the two-sheet /
+    magnifier / badge glyphs (batch_convert, batch_alignment_check,
+    batch_preflight, qa_check) into a blue-gray block on the selected row.
+    Registering the same file explicitly for Selected (and Active, the hover
+    mode) makes Qt use it as drawn instead of generating a tinted copy; the
+    row's selected background is the QSS ``::item:selected`` rule's job.
+    """
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QIcon
+
+    icon = QIcon()
+    for mode in (QIcon.Normal, QIcon.Active, QIcon.Selected):
+        icon.addFile(icon_path, QSize(), mode, QIcon.Off)
+    return icon
 
 
 def apply_page_icon(page, icon_path):
@@ -492,7 +547,7 @@ def apply_page_icon(page, icon_path):
     label = page.findChild(QLabel, 'pageHeaderIcon')
     if label is None or not icon_path or not os.path.exists(icon_path):
         return
-    label.setPixmap(tinted_icon_pixmap(icon_path, 34))
+    label.setPixmap(tinted_icon_pixmap(icon_path, 34, page.devicePixelRatioF()))
     label.show()
 
 

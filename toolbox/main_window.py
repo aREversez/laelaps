@@ -46,7 +46,7 @@ import functools
 import os
 
 from PySide6.QtCore import QSettings, QSize, Qt, QRect, QTimer
-from PySide6.QtGui import QBrush, QColor, QIcon, QKeySequence, QShortcut, QPixmap
+from PySide6.QtGui import QBrush, QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMainWindow,
     QMessageBox, QStackedWidget, QStyledItemDelegate, QVBoxLayout, QWidget,
@@ -54,7 +54,7 @@ from PySide6.QtWidgets import (
 
 from toolbox import registry, settings
 from toolbox.paths import RESOURCES_DIR
-from toolbox.widgets import apply_page_icon
+from toolbox.widgets import apply_page_icon, sidebar_icon, svg_pixmap
 
 # Bigger than Qt's/this window's old fixed 960x660 default: the first
 # thing a person sees on first launch should show a full results table
@@ -171,7 +171,7 @@ class MainWindow(QMainWindow):
                 last_group = group
             item = QListWidgetItem(spec.name)
             if spec.icon and os.path.exists(spec.icon):
-                item.setIcon(QIcon(spec.icon))
+                item.setIcon(sidebar_icon(spec.icon))
             item.setToolTip(spec.description)
             page = spec.page_factory()
             # Fill the page_shell header chip with this tool's glyph (no-op
@@ -356,8 +356,8 @@ class MainWindow(QMainWindow):
         logo_label = QLabel()
         logo_path = os.path.join(RESOURCES_DIR, 'logo.svg')
         if os.path.exists(logo_path):
-            logo_label.setPixmap(QPixmap(logo_path).scaled(
-                28, 28, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            logo_label.setPixmap(svg_pixmap(
+                logo_path, 28, logo_label.devicePixelRatioF()))
         title_label = QLabel(_APP_TITLE)
         title_label.setObjectName('sidebarHeaderTitle')
         header_layout.addWidget(logo_label)

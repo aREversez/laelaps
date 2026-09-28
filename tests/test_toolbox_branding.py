@@ -64,3 +64,72 @@ def test_main_stylesheet_loader_substitutes_icons_dir_placeholder():
     assert '{ICONS_DIR}' not in content
     for path in re.findall(r'url\(([^)]+)\)', content):
         assert os.path.exists(path), 'stylesheet references a missing icon: %s' % path
+
+
+# --- HiDPI-crisp rendering + selected-state sidebar icons -------------------
+# Regressions for: (1) sidebar logo / page-header chip / home tiles being
+# rasterized at logical pixel size and then stretched on scaled displays;
+# (2) QIcon's generated Selected-mode pixmap blending the palette highlight
+# over the opaque white fills of the batch_* / qa_check glyphs.
+
+_WHITE_FILLED_GLYPHS = ('batch_convert', 'batch_alignment_check',
+                        'batch_preflight', 'qa_check')
+
+
+def test_svg_pixmap_is_backed_by_device_pixels(qtbot):
+    from toolbox.widgets import svg_pixmap
+    path = os.path.join(RESOURCES_DIR, 'logo.svg')
+    for dpr, expected in ((1.0, 28), (1.5, 42), (2.0, 56)):
+        pm = svg_pixmap(path, 28, dpr)
+        assert (pm.width(), pm.height()) == (expected, expected)
+        assert pm.devicePixelRatio() == dpr
+        assert pm.toImage().pixelColor(expected // 2, expected // 2).alpha() != 0
+
+
+def test_tinted_icon_pixmap_scales_with_dpr(qtbot):
+    from toolbox.widgets import tinted_icon_pixmap
+    path = os.path.join(RESOURCES_DIR, 'icons', 'batch_convert.svg')
+    pm = tinted_icon_pixmap(path, 34, 2.0)
+    assert (pm.width(), pm.height()) == (68, 68)
+    assert pm.devicePixelRatio() == 2.0
+    # default (no dpr given) must keep working for callers that don't pass one
+    assert tinted_icon_pixmap(path, 34).width() >= 34
+
+
+def test_sidebar_icon_selected_pixels_match_normal(qtbot):
+    from PySide6.QtCore import QSize
+    from toolbox.widgets import sidebar_icon
+    for name in _WHITE_FILLED_GLYPHS:
+        icon = sidebar_icon(os.path.join(RESOURCES_DIR, 'icons', name + '.svg'))
+        normal = icon.pixmap(QSize(20, 20), QIcon.Normal, QIcon.Off).toImage()
+        selected = icon.pixmap(QSize(20, 20), QIcon.Selected, QIcon.Off).toImage()
+        assert normal == selected, name
+
+
+def test_plain_qicon_would_tint_the_white_fill(qtbot):
+    """Guards the premise of sidebar_icon(): if Qt ever stops tinting the
+    generated Selected pixmap, this fails and the helper can be retired."""
+    from PySide6.QtCore import QSize
+    path = os.path.join(RESOURCES_DIR, 'icons', 'batch_convert.svg')
+    plain = QIcon(path)
+    normal = plain.pixmap(QSize(20, 20), QIcon.Normal, QIcon.Off).toImage()
+    selected = plain.pixmap(QSize(20, 20), QIcon.Selected, QIcon.Off).toImage()
+    assert normal != selected
+
+
+def test_every_sidebar_row_icon_is_untinted_when_selected(qtbot):
+    from PySide6.QtCore import QSize
+    from toolbox.main_window import MainWindow, _SECTION_ROLE
+    w = MainWindow()
+    qtbot.addWidget(w)
+    checked = 0
+    for i in range(w.sidebar.count()):
+        item = w.sidebar.item(i)
+        if item.data(_SECTION_ROLE) is not None:
+            continue
+        icon = item.icon()
+        normal = icon.pixmap(QSize(20, 20), QIcon.Normal, QIcon.Off).toImage()
+        selected = icon.pixmap(QSize(20, 20), QIcon.Selected, QIcon.Off).toImage()
+        assert normal == selected, item.text()
+        checked += 1
+    assert checked > 0
