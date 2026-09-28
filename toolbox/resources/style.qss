@@ -27,17 +27,14 @@
  * widget (QWidget#centralWidget, a plain QWidget -- see main_window.py),
  * NOT on QMainWindow: a stylesheet background on QMainWindow does not
  * reach its central area on Windows, which left every transparent child
- * rendering black. QDialog/QMessageBox are top-level and paint their own.
- * Every other child QWidget is transparent by default and shows whatever
- * it sits on -- the paper central widget, or a white surface (page card,
- * sidebar panel, tab pane) where one opts in. Painting #F6F7F9 on the
- * bare `QWidget` selector instead used to be invisible (everything shared
- * paper) but turned into gray blocks behind every section()/row container
- * once those started living on the white page card. Specific surfaces
- * below set their own background explicitly. */
-QMainWindow, QDialog, QMessageBox {
-    background: #F6F7F9;
-}
+ * rendering black. Every other child QWidget is transparent by default
+ * and shows whatever it sits on -- the paper central widget, or a white
+ * surface (page card, sidebar panel, tab pane) where one opts in.
+ * Painting #F6F7F9 on the bare `QWidget` selector instead used to be
+ * invisible (everything shared paper) but turned into gray blocks behind
+ * every section()/row container once those started living on the white
+ * page card. Specific surfaces below set their own background
+ * explicitly. */
 QWidget#centralWidget {
     background: #F6F7F9;
 }
@@ -46,6 +43,28 @@ QWidget {
     color: #1A1D23;
     font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", "PingFang SC", sans-serif;
     font-size: 13px;
+}
+
+/* Top-level surfaces. QDialog/QMessageBox paint their own background --
+ * they have no parent surface to show through, so the transparent
+ * background the bare QWidget rule above assigns them (a type selector
+ * matches subclasses) leaves them unpainted, which composites to solid
+ * black on Windows with ink-colored text invisible on top of it: the
+ * "confirmation dialog is all black" bug.
+ *
+ * ORDER IS LOAD-BEARING: this rule must stay BELOW the bare QWidget
+ * rule. Both rules are single type selectors, so they have equal
+ * specificity, and with equal specificity Qt resolves to whichever rule
+ * was declared last -- the dialog rule used to sit above the QWidget
+ * rule and was silently overridden by it (verified offscreen: the
+ * message box's background pixels came back rgba(0,0,0,0), i.e. never
+ * painted). Same ordering logic as QListWidget vs QListWidget#sidebar
+ * further down, where objectName selectors are documented as outranking
+ * the bare type selector; here there is no objectName to lean on, so
+ * declaration order is the only lever. Tests guard both the order and
+ * the rendered pixels (tests/test_toolbox_dialog_surface.py). */
+QMainWindow, QDialog, QMessageBox {
+    background: #F6F7F9;
 }
 
 /* Dropdown/menu popups are their own top-level surfaces -- they need a
