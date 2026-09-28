@@ -36,7 +36,7 @@ python -m toolbox.main
 
 - **语料转换**：浏览选择文件 → 双语源文件需要填源/目标语言（语料库文件可留空自动识别）→ 需要的话调整 docx 版式 → 勾选输出格式 → 点转换。
 - **批量转换**：一次选多个文件/一个文件夹，批量跑语料转换（同上参数），逐行报告每个文件的成败。
-- **语料维护**：清理（去重/去空/normalize，先弹数字化预览、确认后才写盘）、合并（多文件 + 四种冲突处理策略，同样先预览确认）、杠杆分析（待分析文件 × 参考 TM，分档条数/字数表，可导出逐句匹配 CSV）、对比（至少 2 个 TM，独有/一致/冲突三类句段统计 + 冲突明细表，可导出冲突 CSV）、统计（含语言对分布、按修改年份的语料老龄化、语言对×领域交叉表），五个标签页对应 `tmtool` 的五个子命令；杠杆分析/对比/统计支持导出 HTML/PDF 报告。
+- **语料维护**：清理（去重/去空/normalize，先弹数字化预览、确认后才写盘）、合并（多文件 + 四种冲突处理策略，同样先预览确认）、杠杆分析（待分析文件 × 参考 TM，分档条数/字数表，可导出逐句匹配 CSV；待分析文件既可以是还没翻译的单语 `.docx` 文档——选了 docx 才出现原文/译文语言下拉，导出的 CSV 带每句匹配到的 TM 原文/译文——也可以是已有的 tmx/sdltm 语料库）、对比（至少 2 个 TM，独有/一致/冲突三类句段统计 + 冲突明细表，可导出冲突 CSV）、统计（含语言对分布、按修改年份的语料老龄化、语言对×领域交叉表），五个标签页对应 `tmtool` 的五个子命令；杠杆分析/对比/统计支持导出 HTML/PDF 报告。
 - **对齐检查**：对着一个双语文档（docx/xlsx/csv/tsv）预览句子对齐结果，不生成任何文件——转换前先看看"这段落是不是被拆/合并对了"。结果表格默认只显示 GAP（某一侧完全没对应句子）或被 QA 标记的行，可按对齐方式（1:1/合并/拆分/GAP）筛选，可导出完整 CSV 或 HTML/PDF 报告。
 - **批量对齐检查**：一次选多个双语文档逐个跑对齐检查，表格逐行报“对齐正常/需检查/检查失败”，可导出汇总 CSV——把 shell 循环 `tmtool align --fail-on-issues` 的批量筛查搬到 GUI。
 - **批量预检**：选多个 docx 逐个跑转换前预检（三种版式的置信度、合并单元格/空表格、语言方向异常），表格逐行绿/红着色，问题详情在 tooltip 里，可导出汇总 CSV。
@@ -59,7 +59,7 @@ biconvert input.docx --src en-US --tgt zh-CN --min-confidence 0.6   # 低质量�
 
 ### TM 维护（`tmtool` 命令行 / GUI「语料维护」「对齐检查」页）
 
-`clean`/`merge`/`leverage`/`compare`/`stats`/`qa` 这些子命令只处理 tmx/sdltm 语料库文件，不涉及双语源文件转换，所以命令行是独立的 `tmtool`，不是 `biconvert` 的子选项；GUI 里对应侧边栏的「语料维护」，五个标签页（清理/合并/杠杆分析/对比/统计）分别对应下面前五个子命令，内部调的是同一套 `language_tools.tm.*` 函数。`align` 子命令是个例外——它处理的是双语源文件（docx/xlsx/csv/tsv），不是语料库，参数和 `biconvert` 的双语源文件那部分（`--layout`/`--sheet`/`--src-col`/`--tgt-col`/`--delimiter`/`--header`）是同一套，跟 GUI「对齐检查」页调的是同一个 `language_tools.align_report`。
+`clean`/`merge`/`leverage`/`compare`/`stats`/`qa` 这些子命令只处理 tmx/sdltm 语料库文件，不涉及双语源文件转换，所以命令行是独立的 `tmtool`，不是 `biconvert` 的子选项；GUI 里对应侧边栏的「语料维护」，五个标签页（清理/合并/杠杆分析/对比/统计）分别对应下面前五个子命令，内部调的是同一套 `language_tools.tm.*` 函数。`leverage`/`quote` 是另一处例外：它们的待分析文件除了语料库，还可以是**单语 `.docx`**（一份还没翻译的新文档，按句切分后去匹配 TM；`leverage` 直接按扩展名识别、`--src` 必填、`--tgt` 在 TM 只有一个目标语言时可省；`quote` 里 `.docx` 默认仍按双语稿读，要按单语读须显式加 `--mono`）。`align` 子命令是个例外——它处理的是双语源文件（docx/xlsx/csv/tsv），不是语料库，参数和 `biconvert` 的双语源文件那部分（`--layout`/`--sheet`/`--src-col`/`--tgt-col`/`--delimiter`/`--header`）是同一套，跟 GUI「对齐检查」页调的是同一个 `language_tools.align_report`。
 
 ```bash
 tmtool clean a.tmx                                    # 原地清理：normalize + 去重 + 去空段
@@ -69,6 +69,8 @@ tmtool merge a.tmx b.tmx c.tmx -o merged.tmx           # 合并，默认策略 k
 tmtool merge a.tmx b.tmx -o merged.tmx --strategy prefer-newer  # 同源不同译时按 modified_at 取较新的
 tmtool leverage new.tmx --tm ref.tmx                    # 杠杆分析：new 里每句能在 ref TM 里复用多少，按 Exact/95-99/…/无匹配分档报条数和字数
 tmtool leverage new.tmx --tm ref.tmx --export report.csv  # 逐句导出匹配等级/匹配率 CSV（报价、工作量评估用）
+tmtool leverage new.docx --tm ref.tmx --src en-US          # 待分析的是还没翻译的单语 docx：按句切分后对照 ref TM 分档（--src 须与 TM 里存的语言代码一致，--tgt 在 TM 只有一个目标语言时可省）
+tmtool quote new.docx --tm ref.tmx --mono --src en-US      # 报价：--mono 表示 docx 是单语文档（不加则仍按双语稿读）
 tmtool compare a.tmx b.tmx c.tmx                        # 多 TM 对比：独有/一致/冲突句段统计，冲突=同一原文在不同库译文不一致
 tmtool compare a.tmx b.tmx --export conflicts.csv      # 导出冲突审阅 CSV（一行一个冲突原文，一列一个库）
 tmtool stats a.tmx b.tmx                                # 条目数/去重率/空段/语言对分布/语料老龄化/语言对×领域交叉表（多文件算总账）
