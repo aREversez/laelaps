@@ -1,0 +1,153 @@
+{
+  "per_segment": [
+    {
+      "src": "Click OK to continue.",
+      "band": "exact",
+      "pct": 100.0,
+      "repetition": false
+    },
+    {
+      "src": "  click   ok TO continue.  ",
+      "band": "repetition",
+      "pct": 100.0,
+      "repetition": true
+    },
+    {
+      "src": "select THE mesh  density from the drop-down list.",
+      "band": "exact",
+      "pct": 100.0,
+      "repetition": false
+    },
+    {
+      "src": "The quick brown fox jumps over a lazy dog.",
+      "band": "95-99",
+      "pct": 95.3,
+      "repetition": false
+    },
+    {
+      "src": "Save the file before closing the program.",
+      "band": "75-84",
+      "pct": 83.7,
+      "repetition": false
+    },
+    {
+      "src": "Select the mesh density from the list.",
+      "band": "85-94",
+      "pct": 88.4,
+      "repetition": false
+    },
+    {
+      "src": "Enter the boundary condition.",
+      "band": "85-94",
+      "pct": 90.6,
+      "repetition": false
+    },
+    {
+      "src": "Enter the value.",
+      "band": "50-74",
+      "pct": 62.7,
+      "repetition": false
+    },
+    {
+      "src": "Something entirely unrelated to the memory.",
+      "band": "no_match",
+      "pct": 0.0,
+      "repetition": false
+    },
+    {
+      "src": "Click OK to continue.",
+      "band": "repetition",
+      "pct": 100.0,
+      "repetition": true
+    },
+    {
+      "src": "Something entirely unrelated to the memory.",
+      "band": "repetition",
+      "pct": 100.0,
+      "repetition": true
+    },
+    {
+      "src": "The system shall log every authenticatio...(4202 chars)",
+      "band": "95-99",
+      "pct": 100.0,
+      "repetition": false
+    },
+    {
+      "src": "The system shall log every authenticatio...(4200 chars)",
+      "band": "exact",
+      "pct": 100.0,
+      "repetition": false
+    },
+    {
+      "src": "",
+      "band": "no_match",
+      "pct": 0.0,
+      "repetition": false
+    },
+    {
+      "src": "Enter the boundary condition value.",
+      "band": "no_match",
+      "pct": 0.0,
+      "repetition": false
+    },
+    {
+      "src": "Save the file before closing the application.",
+      "band": "no_match",
+      "pct": 0.0,
+      "repetition": false
+    },
+    {
+      "src": "点击确定以继续。",
+      "band": "exact",
+      "pct": 100.0,
+      "repetition": false
+    },
+    {
+      "src": "请先保存文件，然后关闭程序。",
+      "band": "85-94",
+      "pct": 93.3,
+      "repetition": false
+    },
+    {
+      "src": "完全无关的一句话。",
+      "band": "no_match",
+      "pct": 0.0,
+      "repetition": false
+    }
+  ],
+  "summary": {
+    "total": 19,
+    "total_words": 1306,
+    "bands": {
+      "repetition": {
+        "count": 3,
+        "words": 14
+      },
+      "exact": {
+        "count": 4,
+        "words": 620
+      },
+      "95-99": {
+        "count": 2,
+        "words": 610
+      },
+      "85-94": {
+        "count": 3,
+        "words": 25
+      },
+      "75-84": {
+        "count": 1,
+        "words": 7
+      },
+      "50-74": {
+        "count": 1,
+        "words": 3
+      },
+      "no_match": {
+        "count": 5,
+        "words": 27
+      }
+    }
+  },
+  "cli_stdout_en_zh": "Total=13 Words=1263\n  repetition: 3 segments, 14 words\n  exact: 3 segments, 612 words\n  95-99: 2 segments, 610 words\n  85-94: 2 segments, 11 words\n  75-84: 1 segments, 7 words\n  50-74: 1 segments, 3 words\n  no_match: 1 segments, 6 words\n"
+}
