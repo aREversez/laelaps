@@ -1,5 +1,6 @@
 import os
 
+from toolbox.i18n import tr
 from toolbox.registry import ToolSpec, register
 from toolbox.tools.qa_check.page import QaCheckPage
 
@@ -8,10 +9,10 @@ _ICON = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
 register(ToolSpec(
     id='qa_check',
-    name='QA 检查',
-    description='对已有的翻译记忆库 (tmx/sdltm) 跑质量检查，生成审阅报告',
+    name=tr('QA 检查'),
+    description=tr('对已有的翻译记忆库 (tmx/sdltm) 跑质量检查，生成审阅报告'),
     icon=_ICON,
-    group='检查',
+    group=tr('检查'),
     order=23,
     page_factory=QaCheckPage,
 ))

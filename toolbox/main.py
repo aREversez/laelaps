@@ -5,8 +5,7 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from toolbox import tooltips
-from toolbox.main_window import MainWindow
+from toolbox import i18n, tooltips
 from toolbox.paths import RESOURCES_DIR
 
 
@@ -93,6 +92,13 @@ def main():
     # their saved geometry and form state.
     app.setOrganizationName('laelaps')
     app.setApplicationName('toolbox')
+    # Language first, page modules second: pages and their module-level
+    # label tables call tr() at import time, so anything from
+    # toolbox.main_window / toolbox.tools imported before this point would
+    # be stuck in Chinese for the whole session (see toolbox/i18n.py).
+    i18n.install(app)
+    from toolbox.main_window import MainWindow
+
     app.setStyleSheet(_load_stylesheet())
     app.setWindowIcon(QIcon(os.path.join(RESOURCES_DIR, 'logo.svg')))
     tooltips.install(app)

@@ -109,6 +109,7 @@ from language_tools.terms.model import STATUSES, TermEntry
 from language_tools.tm import io as tm_io
 from language_tools.writers import csv_writer
 from toolbox import settings
+from toolbox.i18n import tr
 from toolbox.widgets import (CORPUS_FILTER, DANGER_COLOR, LANG_TOOLTIP, LOG_COLORS,
                              WARNING_COLOR, compact_combo,
                              labeled_field, LogConsole, page_shell)
@@ -131,12 +132,12 @@ _REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
 _EXTRACT_CORPUS_FILTER = 'Corpus files (*.tmx *.sdltm)'
 
 
-_STATUS_LABELS = {'approved': '推荐译法', 'forbidden': '禁用译法'}
+_STATUS_LABELS = {'approved': tr('推荐译法'), 'forbidden': tr('禁用译法')}
 _STATUS_TOOLTIPS = {
-    'approved': '标准/推荐译法。一致性检查默认不看这一档，勾选"同时检查推荐译法未使用"后才会据此标记译文；'
+    'approved': tr('标准/推荐译法。一致性检查默认不看这一档，勾选"同时检查推荐译法未使用"后才会据此标记译文；'
                 '只有在这里（或术语表 status 列）明确选了"推荐译法"的行才会被那样检查，'
-                'status 留空/无法识别而默认显示为推荐译法的旧行不参与（详见 DESIGN.md 15.1）',
-    'forbidden': '明确禁止的错误译法——原文出现这个词，且译文出现这个禁用译法，就标记出来',
+                'status 留空/无法识别而默认显示为推荐译法的旧行不参与（详见 DESIGN.md 15.1）'),
+    'forbidden': tr('明确禁止的错误译法——原文出现这个词，且译文出现这个禁用译法，就标记出来'),
 }
 
 
@@ -158,8 +159,8 @@ def _extract_job(paths, src_lang, tgt_lang, min_freq, max_ngram, top_n, min_pair
 def _format_term_hit(hit):
     text = '%s→%s' % (hit['src_term'], hit['tgt_term'])
     if hit.get('status', 'forbidden') == 'approved':
-        text = '未用推荐译法 ' + text
-    return '%s（%s）' % (text, hit['note']) if hit.get('note') else text
+        text = tr('未用推荐译法') + ' ' + text
+    return tr('%s（%s）') % (text, hit['note']) if hit.get('note') else text
 
 
 def _pick_save_extension(path, selected_filter):
@@ -177,7 +178,7 @@ class _TermEntryDialog(QDialog):
 
     def __init__(self, parent=None, entry=None):
         super().__init__(parent)
-        self.setWindowTitle('编辑术语条目' if entry else '添加术语条目')
+        self.setWindowTitle(tr('编辑术语条目') if entry else tr('添加术语条目'))
         self.setMinimumWidth(320)
         form = QFormLayout(self)
 
@@ -199,11 +200,11 @@ class _TermEntryDialog(QDialog):
         self.error_label.setStyleSheet('color: #B23B3B;')
         self.error_label.setVisible(False)
 
-        form.addRow('原文术语', self.src_term_edit)
-        form.addRow('译文术语', self.tgt_term_edit)
-        form.addRow('状态', self.status_combo)
-        form.addRow('领域（可选）', self.domain_edit)
-        form.addRow('备注（可选）', self.note_edit)
+        form.addRow(tr('原文术语'), self.src_term_edit)
+        form.addRow(tr('译文术语'), self.tgt_term_edit)
+        form.addRow(tr('状态'), self.status_combo)
+        form.addRow(tr('领域（可选）'), self.domain_edit)
+        form.addRow(tr('备注（可选）'), self.note_edit)
         form.addRow(self.error_label)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -213,7 +214,7 @@ class _TermEntryDialog(QDialog):
 
     def _on_accept(self):
         if not self.src_term_edit.text().strip() or not self.tgt_term_edit.text().strip():
-            self.error_label.setText('原文术语和译文术语都不能为空')
+            self.error_label.setText(tr('原文术语和译文术语都不能为空'))
             self.error_label.setVisible(True)
             return
         self.accept()
@@ -249,27 +250,27 @@ class TermManagementPage(QWidget):
     def _build_ui(self):
         outer, _, _ = page_shell(
             self,
-            '术语管理',
-            '维护双语术语表，并对照已有翻译记忆库检查禁用译法',
+            tr('术语管理'),
+            tr('维护双语术语表，并对照已有翻译记忆库检查禁用译法'),
             spacing=18,
         )
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._build_glossary_tab(), '术语库')
-        self.tabs.addTab(self._build_check_tab(), '一致性检查')
-        self.tabs.addTab(self._build_extract_tab(), '候选词提取')
+        self.tabs.addTab(self._build_glossary_tab(), tr('术语库'))
+        self.tabs.addTab(self._build_check_tab(), tr('一致性检查'))
+        self.tabs.addTab(self._build_extract_tab(), tr('候选词提取'))
         outer.addWidget(self.tabs)
 
         self.log = LogConsole()
         self.log.setMinimumHeight(90)
         self.log.setMaximumHeight(120)
-        self.log.set_empty_hint('操作结果会显示在这里')
+        self.log.set_empty_hint(tr('操作结果会显示在这里'))
         # Shared across all three tabs, this is a status/operation console --
         # each tab's own table (术语条目/检查结果/候选结果) is the primary result
         # area, so the log stays a small fixed-height box below them. Giving it
         # a 状态 header (via section()) so it reads as an intentional area
         # instead of a floating empty box, matching corpus_convert/tm_maintenance.
-        outer.addWidget(section('状态', self.log))
+        outer.addWidget(section(tr('状态'), self.log))
 
     # ------------------------------------------------------- glossary tab
     def _build_glossary_tab(self):
@@ -288,21 +289,21 @@ class TermManagementPage(QWidget):
         self.glossary_tgt_lang.setToolTip(LANG_TOOLTIP)
         compact_combo(self.glossary_src_lang)
         compact_combo(self.glossary_tgt_lang)
-        lang_row.addLayout(labeled_field('原文语言', self.glossary_src_lang))
-        lang_row.addLayout(labeled_field('译文语言', self.glossary_tgt_lang))
+        lang_row.addLayout(labeled_field(tr('原文语言'), self.glossary_src_lang))
+        lang_row.addLayout(labeled_field(tr('译文语言'), self.glossary_tgt_lang))
         lang_row.addStretch(1)
         file_layout.addLayout(lang_row)
 
         btn_row = QHBoxLayout()
-        open_btn = QPushButton('打开…')
+        open_btn = QPushButton(tr('打开…'))
         open_btn.clicked.connect(self._open_glossary)
-        self.glossary_close_btn = QPushButton('关闭')
+        self.glossary_close_btn = QPushButton(tr('关闭'))
         self.glossary_close_btn.setEnabled(False)
         self.glossary_close_btn.clicked.connect(self._close_glossary)
-        self.glossary_save_btn = QPushButton('保存')
+        self.glossary_save_btn = QPushButton(tr('保存'))
         self.glossary_save_btn.setEnabled(False)
         self.glossary_save_btn.clicked.connect(self._save_glossary)
-        save_as_btn = QPushButton('另存为…')
+        save_as_btn = QPushButton(tr('另存为…'))
         save_as_btn.clicked.connect(self._save_glossary_as)
         btn_row.addWidget(open_btn)
         btn_row.addWidget(self.glossary_close_btn)
@@ -311,14 +312,14 @@ class TermManagementPage(QWidget):
         btn_row.addStretch(1)
         file_layout.addLayout(btn_row)
 
-        self.glossary_path_label = QLabel('未打开文件（当前为新建）')
+        self.glossary_path_label = QLabel(tr('未打开文件（当前为新建）'))
         self.glossary_path_label.setStyleSheet('color: #6B7280;')
         file_layout.addWidget(self.glossary_path_label)
 
-        layout.addWidget(section('术语库文件', file_widget))
+        layout.addWidget(section(tr('术语库文件'), file_widget))
 
         self.entry_table = QTableWidget(0, 5)
-        self.entry_table.setHorizontalHeaderLabels(['原文术语', '译文术语', '状态', '领域', '备注'])
+        self.entry_table.setHorizontalHeaderLabels([tr('原文术语'), tr('译文术语'), tr('状态'), tr('领域'), tr('备注')])
         self.entry_table.verticalHeader().setVisible(False)
         header = self.entry_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -335,7 +336,7 @@ class TermManagementPage(QWidget):
         self.entry_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.entry_table.customContextMenuRequested.connect(self._show_entry_context_menu)
         self.entry_table.cellDoubleClicked.connect(self._on_entry_double_clicked)
-        layout.addWidget(section('术语条目（右键新增/编辑/删除）', self.entry_table), 1)
+        layout.addWidget(section(tr('术语条目（右键新增/编辑/删除）'), self.entry_table), 1)
         return tab
 
     def _refresh_entry_table(self):
@@ -362,7 +363,7 @@ class TermManagementPage(QWidget):
             self._dirty = True
             self._refresh_entry_table()
             self._sync_glossary_buttons()
-            self._log('已添加：%s → %s' % (values['src_term'], values['tgt_term']))
+            self._log(tr('已添加：%s → %s') % (values['src_term'], values['tgt_term']))
 
     def _selected_entry_rows(self):
         return sorted({idx.row() for idx in self.entry_table.selectedIndexes()})
@@ -381,14 +382,14 @@ class TermManagementPage(QWidget):
             self.entry_table.selectRow(row)
 
         menu = QMenu(self)
-        add_action = menu.addAction('添加…')
+        add_action = menu.addAction(tr('添加…'))
         edit_action = None
         delete_action = None
         if row >= 0:
             menu.addSeparator()
-            edit_action = menu.addAction('编辑…')
+            edit_action = menu.addAction(tr('编辑…'))
             edit_action.setEnabled(len(self._selected_entry_rows()) == 1)
-            delete_action = menu.addAction('删除')
+            delete_action = menu.addAction(tr('删除'))
         chosen = menu.exec(self.entry_table.viewport().mapToGlobal(pos))
         if chosen == add_action:
             self._add_entry()
@@ -401,7 +402,7 @@ class TermManagementPage(QWidget):
     def _edit_selected_entry(self):
         rows = self._selected_entry_rows()
         if len(rows) != 1:
-            self._log('请先选中一条要编辑的术语（只能选一条）', 'error')
+            self._log(tr('请先选中一条要编辑的术语（只能选一条）'), 'error')
             return
         row = rows[0]
         dialog = _TermEntryDialog(self, entry=self._entries[row])
@@ -413,19 +414,19 @@ class TermManagementPage(QWidget):
             self._dirty = True
             self._refresh_entry_table()
             self._sync_glossary_buttons()
-            self._log('已更新：%s → %s' % (values['src_term'], values['tgt_term']))
+            self._log(tr('已更新：%s → %s') % (values['src_term'], values['tgt_term']))
 
     def _remove_selected_entries(self):
         rows = self._selected_entry_rows()
         if not rows:
-            self._log('请先选中要删除的术语', 'error')
+            self._log(tr('请先选中要删除的术语'), 'error')
             return
         for row in reversed(rows):
             del self._entries[row]
         self._dirty = True
         self._refresh_entry_table()
         self._sync_glossary_buttons()
-        self._log('已删除 %d 条术语' % len(rows))
+        self._log(tr('已删除 %d 条术语') % len(rows))
 
     def _release_file_lock(self):
         if self._file_lock is not None:
@@ -433,7 +434,7 @@ class TermManagementPage(QWidget):
             self._file_lock = None
 
     def _open_glossary(self):
-        path, _ = QFileDialog.getOpenFileName(self, '打开术语库', self._last_dir, _GLOSSARY_OPEN_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr('打开术语库'), self._last_dir, _GLOSSARY_OPEN_FILTER)
         if not path:
             return
         self._last_dir = os.path.dirname(path)
@@ -448,7 +449,7 @@ class TermManagementPage(QWidget):
         # app and for the 关闭 button, just not for 打开).
         if self._dirty:
             choice = self._prompt_save_before_discard(
-                '当前术语库有未保存的更改，打开文件前要保存吗？')
+                tr('当前术语库有未保存的更改，打开文件前要保存吗？'))
             if choice == QMessageBox.Cancel:
                 return
             if choice == QMessageBox.Save and not self.save_unsaved_changes():
@@ -456,9 +457,9 @@ class TermManagementPage(QWidget):
 
         if office_lock_marker_exists(path):
             proceed = QMessageBox.warning(
-                self, '文件可能正被占用',
-                '这个文件可能正在 Microsoft Office 或 WPS 中打开。\n'
-                '同时编辑可能导致保存冲突，建议先在那边关闭。\n\n仍要继续打开吗？',
+                self, tr('文件可能正被占用'),
+                tr('这个文件可能正在 Microsoft Office 或 WPS 中打开。\n'
+                '同时编辑可能导致保存冲突，建议先在那边关闭。\n\n仍要继续打开吗？'),
                 QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
             if proceed != QMessageBox.Yes:
                 return
@@ -474,10 +475,10 @@ class TermManagementPage(QWidget):
                 path, lang_combo_code(self.glossary_src_lang),
                 lang_combo_code(self.glossary_tgt_lang))
         except ValueError as e:
-            self._log('打开失败：%s' % e, 'error')
+            self._log(tr('打开失败：%s') % e, 'error')
             return
         except OSError as e:
-            self._log('打开失败：文件可能正被其他程序占用（%s）' % e, 'error')
+            self._log(tr('打开失败：文件可能正被其他程序占用（%s）') % e, 'error')
             return
 
         # Re-opening the file already loaded (e.g. to discard local edits
@@ -492,7 +493,7 @@ class TermManagementPage(QWidget):
                 new_lock.acquire()
             except OSError:
                 self._log(
-                    '无法打开：%s 可能正被其他程序占用（例如 WPS/Office，或本工具的另一个实例）' % path,
+                    tr('无法打开：%s 可能正被其他程序占用（例如 WPS/Office，或本工具的另一个实例）') % path,
                     'error')
                 return
             self._release_file_lock()
@@ -504,11 +505,11 @@ class TermManagementPage(QWidget):
         self.glossary_path_label.setText(path)
         self._sync_glossary_buttons()
         self._refresh_entry_table()
-        self._log('已打开 %s，共 %d 条术语' % (path, len(entries)), 'success')
+        self._log(tr('已打开 %s，共 %d 条术语') % (path, len(entries)), 'success')
 
     def _close_glossary(self):
         if self._dirty:
-            choice = self._prompt_save_before_discard('当前术语库有未保存的更改，关闭前要保存吗？')
+            choice = self._prompt_save_before_discard(tr('当前术语库有未保存的更改，关闭前要保存吗？'))
             if choice == QMessageBox.Cancel:
                 return
             if choice == QMessageBox.Save and not self.save_unsaved_changes():
@@ -517,14 +518,14 @@ class TermManagementPage(QWidget):
         self._entries = []
         self._glossary_path = None
         self._dirty = False
-        self.glossary_path_label.setText('未打开文件（当前为新建）')
+        self.glossary_path_label.setText(tr('未打开文件（当前为新建）'))
         self._refresh_entry_table()
         self._sync_glossary_buttons()
-        self._log('已关闭术语库')
+        self._log(tr('已关闭术语库'))
 
     def _prompt_save_before_discard(self, text):
         box = QMessageBox(self)
-        box.setWindowTitle('未保存的更改')
+        box.setWindowTitle(tr('未保存的更改'))
         box.setText(text)
         box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
         box.setDefaultButton(QMessageBox.Save)
@@ -538,7 +539,7 @@ class TermManagementPage(QWidget):
 
     def _save_glossary_as(self):
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '另存为', settings.effective_start_dir(self._last_dir), _GLOSSARY_SAVE_FILTER)
+            self, tr('另存为'), settings.effective_start_dir(self._last_dir), _GLOSSARY_SAVE_FILTER)
         if not path:
             return
         self._last_dir = os.path.dirname(path)
@@ -562,7 +563,7 @@ class TermManagementPage(QWidget):
                 # around()'s docstring for why that's needed at all.
                 self._file_lock.write_around(lambda: glossary_module.write(path, self._entries))
         except (ValueError, OSError) as e:
-            self._log('保存失败：%s' % e, 'error')
+            self._log(tr('保存失败：%s') % e, 'error')
             return False
 
         lock_warning = None
@@ -573,7 +574,7 @@ class TermManagementPage(QWidget):
                 new_lock.acquire()
                 self._file_lock = new_lock
             except OSError:
-                lock_warning = '已保存，但无法锁定该文件（可能正被其他程序占用），后续编辑将不受保护'
+                lock_warning = tr('已保存，但无法锁定该文件（可能正被其他程序占用），后续编辑将不受保护')
 
         self._glossary_path = path
         self._dirty = False
@@ -582,7 +583,7 @@ class TermManagementPage(QWidget):
         if lock_warning:
             self._log(lock_warning, 'error')
         else:
-            self._log('已保存到 %s' % path, 'success')
+            self._log(tr('已保存到 %s') % path, 'success')
         return True
 
     # -------------------------------------- MainWindow unsaved-changes hook
@@ -592,7 +593,7 @@ class TermManagementPage(QWidget):
         return self._dirty
 
     def unsaved_changes_label(self):
-        return '术语管理'
+        return tr('术语管理')
 
     def save_unsaved_changes(self):
         """Called by MainWindow.closeEvent() when the person chooses "保存
@@ -606,7 +607,7 @@ class TermManagementPage(QWidget):
             return True
         if not self._glossary_path:
             path, selected_filter = QFileDialog.getSaveFileName(
-                self, '另存为', settings.effective_start_dir(self._last_dir), _GLOSSARY_SAVE_FILTER)
+                self, tr('另存为'), settings.effective_start_dir(self._last_dir), _GLOSSARY_SAVE_FILTER)
             if not path:
                 return False
             return self._write_glossary(_pick_save_extension(path, selected_filter))
@@ -673,38 +674,38 @@ class TermManagementPage(QWidget):
         corpus_layout = QHBoxLayout(corpus_row)
         corpus_layout.setContentsMargins(0, 0, 0, 0)
         self.check_corpus_edit = QLineEdit()
-        self.check_corpus_edit.setPlaceholderText('选择要检查的 tmx/sdltm 文件…')
-        corpus_browse_btn = QPushButton('浏览…')
+        self.check_corpus_edit.setPlaceholderText(tr('选择要检查的 tmx/sdltm 文件…'))
+        corpus_browse_btn = QPushButton(tr('浏览…'))
         corpus_browse_btn.clicked.connect(self._browse_check_corpus)
         corpus_layout.addWidget(self.check_corpus_edit, 1)
         corpus_layout.addWidget(corpus_browse_btn)
-        file_layout.addLayout(labeled_field('翻译记忆库', corpus_row))
+        file_layout.addLayout(labeled_field(tr('翻译记忆库'), corpus_row))
 
         glossary_row = QWidget()
         glossary_layout = QHBoxLayout(glossary_row)
         glossary_layout.setContentsMargins(0, 0, 0, 0)
         self.check_glossary_edit = QLineEdit()
-        self.check_glossary_edit.setPlaceholderText('选择术语库文件（csv/xlsx/tbx）…')
-        glossary_browse_btn = QPushButton('浏览…')
+        self.check_glossary_edit.setPlaceholderText(tr('选择术语库文件（csv/xlsx/tbx）…'))
+        glossary_browse_btn = QPushButton(tr('浏览…'))
         glossary_browse_btn.clicked.connect(self._browse_check_glossary)
         glossary_layout.addWidget(self.check_glossary_edit, 1)
         glossary_layout.addWidget(glossary_browse_btn)
-        file_layout.addLayout(labeled_field('术语库', glossary_row))
+        file_layout.addLayout(labeled_field(tr('术语库'), glossary_row))
 
-        layout.addWidget(section('选择文件', file_widget))
+        layout.addWidget(section(tr('选择文件'), file_widget))
 
         action_row = QHBoxLayout()
-        self.check_btn = QPushButton('开始检查')
+        self.check_btn = QPushButton(tr('开始检查'))
         self.check_btn.setObjectName('primaryButton')
         self.check_btn.clicked.connect(self._start_check)
-        self.check_export_btn = QPushButton('导出 CSV…')
+        self.check_export_btn = QPushButton(tr('导出 CSV…'))
         self.check_export_btn.setEnabled(False)
-        self.check_export_btn.setToolTip('导出全部条目（含未标记问题的），不受下面的筛选影响')
+        self.check_export_btn.setToolTip(tr('导出全部条目（含未标记问题的），不受下面的筛选影响'))
         self.check_export_btn.clicked.connect(self._start_export)
-        self.check_export_report_btn = QPushButton('导出报告…')
+        self.check_export_report_btn = QPushButton(tr('导出报告…'))
         self.check_export_report_btn.setEnabled(False)
         self.check_export_report_btn.setToolTip(
-            '导出为 HTML 或 PDF 的汇总报告（总数/命中占比/按术语统计），适合给非技术干系人看')
+            tr('导出为 HTML 或 PDF 的汇总报告（总数/命中占比/按术语统计），适合给非技术干系人看'))
         self.check_export_report_btn.clicked.connect(self._start_export_report)
         action_row.addWidget(self.check_btn)
         action_row.addWidget(self.check_export_btn)
@@ -717,12 +718,12 @@ class TermManagementPage(QWidget):
         # COMPUTES, unlike 只显示有问题的条目 which only changes what the
         # table displays.
         options_row = QHBoxLayout()
-        self.check_approved_chk = QCheckBox('同时检查推荐译法未使用')
+        self.check_approved_chk = QCheckBox(tr('同时检查推荐译法未使用'))
         self.check_approved_chk.setToolTip(
-            '勾选后额外标记：原文出现推荐术语、但译文没有用到对应推荐译法的情况。'
+            tr('勾选后额外标记：原文出现推荐术语、但译文没有用到对应推荐译法的情况。'
             '同义改写、代词指代都可能触发，结果是待核实提示，不一定是错。'
             '只检查明确标了"推荐译法"的条目——status 留空或填了不认识的值的行（只是默认显示为推荐译法）不检查；'
-            '没有译文的未翻译条目也不标记（那属于 QA 的空译文检查）')
+            '没有译文的未翻译条目也不标记（那属于 QA 的空译文检查）'))
         options_row.addWidget(self.check_approved_chk)
         options_row.addStretch(1)
         layout.addLayout(options_row)
@@ -742,7 +743,7 @@ class TermManagementPage(QWidget):
         filter_row = QWidget()
         filter_layout = QHBoxLayout(filter_row)
         filter_layout.setContentsMargins(0, 0, 0, 0)
-        self.check_hide_clean_chk = QCheckBox('只显示有问题的条目')
+        self.check_hide_clean_chk = QCheckBox(tr('只显示有问题的条目'))
         self.check_hide_clean_chk.setChecked(True)
         self.check_hide_clean_chk.stateChanged.connect(self._refresh_check_table)
         filter_layout.addWidget(self.check_hide_clean_chk)
@@ -750,7 +751,7 @@ class TermManagementPage(QWidget):
         results_layout.addWidget(filter_row)
 
         self.check_table = QTableWidget(0, 4)
-        self.check_table.setHorizontalHeaderLabels(['#', '原文', '译文', '术语问题'])
+        self.check_table.setHorizontalHeaderLabels(['#', tr('原文'), tr('译文'), tr('术语问题')])
         self.check_table.verticalHeader().setVisible(False)
         header = self.check_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -764,17 +765,17 @@ class TermManagementPage(QWidget):
         self.check_table.setAlternatingRowColors(True)
         results_layout.addWidget(self.check_table, 1)
 
-        layout.addWidget(section('检查结果', results_content), 1)
+        layout.addWidget(section(tr('检查结果'), results_content), 1)
         return tab
 
     def _browse_check_corpus(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr('选择文件'), self._last_dir, CORPUS_FILTER)
         if path:
             self.check_corpus_edit.setText(path)
             self._last_dir = os.path.dirname(path)
 
     def _browse_check_glossary(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, _GLOSSARY_OPEN_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr('选择文件'), self._last_dir, _GLOSSARY_OPEN_FILTER)
         if path:
             self.check_glossary_edit.setText(path)
             self._last_dir = os.path.dirname(path)
@@ -783,13 +784,13 @@ class TermManagementPage(QWidget):
         corpus_path = self.check_corpus_edit.text().strip()
         glossary_path = self.check_glossary_edit.text().strip()
         if not corpus_path:
-            return '请先选择要检查的翻译记忆库文件'
+            return tr('请先选择要检查的翻译记忆库文件')
         if not os.path.exists(corpus_path):
-            return '找不到翻译记忆库文件，请重新选择'
+            return tr('找不到翻译记忆库文件，请重新选择')
         if not glossary_path:
-            return '请先选择术语库文件'
+            return tr('请先选择术语库文件')
         if not os.path.exists(glossary_path):
-            return '找不到术语库文件，请重新选择'
+            return tr('找不到术语库文件，请重新选择')
         return None
 
     def _start_check(self):
@@ -808,7 +809,7 @@ class TermManagementPage(QWidget):
         corpus_path = self.check_corpus_edit.text().strip()
         glossary_path = self.check_glossary_edit.text().strip()
         self.check_btn.setEnabled(False)
-        self._log('正在检查…')
+        self._log(tr('正在检查…'))
         self._check_worker = CallableWorker(
             lambda: _check_job(corpus_path, glossary_path,
                                 lang_combo_code(self.glossary_src_lang),
@@ -826,19 +827,19 @@ class TermManagementPage(QWidget):
         self._last_summary = s
         rate = (s['flagged'] / s['total'] * 100) if s['total'] else 0.0
         parts = ['%s %d' % (label, s['by_status'][status])
-                 for status, label in (('forbidden', '禁用译法'), ('approved', '未用推荐译法'))
+                 for status, label in (('forbidden', tr('禁用译法')), ('approved', tr('未用推荐译法')))
                  if s['by_status'].get(status)]
-        detail = '（%s）' % '、'.join(parts) if parts else ''
+        detail = tr('（%s）') % tr('、').join(parts) if parts else ''
         self.check_summary_label.setText(
-            '共 %d 条，%d 条有术语问题（%.1f%%%s）' % (s['total'], s['flagged'], rate, detail))
+            tr('共 %d 条，%d 条有术语问题（%.1f%%%s）') % (s['total'], s['flagged'], rate, detail))
         self.check_export_btn.setEnabled(bool(units))
         self.check_export_report_btn.setEnabled(bool(units))
         self._refresh_check_table()
-        self._log('检查完成', 'success')
+        self._log(tr('检查完成'), 'success')
 
     def _on_check_err(self, message):
         self.check_btn.setEnabled(True)
-        self._log('出错了：%s' % message, 'error')
+        self._log(tr('出错了：%s') % message, 'error')
 
     def _refresh_check_table(self):
         self.check_table.setRowCount(0)
@@ -850,7 +851,7 @@ class TermManagementPage(QWidget):
         self.check_table.setRowCount(len(rows))
         for row, (i, u) in enumerate(rows):
             hits = u.meta.get('term_issues', [])
-            hit_text = '、'.join(_format_term_hit(h) for h in hits) if hits else '-'
+            hit_text = tr('、').join(_format_term_hit(h) for h in hits) if hits else '-'
             self.check_table.setItem(row, 0, QTableWidgetItem(str(i)))
             self.check_table.setItem(row, 1, QTableWidgetItem(u.src_text))
             self.check_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
@@ -867,7 +868,7 @@ class TermManagementPage(QWidget):
     def _start_export(self):
         if not self._last_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', settings.effective_start_dir(self._last_dir), _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, tr('导出 CSV'), settings.effective_start_dir(self._last_dir), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
@@ -877,7 +878,7 @@ class TermManagementPage(QWidget):
         units = self._last_units
         src_lang, tgt_lang = tm_io.infer_langs(units)
         self.check_export_btn.setEnabled(False)
-        self._log('正在导出…')
+        self._log(tr('正在导出…'))
         self._export_worker = CallableWorker(
             lambda: csv_writer.write(path, units, src_lang or 'SRC', tgt_lang or 'TGT',
                                       include_terms=True),
@@ -888,11 +889,11 @@ class TermManagementPage(QWidget):
 
     def _on_export_ok(self, path):
         self.check_export_btn.setEnabled(True)
-        self._log('已导出到 %s' % path, 'success')
+        self._log(tr('已导出到 %s') % path, 'success')
 
     def _on_export_err(self, message):
         self.check_export_btn.setEnabled(True)
-        self._log('导出失败：%s' % message, 'error')
+        self._log(tr('导出失败：%s') % message, 'error')
 
     def _start_export_report(self):
         # Same synchronous report_render.write() pattern as qa_check's
@@ -901,7 +902,7 @@ class TermManagementPage(QWidget):
         if not self._last_units:
             return
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '导出报告', os.path.join(settings.effective_start_dir(self._last_dir), '术语检查报告'), _REPORT_FILTER)
+            self, tr('导出报告'), os.path.join(settings.effective_start_dir(self._last_dir), tr('术语检查报告')), _REPORT_FILTER)
         if not path:
             return
         if '.' not in os.path.basename(path):
@@ -911,9 +912,9 @@ class TermManagementPage(QWidget):
             report_render.write(path, report_adapters.from_term_summary(
                 self._last_summary, self._last_units))
         except (ValueError, ImportError) as e:
-            self._log('出错了：%s' % e, 'error')
+            self._log(tr('出错了：%s') % e, 'error')
             return
-        self._log('已导出报告到 %s' % path, 'success')
+        self._log(tr('已导出报告到 %s') % path, 'success')
 
     # ------------------------------------------------------- extract tab
     def _build_extract_tab(self):
@@ -963,9 +964,9 @@ class TermManagementPage(QWidget):
         tab = QWidget()
         layout = QVBoxLayout(tab)
 
-        note = QLabel('候选词由统计方法（词频 + 共现集中度）生成，不是语言学分析，'
+        note = QLabel(tr('候选词由统计方法（词频 + 共现集中度）生成，不是语言学分析，'
                        '一定会有噪音——每一行都需要人工判断，勾选"选中"只代表你已经看过并认可这一行，'
-                       '不代表提取结果本身可信')
+                       '不代表提取结果本身可信'))
         note.setWordWrap(True)
         note.setStyleSheet('color: #6B7280;')
         layout.addWidget(note)
@@ -981,9 +982,9 @@ class TermManagementPage(QWidget):
         input_layout.addWidget(self.extract_input_list)
 
         input_btn_row = QHBoxLayout()
-        add_input_btn = QPushButton('添加文件…')
+        add_input_btn = QPushButton(tr('添加文件…'))
         add_input_btn.clicked.connect(self._add_extract_inputs)
-        remove_input_btn = QPushButton('移除选中')
+        remove_input_btn = QPushButton(tr('移除选中'))
         remove_input_btn.clicked.connect(self._remove_selected_extract_inputs)
         input_btn_row.addWidget(add_input_btn)
         input_btn_row.addWidget(remove_input_btn)
@@ -994,38 +995,38 @@ class TermManagementPage(QWidget):
         self.extract_min_freq_spin = QSpinBox()
         self.extract_min_freq_spin.setRange(1, 1000)
         self.extract_min_freq_spin.setValue(2)
-        self.extract_min_freq_spin.setToolTip('候选词至少要出现这么多次才会被考虑')
+        self.extract_min_freq_spin.setToolTip(tr('候选词至少要出现这么多次才会被考虑'))
         self.extract_max_ngram_spin = QSpinBox()
         self.extract_max_ngram_spin.setRange(1, 20)
         self.extract_max_ngram_spin.setValue(4)
-        self.extract_max_ngram_spin.setToolTip('候选词最长多少个词（非中日韩）或字符（中日韩）')
+        self.extract_max_ngram_spin.setToolTip(tr('候选词最长多少个词（非中日韩）或字符（中日韩）'))
         self.extract_top_n_spin = QSpinBox()
         self.extract_top_n_spin.setRange(1, 10000)
         self.extract_top_n_spin.setValue(100)
-        self.extract_top_n_spin.setToolTip('最多取多少个原文候选词并尝试配对译文')
+        self.extract_top_n_spin.setToolTip(tr('最多取多少个原文候选词并尝试配对译文'))
         self.extract_min_pair_freq_spin = QSpinBox()
         self.extract_min_pair_freq_spin.setRange(1, 1000)
         self.extract_min_pair_freq_spin.setValue(2)
-        self.extract_min_pair_freq_spin.setToolTip('译文候选至少要和原文候选共现这么多次才会被建议')
+        self.extract_min_pair_freq_spin.setToolTip(tr('译文候选至少要和原文候选共现这么多次才会被建议'))
         for spin in (self.extract_min_freq_spin, self.extract_max_ngram_spin,
                      self.extract_top_n_spin, self.extract_min_pair_freq_spin):
             spin.setMaximumWidth(90)
-        params_row.addLayout(labeled_field('最小频次', self.extract_min_freq_spin))
-        params_row.addLayout(labeled_field('最长候选', self.extract_max_ngram_spin))
-        params_row.addLayout(labeled_field('候选词上限', self.extract_top_n_spin))
-        params_row.addLayout(labeled_field('最小配对频次', self.extract_min_pair_freq_spin))
+        params_row.addLayout(labeled_field(tr('最小频次'), self.extract_min_freq_spin))
+        params_row.addLayout(labeled_field(tr('最长候选'), self.extract_max_ngram_spin))
+        params_row.addLayout(labeled_field(tr('候选词上限'), self.extract_top_n_spin))
+        params_row.addLayout(labeled_field(tr('最小配对频次'), self.extract_min_pair_freq_spin))
         params_row.addStretch(1)
         input_layout.addLayout(params_row)
 
-        layout.addWidget(section('输入文件（tmx/sdltm，语言对沿用术语库 tab 的设置）', input_widget))
+        layout.addWidget(section(tr('输入文件（tmx/sdltm，语言对沿用术语库 tab 的设置）'), input_widget))
 
         action_row = QHBoxLayout()
-        self.extract_btn = QPushButton('开始提取')
+        self.extract_btn = QPushButton(tr('开始提取'))
         self.extract_btn.setObjectName('primaryButton')
         self.extract_btn.clicked.connect(self._start_extract)
-        self.extract_promote_btn = QPushButton('提升到术语库')
+        self.extract_promote_btn = QPushButton(tr('提升到术语库'))
         self.extract_promote_btn.setEnabled(False)
-        self.extract_promote_btn.setToolTip('把已勾选的行加入当前术语库（内存中，仍需在术语库 tab 保存）')
+        self.extract_promote_btn.setToolTip(tr('把已勾选的行加入当前术语库（内存中，仍需在术语库 tab 保存）'))
         self.extract_promote_btn.clicked.connect(self._promote_extract_selection)
         action_row.addWidget(self.extract_btn)
         action_row.addWidget(self.extract_promote_btn)
@@ -1038,7 +1039,7 @@ class TermManagementPage(QWidget):
 
         self.extract_table = QTableWidget(0, 7)
         self.extract_table.setHorizontalHeaderLabels(
-            ['选中', '原文候选', '译文建议', '领域', '备注', '原文频次', '配对频次/集中度'])
+            [tr('选中'), tr('原文候选'), tr('译文建议'), tr('领域'), tr('备注'), tr('原文频次'), tr('配对频次/集中度')])
         self.extract_table.verticalHeader().setVisible(False)
         header = self.extract_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -1057,12 +1058,12 @@ class TermManagementPage(QWidget):
         self.extract_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.extract_table.setShowGrid(False)
         self.extract_table.setAlternatingRowColors(True)
-        layout.addWidget(section('候选结果', self.extract_table), 1)
+        layout.addWidget(section(tr('候选结果'), self.extract_table), 1)
         return tab
 
     def _add_extract_inputs(self):
         paths, _ = QFileDialog.getOpenFileNames(
-            self, '选择文件', self._last_dir, _EXTRACT_CORPUS_FILTER)
+            self, tr('选择文件'), self._last_dir, _EXTRACT_CORPUS_FILTER)
         if not paths:
             return
         self._last_dir = os.path.dirname(paths[0])
@@ -1080,14 +1081,14 @@ class TermManagementPage(QWidget):
 
     def _start_extract(self):
         if not self._extract_inputs:
-            self._log('请先添加至少一个 tmx/sdltm 文件', 'error')
+            self._log(tr('请先添加至少一个 tmx/sdltm 文件'), 'error')
             return
         self._extract_candidates = []
         self.extract_table.setRowCount(0)
         self.extract_summary_label.setText('')
         self.extract_promote_btn.setEnabled(False)
         self.extract_btn.setEnabled(False)
-        self._log('正在提取候选词…')
+        self._log(tr('正在提取候选词…'))
         self._extract_worker = CallableWorker(
             lambda: _extract_job(
                 list(self._extract_inputs), lang_combo_code(self.glossary_src_lang),
@@ -1104,16 +1105,16 @@ class TermManagementPage(QWidget):
         self._extract_candidates = candidates
         paired = sum(1 for c in candidates if c['tgt_term'])
         self.extract_summary_label.setText(
-            '共 %d 条候选，%d 条有译文建议（%.1f%%）——统计方法产生的建议，逐行核实后再勾选' % (
+            tr('共 %d 条候选，%d 条有译文建议（%.1f%%）——统计方法产生的建议，逐行核实后再勾选') % (
                 len(candidates), paired,
                 (paired / len(candidates) * 100) if candidates else 0.0))
         self.extract_promote_btn.setEnabled(bool(candidates))
         self._refresh_extract_table()
-        self._log('提取完成，共 %d 条候选' % len(candidates), 'success')
+        self._log(tr('提取完成，共 %d 条候选') % len(candidates), 'success')
 
     def _on_extract_err(self, message):
         self.extract_btn.setEnabled(True)
-        self._log('出错了：%s' % message, 'error')
+        self._log(tr('出错了：%s') % message, 'error')
 
     def _refresh_extract_table(self):
         self.extract_table.setRowCount(len(self._extract_candidates))
@@ -1145,7 +1146,7 @@ class TermManagementPage(QWidget):
         checked_rows = [row for row in range(self.extract_table.rowCount())
                          if self.extract_table.item(row, 0).checkState() == Qt.Checked]
         if not checked_rows:
-            self._log('请先勾选要提升的候选词', 'error')
+            self._log(tr('请先勾选要提升的候选词'), 'error')
             return
 
         # All-or-nothing on a blank tgt_term among the checked rows -- same
@@ -1156,8 +1157,8 @@ class TermManagementPage(QWidget):
         # glossary entry.
         blank_rows = [row for row in checked_rows if not self.extract_table.item(row, 2).text().strip()]
         if blank_rows:
-            self._log('第 %s 行已勾选但译文建议为空，请先填写译文或取消勾选' %
-                       '、'.join(str(r + 1) for r in blank_rows), 'error')
+            self._log(tr('第 %s 行已勾选但译文建议为空，请先填写译文或取消勾选') %
+                       tr('、').join(str(r + 1) for r in blank_rows), 'error')
             return
 
         src_lang = lang_combo_code(self.glossary_src_lang)
@@ -1175,7 +1176,7 @@ class TermManagementPage(QWidget):
         self._dirty = True
         self._refresh_entry_table()
         self._sync_glossary_buttons()
-        self._log('已提升 %d 条候选词到术语库（还未保存到文件）' % len(checked_rows), 'success')
+        self._log(tr('已提升 %d 条候选词到术语库（还未保存到文件）') % len(checked_rows), 'success')
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):

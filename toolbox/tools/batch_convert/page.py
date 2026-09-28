@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
 
 from language_tools import api
 from toolbox import settings
+from toolbox.i18n import tr
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import section as _section
@@ -69,12 +70,12 @@ _SUPPORTED_EXTS = _BILINGUAL_EXTS | _CORPUS_EXTS
 _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.sdltm)'
 
 _FORMAT_TOOLTIPS = {
-    'sdltm': 'Trados 记忆库格式',
-    'tmx': 'CAT 工具通用记忆库格式',
-    'csv': '可人工核对的表格',
-    'jsonl': '供模型训练用，逐行 JSON',
+    'sdltm': tr('Trados 记忆库格式'),
+    'tmx': tr('CAT 工具通用记忆库格式'),
+    'csv': tr('可人工核对的表格'),
+    'jsonl': tr('供模型训练用，逐行 JSON'),
 }
-_QA_TOOLTIP = '检查漏译、数字不一致等问题'
+_QA_TOOLTIP = tr('检查漏译、数字不一致等问题')
 
 # extension -> the one output format it'd be a same-format no-op to
 # generate for a file already in that format; same idea as
@@ -83,8 +84,8 @@ _QA_TOOLTIP = '检查漏译、数字不一致等问题'
 # checkbox couldn't represent "skip tmx for this file but not that one").
 _SAME_FORMAT_SKIP = {'.tmx': 'tmx', '.sdltm': 'sdltm', '.csv': 'csv'}
 
-_STATUS_PENDING = '等待中'
-_STATUS_RUNNING = '转换中…'
+_STATUS_PENDING = tr('等待中')
+_STATUS_RUNNING = tr('转换中…')
 
 _SETTINGS_PREFIX = 'batch_convert/'
 
@@ -121,9 +122,9 @@ class BatchConvertWorker(QThread):
         skip_fmt = _SAME_FORMAT_SKIP.get(ext)
         formats = tuple(f for f in self._shared['formats'] if f != skip_fmt)
         if not formats:
-            return False, '跳过：勾选的生成格式和源文件格式相同'
+            return False, tr('跳过：勾选的生成格式和源文件格式相同')
         if ext in _BILINGUAL_EXTS and (not self._shared['src_lang'] or not self._shared['tgt_lang']):
-            return False, '跳过：这类文件需要原文/译文语言'
+            return False, tr('跳过：这类文件需要原文/译文语言')
 
         try:
             result = api.convert(
@@ -139,10 +140,10 @@ class BatchConvertWorker(QThread):
             return False, str(e)
 
         units, exported = result['units'], result['exported']
-        message = '成功：%d 组' % units if exported == units else \
-            '成功：%d 组（%d 组被过滤）' % (units, units - exported)
+        message = tr('成功：%d 组') % units if exported == units else \
+            tr('成功：%d 组（%d 组被过滤）') % (units, units - exported)
         if len(formats) < len(self._shared['formats']):
-            message += '，已跳过同格式选项'
+            message += tr('，已跳过同格式选项')
         return True, message
 
 
@@ -159,8 +160,8 @@ class BatchConvertPage(QWidget):
     def _build_ui(self):
         outer, _, _ = page_shell(
             self,
-            '批量转换',
-            '一次性转换多个文件，每个结果保存在各自源文件旁边',
+            tr('批量转换'),
+            tr('一次性转换多个文件，每个结果保存在各自源文件旁边'),
             spacing=18,
         )
 
@@ -171,25 +172,25 @@ class BatchConvertPage(QWidget):
         list_layout.setSpacing(8)
 
         btn_row = QHBoxLayout()
-        self.add_files_btn = QPushButton('添加文件…')
+        self.add_files_btn = QPushButton(tr('添加文件…'))
         self.add_files_btn.clicked.connect(self._add_files)
-        self.add_folder_btn = QPushButton('添加文件夹…')
+        self.add_folder_btn = QPushButton(tr('添加文件夹…'))
         self.add_folder_btn.clicked.connect(self._add_folder)
-        self.remove_btn = QPushButton('移除选中')
+        self.remove_btn = QPushButton(tr('移除选中'))
         self.remove_btn.clicked.connect(self._remove_selected)
-        self.clear_btn = QPushButton('清空')
+        self.clear_btn = QPushButton(tr('清空'))
         self.clear_btn.clicked.connect(self._clear_all)
         for b in (self.add_files_btn, self.add_folder_btn, self.remove_btn, self.clear_btn):
             btn_row.addWidget(b)
         btn_row.addStretch(1)
         list_layout.addLayout(btn_row)
 
-        self.count_label = QLabel('共 0 个文件')
+        self.count_label = QLabel(tr('共 0 个文件'))
         self.count_label.setStyleSheet('color: #6B7280;')
         list_layout.addWidget(self.count_label)
 
         self.file_table = QTableWidget(0, 2)
-        self.file_table.setHorizontalHeaderLabels(['文件', '状态'])
+        self.file_table.setHorizontalHeaderLabels([tr('文件'), tr('状态')])
         self.file_table.verticalHeader().setVisible(False)
         header = self.file_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -201,7 +202,7 @@ class BatchConvertPage(QWidget):
         self.file_table.setAlternatingRowColors(True)
         list_layout.addWidget(self.file_table, 1)
 
-        outer.addWidget(_section('待转换文件', list_widget), 1)
+        outer.addWidget(_section(tr('待转换文件'), list_widget), 1)
 
         # --- language + docx layout, all inline in one row (same layout
         # as corpus_convert's 语言与排版方式 section) ---
@@ -215,15 +216,15 @@ class BatchConvertPage(QWidget):
         self.src_edit.setToolTip(LANG_TOOLTIP)
         self.tgt_edit.setToolTip(LANG_TOOLTIP)
         self.layout_combo = make_layout_combo()
-        self.layout_combo.setToolTip('仅 .docx 需要关心')
+        self.layout_combo.setToolTip(tr('仅 .docx 需要关心'))
         for combo in (self.src_edit, self.tgt_edit, self.layout_combo):
             compact_combo(combo)
 
-        opts_layout.addLayout(labeled_field('原文语言', self.src_edit))
-        opts_layout.addLayout(labeled_field('译文语言', self.tgt_edit))
-        opts_layout.addLayout(labeled_field('文档排版方式', self.layout_combo))
+        opts_layout.addLayout(labeled_field(tr('原文语言'), self.src_edit))
+        opts_layout.addLayout(labeled_field(tr('译文语言'), self.tgt_edit))
+        opts_layout.addLayout(labeled_field(tr('文档排版方式'), self.layout_combo))
         opts_layout.addStretch(1)
-        outer.addWidget(_section('语言与排版方式（应用到本批所有文件）', opts_widget))
+        outer.addWidget(_section(tr('语言与排版方式（应用到本批所有文件）'), opts_widget))
 
         # --- output formats ---
         fmt_widget = QWidget()
@@ -241,13 +242,13 @@ class BatchConvertPage(QWidget):
             cb.setToolTip(_FORMAT_TOOLTIPS[key])
             fmt_row.addWidget(cb)
         fmt_row.addStretch(1)
-        outer.addWidget(_section('生成格式', fmt_widget))
+        outer.addWidget(_section(tr('生成格式'), fmt_widget))
 
-        self.chk_qa = QCheckBox('运行内容检查')
+        self.chk_qa = QCheckBox(tr('运行内容检查'))
         self.chk_qa.setToolTip(_QA_TOOLTIP)
         outer.addWidget(self.chk_qa)
 
-        self.start_btn = QPushButton('开始批量转换')
+        self.start_btn = QPushButton(tr('开始批量转换'))
         self.start_btn.setObjectName('primaryButton')
         self.start_btn.clicked.connect(self._start_batch)
         start_row = QHBoxLayout()
@@ -261,7 +262,7 @@ class BatchConvertPage(QWidget):
 
     # ------------------------------------------------------------ file list
     def _add_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件', self._last_dir, _SUPPORTED_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(self, tr('选择文件'), self._last_dir, _SUPPORTED_FILTER)
         if not paths:
             return
         self._clear_completed_rows()
@@ -271,7 +272,7 @@ class BatchConvertPage(QWidget):
         self._refresh_count()
 
     def _add_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, '选择文件夹', self._last_dir)
+        folder = QFileDialog.getExistingDirectory(self, tr('选择文件夹'), self._last_dir)
         if not folder:
             return
         self._clear_completed_rows()
@@ -321,7 +322,7 @@ class BatchConvertPage(QWidget):
         self._refresh_count()
 
     def _refresh_count(self):
-        self.count_label.setText('共 %d 个文件' % len(self._paths))
+        self.count_label.setText(tr('共 %d 个文件') % len(self._paths))
 
     def _set_row_status(self, row, text, kind):
         item = QTableWidgetItem(text)
@@ -368,12 +369,12 @@ class BatchConvertPage(QWidget):
     def _validate(self):
         """Returns an error string, or None if the form is valid."""
         if not self._paths:
-            return '请先添加要转换的文件'
+            return tr('请先添加要转换的文件')
         has_bilingual = any(os.path.splitext(p)[1].lower() in _BILINGUAL_EXTS for p in self._paths)
         if has_bilingual and (not lang_combo_code(self.src_edit) or not lang_combo_code(self.tgt_edit)):
-            return '本批文件里有双语文档，需要先填写原文语言和译文语言'
+            return tr('本批文件里有双语文档，需要先填写原文语言和译文语言')
         if not any(cb.isChecked() for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv, self.chk_jsonl)):
-            return '请至少勾选一种要生成的格式'
+            return tr('请至少勾选一种要生成的格式')
         return None
 
     def _set_controls_enabled(self, enabled):
@@ -410,10 +411,10 @@ class BatchConvertPage(QWidget):
         for row in range(self.file_table.rowCount()):
             self._set_row_status(row, _STATUS_RUNNING, 'info')
 
-        self.summary_label.setText('正在转换 %d 个文件…' % len(self._paths))
+        self.summary_label.setText(tr('正在转换 %d 个文件…') % len(self._paths))
         self.summary_label.setStyleSheet('color: #4B5262;')
         self._set_controls_enabled(False)
-        set_button_busy(self.start_btn, True, '转换中…')
+        set_button_busy(self.start_btn, True, tr('转换中…'))
 
         self._worker = BatchConvertWorker(list(self._paths), shared_kwargs, parent=self)
         self._worker.file_done.connect(self._on_file_done)
@@ -428,10 +429,10 @@ class BatchConvertPage(QWidget):
         self._set_controls_enabled(True)
         set_button_busy(self.start_btn, False)
         if failed == 0:
-            text = '全部完成：%d 个文件都转换成功' % succeeded
+            text = tr('全部完成：%d 个文件都转换成功') % succeeded
             kind = 'success'
         else:
-            text = '完成：%d 个成功，%d 个失败（详情见上面各行的状态）' % (succeeded, failed)
+            text = tr('完成：%d 个成功，%d 个失败（详情见上面各行的状态）') % (succeeded, failed)
             kind = 'error'
         self.summary_label.setText(text)
         self.summary_label.setStyleSheet('color: %s;' % LOG_COLORS[kind])

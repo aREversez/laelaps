@@ -49,8 +49,8 @@ def set_value(key, value):
 
 # Cross-tool global keys (DESIGN.md 15.4 P2): the ``'global/'`` prefix sits
 # alongside the per-tool ``'<tool_id>/'`` convention for the handful of
-# values that aren't owned by one page's form -- home's recently-used list
-# and the shared default output directory.
+# values that aren't owned by one page's form -- home's recently-used list,
+# the shared default output directory and the UI language.
 _GLOBAL_PREFIX = 'global/'
 _RECENT_KEY = 'home/recent_tools'
 _RECENT_MAX = 3
@@ -65,6 +65,17 @@ def get_default_output_dir():
 
 def set_default_output_dir(path):
     set_value(_GLOBAL_PREFIX + 'default_output_dir', path or '')
+
+
+def get_ui_language():
+    """The saved UI-language choice -- ``'auto'`` (follow the system) or a
+    language code from ``toolbox.i18n.LANGUAGES`` -- or '' when nobody has
+    chosen yet (``i18n.install()`` records the default on first launch)."""
+    return get_str(_GLOBAL_PREFIX + 'ui_language')
+
+
+def set_ui_language(choice):
+    set_value(_GLOBAL_PREFIX + 'ui_language', choice or '')
 
 
 def effective_start_dir(last_dir=''):

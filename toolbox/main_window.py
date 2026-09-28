@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
 )
 
 from toolbox import registry, settings
+from toolbox.i18n import tr
 from toolbox.paths import RESOURCES_DIR
 from toolbox.widgets import apply_page_icon, sidebar_icon, svg_pixmap
 
@@ -70,7 +71,7 @@ _GEOMETRY_KEY = 'mainWindow/geometry'
 # the window title only while the home page is up; every other tool swaps
 # the title bar to its own name (see _on_sidebar_row_changed) so the native
 # title bar stops duplicating the sidebar's "语言工具箱".
-_APP_TITLE = '语言工具箱'
+_APP_TITLE = tr('语言工具箱')
 
 # Data roles on sidebar QListWidgetItems: a section header carries
 # _SECTION_ROLE (marks it non-selectable, value unused); a tool row
@@ -165,7 +166,7 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(self._empty_state())
         last_group = None
         for spec in tools:
-            group = spec.group or '其它'
+            group = spec.group or tr('其它')
             if group != last_group:
                 self._add_sidebar_section(group)
                 last_group = group
@@ -331,11 +332,11 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def _prompt_unsaved_changes(self, dirty_pages):
-        names = '、'.join(
-            getattr(p, 'unsaved_changes_label', lambda: '未命名')() for p in dirty_pages)
+        names = tr('、').join(
+            getattr(p, 'unsaved_changes_label', lambda: tr('未命名'))() for p in dirty_pages)
         box = QMessageBox(self)
-        box.setWindowTitle('有未保存的更改')
-        box.setText('%s 有未保存的更改，要保存吗？' % names)
+        box.setWindowTitle(tr('有未保存的更改'))
+        box.setText(tr('%s 有未保存的更改，要保存吗？') % names)
         box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
         box.setDefaultButton(QMessageBox.Save)
         return box.exec()
@@ -397,7 +398,7 @@ class MainWindow(QMainWindow):
     def _empty_state(self):
         w = QWidget()
         layout = QVBoxLayout(w)
-        label = QLabel('没有已注册的工具')
+        label = QLabel(tr('没有已注册的工具'))
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
         return w

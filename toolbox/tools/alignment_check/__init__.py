@@ -1,5 +1,6 @@
 import os
 
+from toolbox.i18n import tr
 from toolbox.registry import ToolSpec, register
 from toolbox.tools.alignment_check.page import AlignmentCheckPage
 
@@ -8,10 +9,10 @@ _ICON = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
 register(ToolSpec(
     id='alignment_check',
-    name='对齐检查',
-    description='对着一个双语文档（docx/xlsx/csv/tsv）预览句子对齐结果，不写文件',
+    name=tr('对齐检查'),
+    description=tr('对着一个双语文档（docx/xlsx/csv/tsv）预览句子对齐结果，不写文件'),
     icon=_ICON,
-    group='检查',
+    group=tr('检查'),
     order=20,
     page_factory=AlignmentCheckPage,
 ))

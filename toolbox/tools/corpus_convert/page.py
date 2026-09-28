@@ -71,6 +71,7 @@ from PySide6.QtWidgets import (
 
 from language_tools import api
 from toolbox import settings
+from toolbox.i18n import tr
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import LogConsole
@@ -83,12 +84,12 @@ _SUPPORTED_FILTER = 'Supported files (*.docx *.xlsx *.xlsm *.csv *.tsv *.tmx *.s
 # 拖拽白名单：与 _SUPPORTED_FILTER 可选的输入格式一致。
 _SUPPORTED_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv', '.tmx', '.sdltm'}
 
-_QA_TOOLTIP = '检查漏译、数字不一致等问题'
+_QA_TOOLTIP = tr('检查漏译、数字不一致等问题')
 _FORMAT_TOOLTIPS = {
-    'sdltm': 'Trados 记忆库格式',
-    'tmx': 'CAT 工具通用记忆库格式',
-    'csv': '可人工核对的表格',
-    'jsonl': '供模型训练用，逐行 JSON',
+    'sdltm': tr('Trados 记忆库格式'),
+    'tmx': tr('CAT 工具通用记忆库格式'),
+    'csv': tr('可人工核对的表格'),
+    'jsonl': tr('供模型训练用，逐行 JSON'),
 }
 
 _SETTINGS_PREFIX = 'corpus_convert/'
@@ -135,8 +136,8 @@ class CorpusConvertPage(QWidget):
     def _build_ui(self):
         outer, _, _ = page_shell(
             self,
-            '语料转换',
-            '双语文档转翻译记忆库，支持 sdltm/tmx 互转',
+            tr('语料转换'),
+            tr('双语文档转翻译记忆库，支持 sdltm/tmx 互转'),
             spacing=18,
         )
 
@@ -145,9 +146,9 @@ class CorpusConvertPage(QWidget):
         file_layout = QHBoxLayout(file_row)
         file_layout.setContentsMargins(0, 0, 0, 0)
         self.input_edit = QLineEdit()
-        self.input_edit.setPlaceholderText('选择要转换的文件…')
+        self.input_edit.setPlaceholderText(tr('选择要转换的文件…'))
         self.input_edit.textChanged.connect(self._sync_format_checkboxes)
-        browse_btn = QPushButton('浏览…')
+        browse_btn = QPushButton(tr('浏览…'))
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
         file_layout.addWidget(browse_btn)
@@ -156,7 +157,7 @@ class CorpusConvertPage(QWidget):
         # textChanged 联动）。
         install_file_drop(file_row, self.input_edit, _SUPPORTED_EXTS,
                           self._apply_dropped_file, self._reject_dropped_file)
-        outer.addWidget(_section('选择文件', file_row))
+        outer.addWidget(_section(tr('选择文件'), file_row))
 
         # --- language + docx layout, all inline in one row ---
         # 原文语言/译文语言/文档排版方式 show short text ("英语 (en-US)",
@@ -176,15 +177,15 @@ class CorpusConvertPage(QWidget):
         self.src_edit.setToolTip(LANG_TOOLTIP)
         self.tgt_edit.setToolTip(LANG_TOOLTIP)
         self.layout_combo = make_layout_combo()
-        self.layout_combo.setToolTip('仅 .docx 需要关心')
+        self.layout_combo.setToolTip(tr('仅 .docx 需要关心'))
         for combo in (self.src_edit, self.tgt_edit, self.layout_combo):
             compact_combo(combo)
 
-        opts_layout.addLayout(labeled_field('原文语言', self.src_edit))
-        opts_layout.addLayout(labeled_field('译文语言', self.tgt_edit))
-        opts_layout.addLayout(labeled_field('文档排版方式', self.layout_combo))
+        opts_layout.addLayout(labeled_field(tr('原文语言'), self.src_edit))
+        opts_layout.addLayout(labeled_field(tr('译文语言'), self.tgt_edit))
+        opts_layout.addLayout(labeled_field(tr('文档排版方式'), self.layout_combo))
         opts_layout.addStretch(1)
-        outer.addWidget(_section('语言与排版方式', opts_widget))
+        outer.addWidget(_section(tr('语言与排版方式'), opts_widget))
 
         # --- output formats ---
         fmt_widget = QWidget()
@@ -204,13 +205,13 @@ class CorpusConvertPage(QWidget):
             cb.toggled.connect(lambda checked, k=key: self._on_format_toggled(k, checked))
             fmt_row.addWidget(cb)
         fmt_row.addStretch(1)
-        outer.addWidget(_section('生成格式', fmt_widget))
+        outer.addWidget(_section(tr('生成格式'), fmt_widget))
 
-        self.chk_qa = QCheckBox('运行内容检查')
+        self.chk_qa = QCheckBox(tr('运行内容检查'))
         self.chk_qa.setToolTip(_QA_TOOLTIP)
         outer.addWidget(self.chk_qa)
 
-        self.convert_btn = QPushButton('开始转换')
+        self.convert_btn = QPushButton(tr('开始转换'))
         self.convert_btn.setObjectName('primaryButton')
         self.convert_btn.clicked.connect(self._start_convert)
         btn_row = QHBoxLayout()
@@ -220,12 +221,12 @@ class CorpusConvertPage(QWidget):
 
         self.log = LogConsole()
         self.log.setMinimumHeight(110)
-        self.log.set_empty_hint('转换结果会显示在这里')
+        self.log.set_empty_hint(tr('转换结果会显示在这里'))
         # Same上下双区 treatment as tm_maintenance: the log is a result area,
         # not one more form field -- giving it a 结果 header (via section())
         # separates it from the inputs above and lets it claim the leftover
         # vertical space at the bottom of the page.
-        outer.addWidget(_section('结果', self.log), 1)
+        outer.addWidget(_section(tr('结果'), self.log), 1)
 
     # ------------------------------------------------------------ logging
     def _log(self, message, kind='info'):
@@ -272,7 +273,7 @@ class CorpusConvertPage(QWidget):
 
     # ------------------------------------------------------------ actions
     def _browse_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, _SUPPORTED_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr('选择文件'), self._last_dir, _SUPPORTED_FILTER)
         if path:
             self.input_edit.setText(path)  # triggers _sync_format_checkboxes via textChanged
             self._last_dir = os.path.dirname(path)
@@ -285,7 +286,7 @@ class CorpusConvertPage(QWidget):
 
     def _reject_dropped_file(self, path):
         """拖入不支持类型时的反馈（不是静默无反应）。"""
-        self._log('不支持的文件类型：%s' % os.path.basename(path), 'error')
+        self._log(tr('不支持的文件类型：%s') % os.path.basename(path), 'error')
 
     def _sync_format_checkboxes(self, input_path):
         """Grey out (disable + uncheck) the 生成格式 checkbox matching the
@@ -341,16 +342,16 @@ class CorpusConvertPage(QWidget):
         """Returns an error string, or None if the form is valid."""
         input_path = self.input_edit.text().strip()
         if not input_path:
-            return '请先选择要转换的文件'
+            return tr('请先选择要转换的文件')
         if not os.path.exists(input_path):
-            return '找不到这个文件，请重新选择'
+            return tr('找不到这个文件，请重新选择')
 
         ext = os.path.splitext(input_path)[1].lower()
         if ext in _BILINGUAL_EXTS and (not lang_combo_code(self.src_edit) or not lang_combo_code(self.tgt_edit)):
-            return '这类文件需要先填写原文语言和译文语言，才能开始转换'
+            return tr('这类文件需要先填写原文语言和译文语言，才能开始转换')
 
         if not any(cb.isChecked() for cb in (self.chk_sdltm, self.chk_tmx, self.chk_csv, self.chk_jsonl)):
-            return '请至少勾选一种要生成的格式'
+            return tr('请至少勾选一种要生成的格式')
         return None
 
     def _start_convert(self):
@@ -378,8 +379,8 @@ class CorpusConvertPage(QWidget):
             qa=self.chk_qa.isChecked(),
         )
 
-        set_button_busy(self.convert_btn, True, '转换中…')
-        self._log('正在转换…')
+        set_button_busy(self.convert_btn, True, tr('转换中…'))
+        self._log(tr('正在转换…'))
         self._worker = ConvertWorker(kwargs, parent=self)
         self._worker.finished_ok.connect(self._on_done)
         self._worker.finished_err.connect(self._on_error)
@@ -389,16 +390,16 @@ class CorpusConvertPage(QWidget):
         set_button_busy(self.convert_btn, False)
         units, exported = result['units'], result['exported']
         if exported == units:
-            self._log('转换完成！共对齐 %d 组双语句子，全部导出。' % units, 'success')
+            self._log(tr('转换完成！共对齐 %d 组双语句子，全部导出。') % units, 'success')
         else:
             self._log(
-                '转换完成：共对齐 %d 组，其中 %d 组导出，%d 组因质量问题被过滤（在 csv 里能看到详情）。'
+                tr('转换完成：共对齐 %d 组，其中 %d 组导出，%d 组因质量问题被过滤（在 csv 里能看到详情）。')
                 % (units, exported, units - exported), 'success')
         for fmt, count in result['written'].items():
-            self._log('· 生成了 %s 文件，共 %d 条' % (fmt, count))
+            self._log(tr('· 生成了 %s 文件，共 %d 条') % (fmt, count))
         self.taskFinished.emit(True)
 
     def _on_error(self, message):
         set_button_busy(self.convert_btn, False)
-        self._log('出错了：%s' % message, 'error')
+        self._log(tr('出错了：%s') % message, 'error')
         self.taskFinished.emit(False)

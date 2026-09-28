@@ -68,6 +68,8 @@ from PySide6.QtWidgets import (
     QScrollArea, QSizePolicy, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from toolbox.i18n import tr
+
 
 # Shared by every tool page's append-only result log (and, from
 # batch_convert onward, per-row status text too): gray for a neutral
@@ -299,31 +301,31 @@ def columns(*cards, spacing=16):
 # typed in directly; the underlying value a caller should use is always
 # whatever's in the edit field (via lang_combo_code()), not a fixed list.
 LANG_CHOICES = [
-    ('英语 (en-US)', 'en-US'),
-    ('英语-英国 (en-GB)', 'en-GB'),
-    ('简体中文 (zh-CN)', 'zh-CN'),
-    ('繁体中文 (zh-TW)', 'zh-TW'),
-    ('日语 (ja-JP)', 'ja-JP'),
-    ('韩语 (ko-KR)', 'ko-KR'),
-    ('法语 (fr-FR)', 'fr-FR'),
-    ('德语 (de-DE)', 'de-DE'),
-    ('西班牙语 (es-ES)', 'es-ES'),
-    ('葡萄牙语 (pt-PT)', 'pt-PT'),
-    ('意大利语 (it-IT)', 'it-IT'),
-    ('俄语 (ru-RU)', 'ru-RU'),
-    ('阿拉伯语 (ar-SA)', 'ar-SA'),
+    (tr('英语 (en-US)'), 'en-US'),
+    (tr('英语-英国 (en-GB)'), 'en-GB'),
+    (tr('简体中文 (zh-CN)'), 'zh-CN'),
+    (tr('繁体中文 (zh-TW)'), 'zh-TW'),
+    (tr('日语 (ja-JP)'), 'ja-JP'),
+    (tr('韩语 (ko-KR)'), 'ko-KR'),
+    (tr('法语 (fr-FR)'), 'fr-FR'),
+    (tr('德语 (de-DE)'), 'de-DE'),
+    (tr('西班牙语 (es-ES)'), 'es-ES'),
+    (tr('葡萄牙语 (pt-PT)'), 'pt-PT'),
+    (tr('意大利语 (it-IT)'), 'it-IT'),
+    (tr('俄语 (ru-RU)'), 'ru-RU'),
+    (tr('阿拉伯语 (ar-SA)'), 'ar-SA'),
 ]
 
-LANG_TOOLTIP = '双语文档必填；tmx/sdltm 留空会自动识别。可直接选，也可以手动输入其它语言代码'
+LANG_TOOLTIP = tr('双语文档必填；tmx/sdltm 留空会自动识别。可直接选，也可以手动输入其它语言代码')
 
 # (short label shown in the dropdown, technical value passed to the
 # library, tooltip detail) -- only meaningful for .docx input; readers for
 # other bilingual formats ignore a 'layout' reader_opt if given one.
 LAYOUT_CHOICES = [
-    ('自动识别（推荐）', 'auto', '自动判断版式，错了再手动选'),
-    ('编号分段', 'numbered', '先列全部原文段落，再列全部译文段落'),
-    ('表格对照', 'table', '两列表格，左边原文右边译文'),
-    ('逐段对照', 'alternating', '原文译文逐段交替排列'),
+    (tr('自动识别（推荐）'), 'auto', tr('自动判断版式，错了再手动选')),
+    (tr('编号分段'), 'numbered', tr('先列全部原文段落，再列全部译文段落')),
+    (tr('表格对照'), 'table', tr('两列表格，左边原文右边译文')),
+    (tr('逐段对照'), 'alternating', tr('原文译文逐段交替排列')),
 ]
 
 

@@ -1,5 +1,6 @@
 import os
 
+from toolbox.i18n import tr
 from toolbox.registry import ToolSpec, register
 from toolbox.tools.batch_preflight.page import BatchPreflightPage
 
@@ -8,10 +9,10 @@ _ICON = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
 register(ToolSpec(
     id='batch_preflight',
-    name='批量预检',
-    description='批量转换前先体检：版式置信度、合并单元格、空表格、语言方向是否对',
+    name=tr('批量预检'),
+    description=tr('批量转换前先体检：版式置信度、合并单元格、空表格、语言方向是否对'),
     icon=_ICON,
-    group='检查',
+    group=tr('检查'),
     order=22,
     page_factory=BatchPreflightPage,
 ))

@@ -66,6 +66,7 @@ from language_tools.model import InlineNode, TranslationUnit
 from language_tools.tm import io as tm_io
 from language_tools.tm import near_dup as near_dup_module
 from toolbox import settings
+from toolbox.i18n import tr
 from toolbox.widgets import (CORPUS_FILTER, LANG_TOOLTIP, LOG_COLORS, compact_combo,
                              labeled_field, page_shell)
 from toolbox.widgets import lang_combo_code, make_lang_combo, set_lang_combo_code
@@ -180,7 +181,7 @@ class _TUEntryDialog(QDialog):
 
     def __init__(self, parent=None, unit=None):
         super().__init__(parent)
-        self.setWindowTitle('编辑记录' if unit else '添加记录')
+        self.setWindowTitle(tr('编辑记录') if unit else tr('添加记录'))
         self.setMinimumWidth(420)
         form = QFormLayout(self)
 
@@ -199,14 +200,14 @@ class _TUEntryDialog(QDialog):
         self.error_label.setStyleSheet('color: %s;' % LOG_COLORS['error'])
         self.error_label.setVisible(False)
 
-        form.addRow('原文', self.src_edit)
-        form.addRow('译文', self.tgt_edit)
+        form.addRow(tr('原文'), self.src_edit)
+        form.addRow(tr('译文'), self.tgt_edit)
 
         if unit is not None and (unit.src_markup or unit.tgt_markup):
             markup_note = QLabel(
-                '底色标出的部分是内联标签内容；直接在里面改字会改到标签本身，'
+                tr('底色标出的部分是内联标签内容；直接在里面改字会改到标签本身，'
                 '紧贴标签边界继续输入可能会带上底色（Qt 富文本的固有行为），'
-                '如非有意请把光标移开再输入')
+                '如非有意请把光标移开再输入'))
             markup_note.setWordWrap(True)
             markup_note.setStyleSheet('color: %s;' % LOG_COLORS['info'])
             form.addRow(markup_note)
@@ -220,7 +221,7 @@ class _TUEntryDialog(QDialog):
 
     def _on_accept(self):
         if not self.src_edit.toPlainText().strip() or not self.tgt_edit.toPlainText().strip():
-            self.error_label.setText('原文和译文都不能为空')
+            self.error_label.setText(tr('原文和译文都不能为空'))
             self.error_label.setVisible(True)
             return
         self.accept()
@@ -264,7 +265,7 @@ class _NearDupDialog(QDialog):
 
     def __init__(self, parent, units):
         super().__init__(parent)
-        self.setWindowTitle('查找近重复')
+        self.setWindowTitle(tr('查找近重复'))
         self.setMinimumSize(640, 480)
         self._units = units
         self._clusters = []
@@ -275,8 +276,8 @@ class _NearDupDialog(QDialog):
     def _build_ui(self):
         layout = QVBoxLayout(self)
 
-        note = QLabel('按编辑距离相似度分簇，不是精确去重——每簇里具体哪条该留、哪条该删，'
-                       '仍需要人工核对，默认只是"留第一条"')
+        note = QLabel(tr('按编辑距离相似度分簇，不是精确去重——每簇里具体哪条该留、哪条该删，'
+                       '仍需要人工核对，默认只是"留第一条"'))
         note.setWordWrap(True)
         note.setStyleSheet('color: #6B7280;')
         layout.addWidget(note)
@@ -286,21 +287,21 @@ class _NearDupDialog(QDialog):
         self.threshold_spin.setRange(0.01, 1.0)
         self.threshold_spin.setSingleStep(0.01)
         self.threshold_spin.setValue(0.85)
-        self.threshold_spin.setToolTip('相似度阈值，越接近 1 要求越相似')
+        self.threshold_spin.setToolTip(tr('相似度阈值，越接近 1 要求越相似'))
         self.side_combo = QComboBox()
-        self.side_combo.addItem('原文', 'src')
-        self.side_combo.addItem('译文', 'tgt')
+        self.side_combo.addItem(tr('原文'), 'src')
+        self.side_combo.addItem(tr('译文'), 'tgt')
         compact_combo(self.side_combo)
         self.min_size_spin = QSpinBox()
         self.min_size_spin.setRange(2, 100)
         self.min_size_spin.setValue(2)
-        self.min_size_spin.setToolTip('至少多少条互相相似才算一簇')
+        self.min_size_spin.setToolTip(tr('至少多少条互相相似才算一簇'))
         for spin in (self.threshold_spin, self.min_size_spin):
             spin.setMaximumWidth(90)
-        params_row.addLayout(labeled_field('相似度阈值', self.threshold_spin))
-        params_row.addLayout(labeled_field('比较', self.side_combo))
-        params_row.addLayout(labeled_field('最小簇大小', self.min_size_spin))
-        find_btn = QPushButton('开始查找')
+        params_row.addLayout(labeled_field(tr('相似度阈值'), self.threshold_spin))
+        params_row.addLayout(labeled_field(tr('比较'), self.side_combo))
+        params_row.addLayout(labeled_field(tr('最小簇大小'), self.min_size_spin))
+        find_btn = QPushButton(tr('开始查找'))
         find_btn.clicked.connect(self._run_find)
         params_row.addWidget(find_btn)
         params_row.addStretch(1)
@@ -311,7 +312,7 @@ class _NearDupDialog(QDialog):
         layout.addWidget(self.summary_label)
 
         self.results_table = QTableWidget(0, 4)
-        self.results_table.setHorizontalHeaderLabels(['留', '簇', '原文', '译文'])
+        self.results_table.setHorizontalHeaderLabels([tr('留'), tr('簇'), tr('原文'), tr('译文')])
         self.results_table.verticalHeader().setVisible(False)
         header = self.results_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -325,7 +326,7 @@ class _NearDupDialog(QDialog):
         layout.addWidget(self.results_table, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Ok).setText('应用')
+        buttons.button(QDialogButtonBox.Ok).setText(tr('应用'))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -358,7 +359,7 @@ class _NearDupDialog(QDialog):
         self._updating = False
 
         s = near_dup_module.summarize(self._clusters)
-        self.summary_label.setText('共 %d 簇，涉及 %d 条记录' %
+        self.summary_label.setText(tr('共 %d 簇，涉及 %d 条记录') %
                                     (s['cluster_count'], s['total_units']))
 
     def _on_item_changed(self, item):
@@ -409,8 +410,8 @@ class TmEditorPage(QWidget):
     def _build_ui(self):
         outer, _, _ = page_shell(
             self,
-            '条目编辑',
-            '打开或新建翻译记忆库，浏览、增删改单条记录',
+            tr('条目编辑'),
+            tr('打开或新建翻译记忆库，浏览、增删改单条记录'),
             spacing=18,
         )
 
@@ -422,43 +423,43 @@ class TmEditorPage(QWidget):
         lang_row = QHBoxLayout()
         self.src_lang_combo = make_lang_combo('en-US')
         self.tgt_lang_combo = make_lang_combo('zh-CN')
-        self.src_lang_combo.setToolTip(LANG_TOOLTIP + '\n打开文件后由文件本身决定，锁定为只读')
-        self.tgt_lang_combo.setToolTip(LANG_TOOLTIP + '\n打开文件后由文件本身决定，锁定为只读')
+        self.src_lang_combo.setToolTip(LANG_TOOLTIP + '\n' + tr('打开文件后由文件本身决定，锁定为只读'))
+        self.tgt_lang_combo.setToolTip(LANG_TOOLTIP + '\n' + tr('打开文件后由文件本身决定，锁定为只读'))
         compact_combo(self.src_lang_combo)
         compact_combo(self.tgt_lang_combo)
-        lang_row.addLayout(labeled_field('原文语言', self.src_lang_combo))
-        lang_row.addLayout(labeled_field('译文语言', self.tgt_lang_combo))
+        lang_row.addLayout(labeled_field(tr('原文语言'), self.src_lang_combo))
+        lang_row.addLayout(labeled_field(tr('译文语言'), self.tgt_lang_combo))
         lang_row.addStretch(1)
         file_layout.addLayout(lang_row)
 
         btn_row = QHBoxLayout()
-        new_btn = QPushButton('新建')
+        new_btn = QPushButton(tr('新建'))
         new_btn.clicked.connect(self._new_tm)
-        open_btn = QPushButton('打开…')
+        open_btn = QPushButton(tr('打开…'))
         open_btn.clicked.connect(self._open_tm)
-        self.close_btn = QPushButton('关闭')
+        self.close_btn = QPushButton(tr('关闭'))
         self.close_btn.setEnabled(False)
         self.close_btn.clicked.connect(self._close_tm)
-        self.save_btn = QPushButton('保存')
+        self.save_btn = QPushButton(tr('保存'))
         self.save_btn.setEnabled(False)
         self.save_btn.clicked.connect(self._save)
-        save_as_btn = QPushButton('另存为…')
+        save_as_btn = QPushButton(tr('另存为…'))
         save_as_btn.clicked.connect(self._save_as)
-        near_dup_btn = QPushButton('查找近重复…')
+        near_dup_btn = QPushButton(tr('查找近重复…'))
         near_dup_btn.clicked.connect(self._open_near_dup_dialog)
         for b in (new_btn, open_btn, self.close_btn, self.save_btn, save_as_btn, near_dup_btn):
             btn_row.addWidget(b)
         btn_row.addStretch(1)
         file_layout.addLayout(btn_row)
 
-        self.path_label = QLabel('未打开文件（当前为新建）')
+        self.path_label = QLabel(tr('未打开文件（当前为新建）'))
         self.path_label.setStyleSheet('color: #6B7280;')
         file_layout.addWidget(self.path_label)
 
-        outer.addWidget(section('记忆库文件', file_widget))
+        outer.addWidget(section(tr('记忆库文件'), file_widget))
 
         self.entry_table = QTableWidget(0, 3)
-        self.entry_table.setHorizontalHeaderLabels(['原文', '译文', '标签'])
+        self.entry_table.setHorizontalHeaderLabels([tr('原文'), tr('译文'), tr('标签')])
         self.entry_table.verticalHeader().setVisible(False)
         header = self.entry_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -473,7 +474,7 @@ class TmEditorPage(QWidget):
         self.entry_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.entry_table.customContextMenuRequested.connect(self._show_entry_context_menu)
         self.entry_table.cellDoubleClicked.connect(self._on_entry_double_clicked)
-        outer.addWidget(section('记录（右键新增/编辑/删除）', self.entry_table), 1)
+        outer.addWidget(section(tr('记录（右键新增/编辑/删除）'), self.entry_table), 1)
 
         self.status_label = QLabel('')
         self.status_label.setStyleSheet('color: #4B5262;')
@@ -490,7 +491,7 @@ class TmEditorPage(QWidget):
         for row, u in enumerate(self._units):
             self.entry_table.setItem(row, 0, QTableWidgetItem(u.src_text))
             self.entry_table.setItem(row, 1, QTableWidgetItem(u.tgt_text))
-            tag_note = '含标签' if (u.src_markup or u.tgt_markup) else ''
+            tag_note = tr('含标签') if (u.src_markup or u.tgt_markup) else ''
             self.entry_table.setItem(row, 2, QTableWidgetItem(tag_note))
 
     def _sync_buttons(self):
@@ -514,14 +515,14 @@ class TmEditorPage(QWidget):
             self.entry_table.selectRow(row)
 
         menu = QMenu(self)
-        add_action = menu.addAction('添加…')
+        add_action = menu.addAction(tr('添加…'))
         edit_action = None
         delete_action = None
         if row >= 0:
             menu.addSeparator()
-            edit_action = menu.addAction('编辑…')
+            edit_action = menu.addAction(tr('编辑…'))
             edit_action.setEnabled(len(self._selected_rows()) == 1)
-            delete_action = menu.addAction('删除')
+            delete_action = menu.addAction(tr('删除'))
         chosen = menu.exec(self.entry_table.viewport().mapToGlobal(pos))
         if chosen == add_action:
             self._add_entry()
@@ -548,12 +549,12 @@ class TmEditorPage(QWidget):
             self._refresh_entry_table()
             self.entry_table.selectRow(insert_at)
             self._sync_buttons()
-            self._log('已添加 1 条记录', 'success')
+            self._log(tr('已添加 1 条记录'), 'success')
 
     def _edit_selected_entry(self):
         rows = self._selected_rows()
         if len(rows) != 1:
-            self._log('请先选中一条要编辑的记录（只能选一条）', 'error')
+            self._log(tr('请先选中一条要编辑的记录（只能选一条）'), 'error')
             return
         row = rows[0]
         unit = self._units[row]
@@ -567,42 +568,42 @@ class TmEditorPage(QWidget):
             self._dirty = True
             self._refresh_entry_table()
             self._sync_buttons()
-            self._log('已更新 1 条记录', 'success')
+            self._log(tr('已更新 1 条记录'), 'success')
 
     def _remove_selected_entries(self):
         rows = self._selected_rows()
         if not rows:
-            self._log('请先选中要删除的记录', 'error')
+            self._log(tr('请先选中要删除的记录'), 'error')
             return
         for row in reversed(rows):
             del self._units[row]
         self._dirty = True
         self._refresh_entry_table()
         self._sync_buttons()
-        self._log('已删除 %d 条记录' % len(rows), 'success')
+        self._log(tr('已删除 %d 条记录') % len(rows), 'success')
 
     def _open_near_dup_dialog(self):
         if not self._units:
-            self._log('当前记忆库没有记录', 'error')
+            self._log(tr('当前记忆库没有记录'), 'error')
             return
         dialog = _NearDupDialog(self, self._units)
         if dialog.exec() != QDialog.Accepted:
             return
         remove_indices = dialog.indices_to_remove()
         if not remove_indices:
-            self._log('未找到需要处理的近重复记录（或未点击"开始查找"）')
+            self._log(tr('未找到需要处理的近重复记录（或未点击"开始查找"）'))
             return
         for idx in sorted(remove_indices, reverse=True):
             del self._units[idx]
         self._dirty = True
         self._refresh_entry_table()
         self._sync_buttons()
-        self._log('已删除 %d 条近重复记录' % len(remove_indices), 'success')
+        self._log(tr('已删除 %d 条近重复记录') % len(remove_indices), 'success')
 
     # ---------------------------------------------------------- open/close
     def _new_tm(self):
         if self._dirty:
-            choice = self._prompt_save_before_discard('当前记忆库有未保存的更改，新建前要保存吗？')
+            choice = self._prompt_save_before_discard(tr('当前记忆库有未保存的更改，新建前要保存吗？'))
             if choice == QMessageBox.Cancel:
                 return
             if choice == QMessageBox.Save and not self.save_unsaved_changes():
@@ -610,18 +611,18 @@ class TmEditorPage(QWidget):
         self._units = []
         self._path = None
         self._dirty = False
-        self.path_label.setText('未打开文件（当前为新建）')
+        self.path_label.setText(tr('未打开文件（当前为新建）'))
         self._refresh_entry_table()
         self._sync_buttons()
-        self._log('已新建空白记忆库，请先设置原文/译文语言')
+        self._log(tr('已新建空白记忆库，请先设置原文/译文语言'))
 
     def _open_tm(self):
-        path, _ = QFileDialog.getOpenFileName(self, '打开记忆库', self._last_dir, CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr('打开记忆库'), self._last_dir, CORPUS_FILTER)
         if not path:
             return
 
         if self._dirty:
-            choice = self._prompt_save_before_discard('当前记忆库有未保存的更改，打开文件前要保存吗？')
+            choice = self._prompt_save_before_discard(tr('当前记忆库有未保存的更改，打开文件前要保存吗？'))
             if choice == QMessageBox.Cancel:
                 return
             if choice == QMessageBox.Save and not self.save_unsaved_changes():
@@ -630,7 +631,7 @@ class TmEditorPage(QWidget):
         try:
             units = tm_io.read_corpus(path)
         except Exception as e:  # noqa: BLE001 -- see module docstring for why this is broad
-            self._log('打开失败：%s' % e, 'error')
+            self._log(tr('打开失败：%s') % e, 'error')
             return
 
         self._units = units
@@ -643,11 +644,11 @@ class TmEditorPage(QWidget):
         self.path_label.setText(path)
         self._sync_buttons()
         self._refresh_entry_table()
-        self._log('已打开 %s，共 %d 条记录' % (path, len(units)), 'success')
+        self._log(tr('已打开 %s，共 %d 条记录') % (path, len(units)), 'success')
 
     def _close_tm(self):
         if self._dirty:
-            choice = self._prompt_save_before_discard('当前记忆库有未保存的更改，关闭前要保存吗？')
+            choice = self._prompt_save_before_discard(tr('当前记忆库有未保存的更改，关闭前要保存吗？'))
             if choice == QMessageBox.Cancel:
                 return
             if choice == QMessageBox.Save and not self.save_unsaved_changes():
@@ -655,14 +656,14 @@ class TmEditorPage(QWidget):
         self._units = []
         self._path = None
         self._dirty = False
-        self.path_label.setText('未打开文件（当前为新建）')
+        self.path_label.setText(tr('未打开文件（当前为新建）'))
         self._refresh_entry_table()
         self._sync_buttons()
-        self._log('已关闭记忆库')
+        self._log(tr('已关闭记忆库'))
 
     def _prompt_save_before_discard(self, text):
         box = QMessageBox(self)
-        box.setWindowTitle('未保存的更改')
+        box.setWindowTitle(tr('未保存的更改'))
         box.setText(text)
         box.setStandardButtons(QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel)
         box.setDefaultButton(QMessageBox.Save)
@@ -677,7 +678,7 @@ class TmEditorPage(QWidget):
 
     def _save_as(self):
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '另存为', self._last_dir, _SAVE_FILTER)
+            self, tr('另存为'), self._last_dir, _SAVE_FILTER)
         if not path:
             return
         self._write(_pick_save_extension(path, selected_filter))
@@ -693,7 +694,7 @@ class TmEditorPage(QWidget):
         try:
             tm_io.write_corpus(path, self._units, src_lang, tgt_lang)
         except Exception as e:  # noqa: BLE001 -- see module docstring for why this is broad
-            self._log('保存失败：%s' % e, 'error')
+            self._log(tr('保存失败：%s') % e, 'error')
             return False
 
         self._path = path
@@ -701,7 +702,7 @@ class TmEditorPage(QWidget):
         self._last_dir = os.path.dirname(path)
         self.path_label.setText(path)
         self._sync_buttons()
-        self._log('已保存到 %s' % path, 'success')
+        self._log(tr('已保存到 %s') % path, 'success')
         return True
 
     # -------------------------------------- MainWindow unsaved-changes hook
@@ -712,14 +713,14 @@ class TmEditorPage(QWidget):
         return self._dirty
 
     def unsaved_changes_label(self):
-        return '条目编辑'
+        return tr('条目编辑')
 
     def save_unsaved_changes(self):
         if not self._dirty:
             return True
         if not self._path:
             path, selected_filter = QFileDialog.getSaveFileName(
-                self, '另存为', self._last_dir, _SAVE_FILTER)
+                self, tr('另存为'), self._last_dir, _SAVE_FILTER)
             if not path:
                 return False
             return self._write(_pick_save_extension(path, selected_filter))

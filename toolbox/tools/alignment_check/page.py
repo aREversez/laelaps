@@ -92,6 +92,7 @@ from language_tools.reports import adapters as report_adapters
 from language_tools.reports import render as report_render
 from language_tools.writers import csv_writer
 from toolbox import settings
+from toolbox.i18n import tr
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, section, set_lang_combo_code
 from toolbox.widgets import LogConsole
@@ -105,11 +106,11 @@ _REPORT_FILTER = 'HTML (*.html);;PDF (*.pdf)'
 _SETTINGS_PREFIX = 'alignment_check/'
 
 _MOVE_TOOLTIPS = {
-    '1:1': '一句对一句，最常见的情况',
-    '2:1': '两句原文合并成了一句译文',
-    '1:2': '一句原文拆成了两句译文',
-    '1:0': '这句原文在译文里完全找不到对应内容',
-    '0:1': '这句译文在原文里完全找不到对应内容',
+    '1:1': tr('一句对一句，最常见的情况'),
+    '2:1': tr('两句原文合并成了一句译文'),
+    '1:2': tr('一句原文拆成了两句译文'),
+    '1:0': tr('这句原文在译文里完全找不到对应内容'),
+    '0:1': tr('这句译文在原文里完全找不到对应内容'),
 }
 
 
@@ -127,8 +128,8 @@ class AlignmentCheckPage(QWidget):
     def _build_ui(self):
         outer, _, _ = page_shell(
             self,
-            '对齐检查',
-            '预览双语文档的句子对齐结果，不生成任何文件',
+            tr('对齐检查'),
+            tr('预览双语文档的句子对齐结果，不生成任何文件'),
             spacing=12,
         )
 
@@ -137,12 +138,12 @@ class AlignmentCheckPage(QWidget):
         file_layout = QHBoxLayout(file_row)
         file_layout.setContentsMargins(0, 0, 0, 0)
         self.input_edit = QLineEdit()
-        self.input_edit.setPlaceholderText('选择要检查的双语文档…')
-        browse_btn = QPushButton('浏览…')
+        self.input_edit.setPlaceholderText(tr('选择要检查的双语文档…'))
+        browse_btn = QPushButton(tr('浏览…'))
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
         file_layout.addWidget(browse_btn)
-        outer.addWidget(section('选择文件', file_row))
+        outer.addWidget(section(tr('选择文件'), file_row))
 
         # --- language + docx layout, all inline in one row ---
         # These three combos show short text ("英语 (en-US)", "自动识别
@@ -163,28 +164,28 @@ class AlignmentCheckPage(QWidget):
         self.src_edit.setToolTip(LANG_TOOLTIP)
         self.tgt_edit.setToolTip(LANG_TOOLTIP)
         self.layout_combo = make_layout_combo()
-        self.layout_combo.setToolTip('仅 .docx 需要关心')
+        self.layout_combo.setToolTip(tr('仅 .docx 需要关心'))
         for combo in (self.src_edit, self.tgt_edit, self.layout_combo):
             compact_combo(combo)
 
-        opts_layout.addLayout(labeled_field('原文语言', self.src_edit))
-        opts_layout.addLayout(labeled_field('译文语言', self.tgt_edit))
-        opts_layout.addLayout(labeled_field('文档排版方式', self.layout_combo))
+        opts_layout.addLayout(labeled_field(tr('原文语言'), self.src_edit))
+        opts_layout.addLayout(labeled_field(tr('译文语言'), self.tgt_edit))
+        opts_layout.addLayout(labeled_field(tr('文档排版方式'), self.layout_combo))
         opts_layout.addStretch(1)
-        outer.addWidget(section('语言与排版方式', opts_widget))
+        outer.addWidget(section(tr('语言与排版方式'), opts_widget))
 
         action_row = QHBoxLayout()
-        self.check_btn = QPushButton('开始检查')
+        self.check_btn = QPushButton(tr('开始检查'))
         self.check_btn.setObjectName('primaryButton')
         self.check_btn.clicked.connect(self._start_check)
-        self.export_btn = QPushButton('导出 CSV…')
+        self.export_btn = QPushButton(tr('导出 CSV…'))
         self.export_btn.setEnabled(False)
-        self.export_btn.setToolTip('导出全部条目（含没有问题的），不受下面的筛选影响')
+        self.export_btn.setToolTip(tr('导出全部条目（含没有问题的），不受下面的筛选影响'))
         self.export_btn.clicked.connect(self._start_export)
-        self.export_report_btn = QPushButton('导出报告…')
+        self.export_report_btn = QPushButton(tr('导出报告…'))
         self.export_report_btn.setEnabled(False)
         self.export_report_btn.setToolTip(
-            '导出为 HTML 或 PDF 的汇总报告（总数/GAP/按对齐方式统计），适合给非技术干系人看')
+            tr('导出为 HTML 或 PDF 的汇总报告（总数/GAP/按对齐方式统计），适合给非技术干系人看'))
         self.export_report_btn.clicked.connect(self._start_export_report)
         action_row.addWidget(self.check_btn)
         action_row.addWidget(self.export_btn)
@@ -210,12 +211,12 @@ class AlignmentCheckPage(QWidget):
         filter_row = QWidget()
         filter_layout = QHBoxLayout(filter_row)
         filter_layout.setContentsMargins(0, 0, 0, 0)
-        self.hide_clean_chk = QCheckBox('只显示有问题的条目')
+        self.hide_clean_chk = QCheckBox(tr('只显示有问题的条目'))
         self.hide_clean_chk.setChecked(False)
-        self.hide_clean_chk.setToolTip('有问题 = 存在 GAP（跳过）或被 QA 标记')
+        self.hide_clean_chk.setToolTip(tr('有问题 = 存在 GAP（跳过）或被 QA 标记'))
         self.hide_clean_chk.stateChanged.connect(self._refresh_table)
         self.move_filter_combo = QComboBox()
-        self.move_filter_combo.addItem('全部对齐方式', None)
+        self.move_filter_combo.addItem(tr('全部对齐方式'), None)
         self.move_filter_combo.currentIndexChanged.connect(self._refresh_table)
         compact_combo(self.move_filter_combo)
         filter_layout.addWidget(self.hide_clean_chk)
@@ -224,7 +225,7 @@ class AlignmentCheckPage(QWidget):
         results_layout.addWidget(filter_row)
 
         self.results_table = QTableWidget(0, 6)
-        self.results_table.setHorizontalHeaderLabels(['段落', '原文', '译文', '对齐方式', '成本', 'QA'])
+        self.results_table.setHorizontalHeaderLabels([tr('段落'), tr('原文'), tr('译文'), tr('对齐方式'), tr('成本'), 'QA'])
         self.results_table.verticalHeader().setVisible(False)
         header = self.results_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -247,21 +248,21 @@ class AlignmentCheckPage(QWidget):
         self.results_table.customContextMenuRequested.connect(self._show_entry_context_menu)
         results_layout.addWidget(self.results_table, 1)
 
-        outer.addWidget(section('对齐结果', results_content), 1)
+        outer.addWidget(section(tr('对齐结果'), results_content), 1)
 
         self.log = LogConsole()
         self.log.setMinimumHeight(80)
         self.log.setMaximumHeight(120)
-        self.log.set_empty_hint('状态信息会显示在这里')
+        self.log.set_empty_hint(tr('状态信息会显示在这里'))
         # The log is a status console, not one more form field -- giving it a
         # 状态 header (via section()) so it reads as an intentional result area
         # instead of a floating empty box under the results table. Same
         # treatment corpus_convert/tm_maintenance give their 结果 log.
-        outer.addWidget(section('状态', self.log))
+        outer.addWidget(section(tr('状态'), self.log))
 
     # ------------------------------------------------------------- dialogs
     def _browse_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, _BILINGUAL_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr('选择文件'), self._last_dir, _BILINGUAL_FILTER)
         if path:
             self.input_edit.setText(path)
             self._last_dir = os.path.dirname(path)
@@ -298,11 +299,11 @@ class AlignmentCheckPage(QWidget):
     def _validate_check(self):
         input_path = self.input_edit.text().strip()
         if not input_path:
-            return '请先选择要检查的文件'
+            return tr('请先选择要检查的文件')
         if not os.path.exists(input_path):
-            return '找不到这个文件，请重新选择'
+            return tr('找不到这个文件，请重新选择')
         if not lang_combo_code(self.src_edit) or not lang_combo_code(self.tgt_edit):
-            return '请先填写原文语言和译文语言'
+            return tr('请先填写原文语言和译文语言')
         return None
 
     def _start_check(self):
@@ -326,8 +327,8 @@ class AlignmentCheckPage(QWidget):
         src_lang = lang_combo_code(self.src_edit)
         tgt_lang = lang_combo_code(self.tgt_edit)
 
-        set_button_busy(self.check_btn, True, '对齐中…')
-        self._log('正在对齐…')
+        set_button_busy(self.check_btn, True, tr('对齐中…'))
+        self._log(tr('正在对齐…'))
         self._check_worker = CallableWorker(
             lambda: align_report.run(input_path, src_lang, tgt_lang, reader_opts=reader_opts),
             parent=self)
@@ -341,7 +342,7 @@ class AlignmentCheckPage(QWidget):
         s = align_report.summarize(units)
         self._last_summary = s
         self.summary_label.setText(
-            '共 %d 条，%d 条 GAP，%d 条被 QA 标记' % (s['total'], s['gap_count'], s['qa_flagged']))
+            tr('共 %d 条，%d 条 GAP，%d 条被 QA 标记') % (s['total'], s['gap_count'], s['qa_flagged']))
         self.export_btn.setEnabled(bool(units))
         self.export_report_btn.setEnabled(bool(units))
         self._populate_move_filter(s['move_counts'])
@@ -352,19 +353,19 @@ class AlignmentCheckPage(QWidget):
             # empty, reads exactly like the silent-nothing-happened
             # confusion this default was changed to avoid -- say the good
             # outcome out loud instead of just implying it via row count.
-            self._log('检查完成，%d 条全部对齐正常，没有发现问题' % s['total'], 'success')
+            self._log(tr('检查完成，%d 条全部对齐正常，没有发现问题') % s['total'], 'success')
         else:
-            self._log('检查完成', 'success')
+            self._log(tr('检查完成'), 'success')
 
     def _on_check_err(self, message):
         set_button_busy(self.check_btn, False)
-        self._log('出错了：%s' % message, 'error')
+        self._log(tr('出错了：%s') % message, 'error')
 
     # ----------------------------------------------------------- filtering
     def _reset_move_filter(self):
         self.move_filter_combo.blockSignals(True)
         self.move_filter_combo.clear()
-        self.move_filter_combo.addItem('全部对齐方式', None)
+        self.move_filter_combo.addItem(tr('全部对齐方式'), None)
         self.move_filter_combo.blockSignals(False)
 
     def _populate_move_filter(self, move_counts):
@@ -376,7 +377,7 @@ class AlignmentCheckPage(QWidget):
         self._reset_move_filter()
         self.move_filter_combo.blockSignals(True)
         for move_code in sorted(move_counts):
-            label = '%s（%d）' % (align_report.move_label(move_code), move_counts[move_code])
+            label = tr('%s（%d）') % (tr(align_report.move_label(move_code)), move_counts[move_code])
             self.move_filter_combo.addItem(label, move_code)
             idx = self.move_filter_combo.count() - 1
             tip = _MOVE_TOOLTIPS.get(move_code)
@@ -408,9 +409,9 @@ class AlignmentCheckPage(QWidget):
             self.results_table.setItem(row, 0, QTableWidgetItem(u.source_key or ''))
             self.results_table.setItem(row, 1, QTableWidgetItem(u.src_text))
             self.results_table.setItem(row, 2, QTableWidgetItem(u.tgt_text))
-            self.results_table.setItem(row, 3, QTableWidgetItem(align_report.move_label(move_code)))
+            self.results_table.setItem(row, 3, QTableWidgetItem(tr(align_report.move_label(move_code))))
             self.results_table.setItem(row, 4, QTableWidgetItem('%.2f' % u.meta.get('alignment_cost', 0.0)))
-            qa_text = '、'.join(qa_module.ISSUE_LABELS.get(code, code) for code in issues) if issues else '-'
+            qa_text = tr('、').join(tr(qa_module.ISSUE_LABELS.get(code, code)) for code in issues) if issues else '-'
             self.results_table.setItem(row, 5, QTableWidgetItem(qa_text))
 
     def _show_entry_context_menu(self, pos):
@@ -421,10 +422,10 @@ class AlignmentCheckPage(QWidget):
         if row < 0:
             return
         menu = QMenu(self)
-        copy_row_action = menu.addAction('复制该行')
+        copy_row_action = menu.addAction(tr('复制该行'))
         menu.addSeparator()
-        copy_src_action = menu.addAction('复制原文')
-        copy_tgt_action = menu.addAction('复制译文')
+        copy_src_action = menu.addAction(tr('复制原文'))
+        copy_tgt_action = menu.addAction(tr('复制译文'))
         chosen = menu.exec(self.results_table.viewport().mapToGlobal(pos))
         if chosen == copy_row_action:
             self._copy_entry_row(row)
@@ -449,7 +450,7 @@ class AlignmentCheckPage(QWidget):
         # silent guard against a future caller invoking this directly.
         if not self._last_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', settings.effective_start_dir(self._last_dir), _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, tr('导出 CSV'), settings.effective_start_dir(self._last_dir), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
@@ -459,8 +460,8 @@ class AlignmentCheckPage(QWidget):
         units = self._last_units
         src_lang = lang_combo_code(self.src_edit) or 'SRC'
         tgt_lang = lang_combo_code(self.tgt_edit) or 'TGT'
-        set_button_busy(self.export_btn, True, '导出中…')
-        self._log('正在导出…')
+        set_button_busy(self.export_btn, True, tr('导出中…'))
+        self._log(tr('正在导出…'))
         self._export_worker = CallableWorker(
             lambda: csv_writer.write(path, units, src_lang, tgt_lang, include_qa=True, include_align=True),
             parent=self)
@@ -470,11 +471,11 @@ class AlignmentCheckPage(QWidget):
 
     def _on_export_ok(self, path):
         set_button_busy(self.export_btn, False)
-        self._log('已导出到 %s' % path, 'success')
+        self._log(tr('已导出到 %s') % path, 'success')
 
     def _on_export_err(self, message):
         set_button_busy(self.export_btn, False)
-        self._log('导出失败：%s' % message, 'error')
+        self._log(tr('导出失败：%s') % message, 'error')
 
     def _start_export_report(self):
         # Same synchronous report_render.write() pattern as qa_check's
@@ -483,7 +484,7 @@ class AlignmentCheckPage(QWidget):
         if not self._last_units:
             return
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '导出报告', os.path.join(settings.effective_start_dir(self._last_dir), '对齐检查报告'), _REPORT_FILTER)
+            self, tr('导出报告'), os.path.join(settings.effective_start_dir(self._last_dir), tr('对齐检查报告')), _REPORT_FILTER)
         if not path:
             return
         if '.' not in os.path.basename(path):
@@ -492,6 +493,6 @@ class AlignmentCheckPage(QWidget):
         try:
             report_render.write(path, report_adapters.from_align_summary(self._last_summary))
         except (ValueError, ImportError) as e:
-            self._log('出错了：%s' % e, 'error')
+            self._log(tr('出错了：%s') % e, 'error')
             return
-        self._log('已导出报告到 %s' % path, 'success')
+        self._log(tr('已导出报告到 %s') % path, 'success')

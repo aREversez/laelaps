@@ -217,6 +217,7 @@ from language_tools.tm import io as tm_io
 from language_tools.tm import qa_report as qa_report_module
 from language_tools.writers import csv_writer
 from toolbox import settings
+from toolbox.i18n import tr
 from toolbox.widgets import (
     CORPUS_FILTER, DANGER_COLOR, LOG_COLORS, WARNING_COLOR, LogConsole,
     copy_to_clipboard, join_row_cells,
@@ -277,29 +278,29 @@ _ISSUE_HIGHLIGHT_STYLE = 'color:#B23B3B; font-weight:600;'
 _SUSPICIOUS_ISSUES = {'LENGTH_RATIO_OUTLIER', 'SOURCE_CONFLICT', 'TARGET_CONFLICT'}
 
 _HIGHLIGHT_HINT = (
-    '提示：红色文字为"数字不匹配/占位符不匹配/URL 不匹配/括号引号不成对/'
-    '全半角混用"检测涉及的内容，请核对原文与译文是否一致')
+    tr('提示：红色文字为"数字不匹配/占位符不匹配/URL 不匹配/括号引号不成对/'
+    '全半角混用"检测涉及的内容，请核对原文与译文是否一致'))
 
 _SPAN_FINDERS = qa_module.SPAN_FINDERS  # single source of truth -- see qa.py
 
 _ISSUE_TOOLTIPS = {
-    'EMPTY_SOURCE': '这一条的原文是空的',
-    'EMPTY_TARGET': '这一条还没有翻译',
-    'LENGTH_RATIO_OUTLIER': '译文长度和原文长度的比例明显偏离整个语料库的平均水平',
-    'NUMBER_MISMATCH': '原文和译文里出现的数字对不上，可能是漏译或多译',
-    'PLACEHOLDER_MISMATCH': '{name}/%s 这类代码占位符在译文里被改动或丢失',
-    'URL_MISMATCH': '原文里的链接在译文里丢失或被改动',
-    'TAG_MISMATCH': '原文和译文的格式标签（如加粗）数量对不上',
-    'PUNCTUATION_UNBALANCED': '原文或译文里的括号、引号数量不成对',
-    'WIDTH_MIXING': '同一句里全角和半角标点混用',
-    'LEADING_TRAILING_SPACE': '原文或译文开头/结尾有多余空格',
-    'SOURCE_CONFLICT': '同一句原文在语料库里对应了不止一种译文',
-    'TARGET_CONFLICT': '同一句译文在语料库里对应了不止一种原文',
+    'EMPTY_SOURCE': tr('这一条的原文是空的'),
+    'EMPTY_TARGET': tr('这一条还没有翻译'),
+    'LENGTH_RATIO_OUTLIER': tr('译文长度和原文长度的比例明显偏离整个语料库的平均水平'),
+    'NUMBER_MISMATCH': tr('原文和译文里出现的数字对不上，可能是漏译或多译'),
+    'PLACEHOLDER_MISMATCH': tr('{name}/%s 这类代码占位符在译文里被改动或丢失'),
+    'URL_MISMATCH': tr('原文里的链接在译文里丢失或被改动'),
+    'TAG_MISMATCH': tr('原文和译文的格式标签（如加粗）数量对不上'),
+    'PUNCTUATION_UNBALANCED': tr('原文或译文里的括号、引号数量不成对'),
+    'WIDTH_MIXING': tr('同一句里全角和半角标点混用'),
+    'LEADING_TRAILING_SPACE': tr('原文或译文开头/结尾有多余空格'),
+    'SOURCE_CONFLICT': tr('同一句原文在语料库里对应了不止一种译文'),
+    'TARGET_CONFLICT': tr('同一句译文在语料库里对应了不止一种原文'),
 }
 
 
 def _issue_label(issue_code):
-    return qa_module.ISSUE_LABELS.get(issue_code, issue_code)
+    return tr(qa_module.ISSUE_LABELS.get(issue_code, issue_code))
 
 
 def _relevant_spans(text, issues):
@@ -540,8 +541,8 @@ class QaCheckPage(QWidget):
     def _build_ui(self):
         outer, _, _ = page_shell(
             self,
-            'QA 检查',
-            '对已有的翻译记忆库（tmx/sdltm）跑质量检查，生成审阅报告',
+            tr('QA 检查'),
+            tr('对已有的翻译记忆库（tmx/sdltm）跑质量检查，生成审阅报告'),
             spacing=18,
         )
 
@@ -549,30 +550,30 @@ class QaCheckPage(QWidget):
         file_layout = QHBoxLayout(file_row)
         file_layout.setContentsMargins(0, 0, 0, 0)
         self.input_edit = QLineEdit()
-        self.input_edit.setPlaceholderText('选择要检查的 tmx/sdltm 文件…')
-        browse_btn = QPushButton('浏览…')
+        self.input_edit.setPlaceholderText(tr('选择要检查的 tmx/sdltm 文件…'))
+        browse_btn = QPushButton(tr('浏览…'))
         browse_btn.clicked.connect(self._browse_input)
         file_layout.addWidget(self.input_edit, 1)
         file_layout.addWidget(browse_btn)
-        outer.addWidget(section('选择文件', file_row))
+        outer.addWidget(section(tr('选择文件'), file_row))
 
         action_row = QHBoxLayout()
-        self.check_btn = QPushButton('开始检查')
+        self.check_btn = QPushButton(tr('开始检查'))
         self.check_btn.setObjectName('primaryButton')
         self.check_btn.clicked.connect(self._start_check)
-        self.export_btn = QPushButton('导出 CSV…')
+        self.export_btn = QPushButton(tr('导出 CSV…'))
         self.export_btn.setEnabled(False)
-        self.export_btn.setToolTip('导出全部条目（含未标记问题的），不受下面的筛选影响')
+        self.export_btn.setToolTip(tr('导出全部条目（含未标记问题的），不受下面的筛选影响'))
         self.export_btn.clicked.connect(self._start_export)
-        self.export_report_btn = QPushButton('导出报告…')
+        self.export_report_btn = QPushButton(tr('导出报告…'))
         self.export_report_btn.setEnabled(False)
         self.export_report_btn.setToolTip(
-            '导出为 HTML 或 PDF 的汇总报告（总数/问题占比/按类型统计），适合给非技术干系人看')
+            tr('导出为 HTML 或 PDF 的汇总报告（总数/问题占比/按类型统计），适合给非技术干系人看'))
         self.export_report_btn.clicked.connect(self._start_export_report)
-        self.export_review_btn = QPushButton('导出审阅文档…')
+        self.export_review_btn = QPushButton(tr('导出审阅文档…'))
         self.export_review_btn.setEnabled(False)
         self.export_review_btn.setToolTip(
-            '导出为双语对照 HTML 页（只含有问题的条目，问题相关内容已标红），适合发给客户/审校逐条核对')
+            tr('导出为双语对照 HTML 页（只含有问题的条目，问题相关内容已标红），适合发给客户/审校逐条核对'))
         self.export_review_btn.clicked.connect(self._start_export_review)
         action_row.addWidget(self.check_btn)
         action_row.addWidget(self.export_btn)
@@ -602,11 +603,11 @@ class QaCheckPage(QWidget):
         filter_row = QWidget()
         filter_layout = QHBoxLayout(filter_row)
         filter_layout.setContentsMargins(0, 0, 0, 0)
-        self.hide_clean_chk = QCheckBox('只显示有问题的条目')
+        self.hide_clean_chk = QCheckBox(tr('只显示有问题的条目'))
         self.hide_clean_chk.setChecked(True)
         self.hide_clean_chk.stateChanged.connect(self._refresh_table)
         self.type_filter_combo = QComboBox()
-        self.type_filter_combo.addItem('全部问题类型', None)
+        self.type_filter_combo.addItem(tr('全部问题类型'), None)
         for issue_type in qa_report_module.ISSUE_TYPES:
             label = _issue_label(issue_type)
             tip = _ISSUE_TOOLTIPS.get(issue_type, '')
@@ -617,8 +618,8 @@ class QaCheckPage(QWidget):
         self.type_filter_combo.currentIndexChanged.connect(self._refresh_table)
         filter_layout.addWidget(self.hide_clean_chk)
         filter_layout.addWidget(self.type_filter_combo)
-        self.wrap_chk = QCheckBox('自动换行')
-        self.wrap_chk.setToolTip('显示完整原文/译文，不再用"…"省略')
+        self.wrap_chk = QCheckBox(tr('自动换行'))
+        self.wrap_chk.setToolTip(tr('显示完整原文/译文，不再用"…"省略'))
         self.wrap_chk.stateChanged.connect(self._refresh_table)
         filter_layout.addWidget(self.wrap_chk)
         filter_layout.addStretch(1)
@@ -630,7 +631,7 @@ class QaCheckPage(QWidget):
         results_layout.addWidget(self.highlight_hint_label)
 
         self.results_table = QTableWidget(0, 5)
-        self.results_table.setHorizontalHeaderLabels(['#', '原文', '译文', '问题类型', '置信度'])
+        self.results_table.setHorizontalHeaderLabels(['#', tr('原文'), tr('译文'), tr('问题类型'), tr('置信度')])
         self.results_table.verticalHeader().setVisible(False)
         header = self.results_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -656,21 +657,21 @@ class QaCheckPage(QWidget):
         # a signal connected here -- see that method for why.
         results_layout.addWidget(self.results_table, 1)
 
-        outer.addWidget(section('QA 结果', results_content), 1)
+        outer.addWidget(section(tr('QA 结果'), results_content), 1)
 
         self.log = LogConsole()
         self.log.setMinimumHeight(80)
         self.log.setMaximumHeight(120)
-        self.log.set_empty_hint('状态信息会显示在这里')
+        self.log.set_empty_hint(tr('状态信息会显示在这里'))
         # The log is a status console, not one more form field -- giving it a
         # 状态 header (via section()) so it reads as an intentional result area
         # instead of a floating empty box under the results table. Same
         # treatment corpus_convert/tm_maintenance give their 结果 log.
-        outer.addWidget(section('状态', self.log))
+        outer.addWidget(section(tr('状态'), self.log))
 
     # ------------------------------------------------------------- dialogs
     def _browse_input(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择文件', self._last_dir, CORPUS_FILTER)
+        path, _ = QFileDialog.getOpenFileName(self, tr('选择文件'), self._last_dir, CORPUS_FILTER)
         if path:
             self.input_edit.setText(path)
             self._last_dir = os.path.dirname(path)
@@ -703,9 +704,9 @@ class QaCheckPage(QWidget):
     def _validate_check(self):
         input_path = self.input_edit.text().strip()
         if not input_path:
-            return '请先选择要检查的文件'
+            return tr('请先选择要检查的文件')
         if not os.path.exists(input_path):
-            return '找不到这个文件，请重新选择'
+            return tr('找不到这个文件，请重新选择')
         return None
 
     def _start_check(self):
@@ -723,8 +724,8 @@ class QaCheckPage(QWidget):
             return
 
         input_path = self.input_edit.text().strip()
-        set_button_busy(self.check_btn, True, '检查中…')
-        self._log('正在检查…')
+        set_button_busy(self.check_btn, True, tr('检查中…'))
+        self._log(tr('正在检查…'))
         self._check_worker = CallableWorker(lambda: qa_report_module.run(input_path), parent=self)
         self._check_worker.finished_ok.connect(self._on_check_ok)
         self._check_worker.finished_err.connect(self._on_check_err)
@@ -736,16 +737,16 @@ class QaCheckPage(QWidget):
         s = qa_report_module.summarize(units)
         rate = (s['flagged'] / s['total'] * 100) if s['total'] else 0.0
         self.summary_label.setText(
-            '共 %d 条，%d 条有问题（%.1f%%）' % (s['total'], s['flagged'], rate))
+            tr('共 %d 条，%d 条有问题（%.1f%%）') % (s['total'], s['flagged'], rate))
         self.export_btn.setEnabled(bool(units))
         self.export_report_btn.setEnabled(bool(units))
         self.export_review_btn.setEnabled(bool(units))
         self._refresh_table()
-        self._log('检查完成', 'success')
+        self._log(tr('检查完成'), 'success')
 
     def _on_check_err(self, message):
         set_button_busy(self.check_btn, False)
-        self._log('出错了：%s' % message, 'error')
+        self._log(tr('出错了：%s') % message, 'error')
 
     # ----------------------------------------------------------- filtering
     def _refresh_table(self):
@@ -778,7 +779,7 @@ class QaCheckPage(QWidget):
         self._displayed_rows = []
         for row, (i, u, issues) in enumerate(rows):
             conf = u.meta.get('qa_confidence', 1.0)
-            issue_text = '、'.join(_issue_label(code) for code in issues) if issues else '-'
+            issue_text = tr('、').join(_issue_label(code) for code in issues) if issues else '-'
             self._displayed_rows.append(
                 [str(i), u.src_text, u.tgt_text, issue_text, '%.2f' % conf])
             self.results_table.setItem(row, 0, QTableWidgetItem(str(i)))
@@ -821,10 +822,10 @@ class QaCheckPage(QWidget):
         if row < 0 or row >= len(self._displayed_rows):
             return
         menu = QMenu(self)
-        copy_row_action = menu.addAction('复制该行')
+        copy_row_action = menu.addAction(tr('复制该行'))
         menu.addSeparator()
-        copy_src_action = menu.addAction('复制原文')
-        copy_tgt_action = menu.addAction('复制译文')
+        copy_src_action = menu.addAction(tr('复制原文'))
+        copy_tgt_action = menu.addAction(tr('复制译文'))
         chosen = menu.exec(self.results_table.viewport().mapToGlobal(pos))
         if chosen == copy_row_action:
             self._copy_entry_row(row)
@@ -945,7 +946,7 @@ class QaCheckPage(QWidget):
         # results exist yet, rather than crashing on an empty CSV write.
         if not self._last_units:
             return
-        path, _ = QFileDialog.getSaveFileName(self, '导出 CSV', settings.effective_start_dir(self._last_dir), _CSV_FILTER)
+        path, _ = QFileDialog.getSaveFileName(self, tr('导出 CSV'), settings.effective_start_dir(self._last_dir), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
@@ -954,8 +955,8 @@ class QaCheckPage(QWidget):
 
         units = self._last_units
         src_lang, tgt_lang = tm_io.infer_langs(units)
-        set_button_busy(self.export_btn, True, '导出中…')
-        self._log('正在导出…')
+        set_button_busy(self.export_btn, True, tr('导出中…'))
+        self._log(tr('正在导出…'))
         self._export_worker = CallableWorker(
             lambda: csv_writer.write(path, units, src_lang or 'SRC', tgt_lang or 'TGT', include_qa=True),
             parent=self)
@@ -965,17 +966,17 @@ class QaCheckPage(QWidget):
 
     def _on_export_ok(self, path):
         set_button_busy(self.export_btn, False)
-        self._log('已导出到 %s' % path, 'success')
+        self._log(tr('已导出到 %s') % path, 'success')
 
     def _on_export_err(self, message):
         set_button_busy(self.export_btn, False)
-        self._log('导出失败：%s' % message, 'error')
+        self._log(tr('导出失败：%s') % message, 'error')
 
     def _start_export_report(self):
         if not self._last_units:
             return
         path, selected_filter = QFileDialog.getSaveFileName(
-            self, '导出报告', os.path.join(settings.effective_start_dir(self._last_dir), 'QA报告'), _REPORT_FILTER)
+            self, tr('导出报告'), os.path.join(settings.effective_start_dir(self._last_dir), tr('QA报告')), _REPORT_FILTER)
         if not path:
             return
         if '.' not in os.path.basename(path):
@@ -985,15 +986,15 @@ class QaCheckPage(QWidget):
         try:
             report_render.write(path, report_adapters.from_qa_summary(s))
         except (ValueError, ImportError) as e:
-            self._log('出错了：%s' % e, 'error')
+            self._log(tr('出错了：%s') % e, 'error')
             return
-        self._log('已导出报告到 %s' % path, 'success')
+        self._log(tr('已导出报告到 %s') % path, 'success')
 
     def _start_export_review(self):
         if not self._last_units:
             return
         path, _selected_filter = QFileDialog.getSaveFileName(
-            self, '导出审阅文档', os.path.join(settings.effective_start_dir(self._last_dir), '双语审阅文档'), _REVIEW_FILTER)
+            self, tr('导出审阅文档'), os.path.join(settings.effective_start_dir(self._last_dir), tr('双语审阅文档')), _REVIEW_FILTER)
         if not path:
             return
         if '.' not in os.path.basename(path):
@@ -1002,6 +1003,6 @@ class QaCheckPage(QWidget):
         try:
             report_render.write(path, report_adapters.from_bilingual_review(self._last_units))
         except (ValueError, ImportError) as e:
-            self._log('出错了：%s' % e, 'error')
+            self._log(tr('出错了：%s') % e, 'error')
             return
-        self._log('已导出审阅文档到 %s' % path, 'success')
+        self._log(tr('已导出审阅文档到 %s') % path, 'success')

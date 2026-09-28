@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
 
 from language_tools.readers import docx_preflight
 from toolbox import settings
+from toolbox.i18n import tr
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import section as _section
@@ -58,8 +59,8 @@ from toolbox.workers import wait_for_running
 _DOCX_FILTER = 'DOCX files (*.docx)'
 _CSV_FILTER = 'CSV (*.csv)'
 
-_STATUS_PENDING = '等待中'
-_STATUS_RUNNING = '检查中…'
+_STATUS_PENDING = tr('等待中')
+_STATUS_RUNNING = tr('检查中…')
 
 _SETTINGS_PREFIX = 'batch_preflight/'
 
@@ -99,17 +100,17 @@ def _check_one(input_path, shared):
     ``BatchPreflightWorker`` emits per row. Module-level (not a worker
     method) so tests can exercise the message wording directly."""
     if os.path.splitext(input_path)[1].lower() != '.docx':
-        return False, '预检仅支持 .docx，已跳过', None
+        return False, tr('预检仅支持 .docx，已跳过'), None
     try:
         result = docx_preflight.check(input_path, shared['src_lang'], shared['tgt_lang'])
     except Exception as e:  # noqa: BLE001 -- surfaced per-row, doesn't stop the batch
-        return False, '预检失败：%s' % e, None
+        return False, tr('预检失败：%s') % e, None
 
     if result['issues']:
-        message = '版式 %s(%.2f)，%d 项问题' % (
+        message = tr('版式 %s(%.2f)，%d 项问题') % (
             result['best_layout'], result['best_score'], len(result['issues']))
     else:
-        message = '版式 %s(%.2f)，未发现问题' % (result['best_layout'], result['best_score'])
+        message = tr('版式 %s(%.2f)，未发现问题') % (result['best_layout'], result['best_score'])
     return True, message, result
 
 
@@ -128,8 +129,8 @@ class BatchPreflightPage(QWidget):
     def _build_ui(self):
         outer, _, _ = page_shell(
             self,
-            '批量预检',
-            '批量转换前先体检：版式置信度、合并单元格、空表格、语言方向是否对',
+            tr('批量预检'),
+            tr('批量转换前先体检：版式置信度、合并单元格、空表格、语言方向是否对'),
             spacing=18,
         )
 
@@ -141,25 +142,25 @@ class BatchPreflightPage(QWidget):
         list_layout.setSpacing(8)
 
         btn_row = QHBoxLayout()
-        self.add_files_btn = QPushButton('添加文件…')
+        self.add_files_btn = QPushButton(tr('添加文件…'))
         self.add_files_btn.clicked.connect(self._add_files)
-        self.add_folder_btn = QPushButton('添加文件夹…')
+        self.add_folder_btn = QPushButton(tr('添加文件夹…'))
         self.add_folder_btn.clicked.connect(self._add_folder)
-        self.remove_btn = QPushButton('移除选中')
+        self.remove_btn = QPushButton(tr('移除选中'))
         self.remove_btn.clicked.connect(self._remove_selected)
-        self.clear_btn = QPushButton('清空')
+        self.clear_btn = QPushButton(tr('清空'))
         self.clear_btn.clicked.connect(self._clear_all)
         for b in (self.add_files_btn, self.add_folder_btn, self.remove_btn, self.clear_btn):
             btn_row.addWidget(b)
         btn_row.addStretch(1)
         list_layout.addLayout(btn_row)
 
-        self.count_label = QLabel('共 0 个文件')
+        self.count_label = QLabel(tr('共 0 个文件'))
         self.count_label.setStyleSheet('color: #6B7280;')
         list_layout.addWidget(self.count_label)
 
         self.file_table = QTableWidget(0, 2)
-        self.file_table.setHorizontalHeaderLabels(['文件', '结果'])
+        self.file_table.setHorizontalHeaderLabels([tr('文件'), tr('结果')])
         self.file_table.verticalHeader().setVisible(False)
         header = self.file_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -173,7 +174,7 @@ class BatchPreflightPage(QWidget):
         self.file_table.customContextMenuRequested.connect(self._show_entry_context_menu)
         list_layout.addWidget(self.file_table, 1)
 
-        outer.addWidget(_section('待检查文件（仅 .docx）', list_widget), 1)
+        outer.addWidget(_section(tr('待检查文件（仅 .docx）'), list_widget), 1)
 
         # --- language, for the direction-sanity check only (the other
         # three checks don't need a language pair at all) ---
@@ -189,18 +190,18 @@ class BatchPreflightPage(QWidget):
         for combo in (self.src_edit, self.tgt_edit):
             compact_combo(combo)
 
-        opts_layout.addLayout(labeled_field('原文语言', self.src_edit))
-        opts_layout.addLayout(labeled_field('译文语言', self.tgt_edit))
+        opts_layout.addLayout(labeled_field(tr('原文语言'), self.src_edit))
+        opts_layout.addLayout(labeled_field(tr('译文语言'), self.tgt_edit))
         opts_layout.addStretch(1)
-        outer.addWidget(_section('语言（应用到本批所有文件，用于语言方向核对）', opts_widget))
+        outer.addWidget(_section(tr('语言（应用到本批所有文件，用于语言方向核对）'), opts_widget))
 
         action_row = QHBoxLayout()
-        self.start_btn = QPushButton('开始批量预检')
+        self.start_btn = QPushButton(tr('开始批量预检'))
         self.start_btn.setObjectName('primaryButton')
         self.start_btn.clicked.connect(self._start_batch)
-        self.export_btn = QPushButton('导出汇总 CSV…')
+        self.export_btn = QPushButton(tr('导出汇总 CSV…'))
         self.export_btn.setEnabled(False)
-        self.export_btn.setToolTip('导出每个文件的版式置信度/合并单元格/空表格/问题数汇总（含失败的），不受显示影响')
+        self.export_btn.setToolTip(tr('导出每个文件的版式置信度/合并单元格/空表格/问题数汇总（含失败的），不受显示影响'))
         self.export_btn.clicked.connect(self._start_export)
         action_row.addWidget(self.start_btn)
         action_row.addWidget(self.export_btn)
@@ -213,7 +214,7 @@ class BatchPreflightPage(QWidget):
 
     # ------------------------------------------------------------ file list
     def _add_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件', self._last_dir, _DOCX_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(self, tr('选择文件'), self._last_dir, _DOCX_FILTER)
         if not paths:
             return
         self._clear_completed_rows()
@@ -223,7 +224,7 @@ class BatchPreflightPage(QWidget):
         self._refresh_count()
 
     def _add_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, '选择文件夹', self._last_dir)
+        folder = QFileDialog.getExistingDirectory(self, tr('选择文件夹'), self._last_dir)
         if not folder:
             return
         self._clear_completed_rows()
@@ -277,9 +278,9 @@ class BatchPreflightPage(QWidget):
         selected = sorted({idx.row() for idx in table.selectedIndexes()})
         menu = QMenu(self)
         if len(selected) > 1:
-            action = menu.addAction('复制选中 %d 行' % len(selected))
+            action = menu.addAction(tr('复制选中 %d 行') % len(selected))
         else:
-            action = menu.addAction('复制该行')
+            action = menu.addAction(tr('复制该行'))
         if menu.exec(table.viewport().mapToGlobal(pos)) is action:
             self._copy_rows(selected)
 
@@ -308,7 +309,7 @@ class BatchPreflightPage(QWidget):
         self._refresh_count()
 
     def _refresh_count(self):
-        self.count_label.setText('共 %d 个文件' % len(self._paths))
+        self.count_label.setText(tr('共 %d 个文件') % len(self._paths))
 
     def _set_row_status(self, row, text, kind, tooltip=None):
         item = QTableWidgetItem(text)
@@ -340,7 +341,7 @@ class BatchPreflightPage(QWidget):
     def _validate(self):
         """Returns an error string, or None if the form is valid."""
         if not self._paths:
-            return '请先添加要预检的文件'
+            return tr('请先添加要预检的文件')
         return None
 
     def _set_controls_enabled(self, enabled):
@@ -368,7 +369,7 @@ class BatchPreflightPage(QWidget):
 
         for row in range(self.file_table.rowCount()):
             self._set_row_status(row, _STATUS_RUNNING, 'info')
-        self.summary_label.setText('正在预检 %d 个文件…' % len(self._paths))
+        self.summary_label.setText(tr('正在预检 %d 个文件…') % len(self._paths))
         self.summary_label.setStyleSheet('color: #4B5262;')
         self._set_controls_enabled(False)
 
@@ -391,14 +392,14 @@ class BatchPreflightPage(QWidget):
     def _on_all_done(self, checked, failed, needs_review):
         self._set_controls_enabled(True)
         if failed == 0 and needs_review == 0:
-            text = '全部完成：%d 个文件全部通过预检，没有发现问题' % checked
+            text = tr('全部完成：%d 个文件全部通过预检，没有发现问题') % checked
             kind = 'success'
         elif failed == 0:
-            text = ('全部完成：%d 个文件已预检，其中 %d 个需要看一眼（详见上面各行，鼠标悬停看具体问题）'
+            text = (tr('全部完成：%d 个文件已预检，其中 %d 个需要看一眼（详见上面各行，鼠标悬停看具体问题）')
                     % (checked, needs_review))
             kind = 'info'
         else:
-            text = '完成：%d 个已预检，%d 个失败（详情见上面各行的结果）' % (checked, failed)
+            text = tr('完成：%d 个已预检，%d 个失败（详情见上面各行的结果）') % (checked, failed)
             kind = 'error'
         self.summary_label.setText(text)
         self.summary_label.setStyleSheet('color: %s;' % LOG_COLORS[kind])
@@ -408,7 +409,7 @@ class BatchPreflightPage(QWidget):
         if self._ran_count <= 0:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, '导出汇总 CSV', os.path.join(settings.effective_start_dir(self._last_dir), '批量预检汇总'), _CSV_FILTER)
+            self, tr('导出汇总 CSV'), os.path.join(settings.effective_start_dir(self._last_dir), tr('批量预检汇总')), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
@@ -417,10 +418,10 @@ class BatchPreflightPage(QWidget):
         try:
             self._write_summary_csv(path)
         except OSError as e:
-            self.summary_label.setText('导出失败：%s' % e)
+            self.summary_label.setText(tr('导出失败：%s') % e)
             self.summary_label.setStyleSheet('color: %s;' % LOG_COLORS['error'])
             return
-        self.summary_label.setText('汇总 CSV 已导出到 %s' % path)
+        self.summary_label.setText(tr('汇总 CSV 已导出到 %s') % path)
         self.summary_label.setStyleSheet('color: %s;' % LOG_COLORS['success'])
 
     def _write_summary_csv(self, path):
@@ -439,7 +440,7 @@ class BatchPreflightPage(QWidget):
                 status_item = self.file_table.item(row, 1)
                 status = status_item.text() if status_item else ''
                 if r is None:
-                    writer.writerow([input_path, '', '', '', '', '', '', status or '未检查'])
+                    writer.writerow([input_path, '', '', '', '', '', '', status or tr('未检查')])
                 else:
                     writer.writerow([
                         input_path, r['best_layout'], r['best_score'], r['layout_ambiguous'],

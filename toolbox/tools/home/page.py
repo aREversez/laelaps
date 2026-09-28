@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from toolbox import registry
 from toolbox import settings
+from toolbox.i18n import tr
 from toolbox.widgets import tinted_icon_pixmap
 
 # Responsive tile grid: up to 3 columns on a wide window, dropping to 2/1 as
@@ -155,9 +156,9 @@ class HomePage(QWidget):
         root.setContentsMargins(28, 24, 28, 24)
         root.setSpacing(18)
 
-        greeting = QLabel('语言工具箱')
+        greeting = QLabel(tr('语言工具箱'))
         greeting.setObjectName('pageTitle')
-        tagline = QLabel('选择一个工具开始工作')
+        tagline = QLabel(tr('选择一个工具开始工作'))
         tagline.setObjectName('pageSubtitle')
         root.addWidget(greeting)
         root.addWidget(tagline)
@@ -173,7 +174,7 @@ class HomePage(QWidget):
         recent_box = QVBoxLayout(self._recent_host)
         recent_box.setContentsMargins(0, 0, 0, 0)
         recent_box.setSpacing(8)
-        recent_title = QLabel('最近使用')
+        recent_title = QLabel(tr('最近使用'))
         recent_title.setObjectName('homeSectionTitle')
         recent_box.addWidget(recent_title)
         self._recent_row = QHBoxLayout()

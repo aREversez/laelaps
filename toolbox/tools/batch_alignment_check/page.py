@@ -45,6 +45,7 @@ from PySide6.QtWidgets import (
 
 from language_tools import align_report
 from toolbox import settings
+from toolbox.i18n import tr
 from toolbox.widgets import LANG_TOOLTIP, LOG_COLORS, compact_combo, labeled_field, lang_combo_code
 from toolbox.widgets import make_lang_combo, make_layout_combo, page_shell, set_lang_combo_code
 from toolbox.widgets import section as _section
@@ -56,8 +57,8 @@ _BILINGUAL_EXTS = {'.docx', '.xlsx', '.xlsm', '.csv', '.tsv'}
 _BILINGUAL_FILTER = 'Bilingual source files (*.docx *.xlsx *.xlsm *.csv *.tsv)'
 _CSV_FILTER = 'CSV (*.csv)'
 
-_STATUS_PENDING = '等待中'
-_STATUS_RUNNING = '检查中…'
+_STATUS_PENDING = tr('等待中')
+_STATUS_RUNNING = tr('检查中…')
 
 _SETTINGS_PREFIX = 'batch_alignment_check/'
 
@@ -103,15 +104,15 @@ def _check_one(input_path, shared):
         units = align_report.run(
             input_path, shared['src_lang'], shared['tgt_lang'], reader_opts=reader_opts)
     except Exception as e:  # noqa: BLE001 -- surfaced per-row, doesn't stop the batch
-        return False, '检查失败：%s' % e, None
+        return False, tr('检查失败：%s') % e, None
 
     s = align_report.summarize(units)
     if s['total'] and not s['gap_count'] and not s['qa_flagged']:
-        return True, '共 %d 条，全部对齐正常' % s['total'], s
-    message = '需检查：共 %d 条，%d GAP，%d QA 标记' % (
+        return True, tr('共 %d 条，全部对齐正常') % s['total'], s
+    message = tr('需检查：共 %d 条，%d GAP，%d QA 标记') % (
         s['total'], s['gap_count'], s['qa_flagged'])
     if not s['total']:
-        message = '需检查：读出 0 条（文件是空的？）'
+        message = tr('需检查：读出 0 条（文件是空的？）')
     return True, message, s
 
 
@@ -130,8 +131,8 @@ class BatchAlignmentCheckPage(QWidget):
     def _build_ui(self):
         outer, _, _ = page_shell(
             self,
-            '批量对齐检查',
-            '一次性检查多个双语文档的句子对齐结果，不生成任何文件',
+            tr('批量对齐检查'),
+            tr('一次性检查多个双语文档的句子对齐结果，不生成任何文件'),
             spacing=18,
         )
 
@@ -143,25 +144,25 @@ class BatchAlignmentCheckPage(QWidget):
         list_layout.setSpacing(8)
 
         btn_row = QHBoxLayout()
-        self.add_files_btn = QPushButton('添加文件…')
+        self.add_files_btn = QPushButton(tr('添加文件…'))
         self.add_files_btn.clicked.connect(self._add_files)
-        self.add_folder_btn = QPushButton('添加文件夹…')
+        self.add_folder_btn = QPushButton(tr('添加文件夹…'))
         self.add_folder_btn.clicked.connect(self._add_folder)
-        self.remove_btn = QPushButton('移除选中')
+        self.remove_btn = QPushButton(tr('移除选中'))
         self.remove_btn.clicked.connect(self._remove_selected)
-        self.clear_btn = QPushButton('清空')
+        self.clear_btn = QPushButton(tr('清空'))
         self.clear_btn.clicked.connect(self._clear_all)
         for b in (self.add_files_btn, self.add_folder_btn, self.remove_btn, self.clear_btn):
             btn_row.addWidget(b)
         btn_row.addStretch(1)
         list_layout.addLayout(btn_row)
 
-        self.count_label = QLabel('共 0 个文件')
+        self.count_label = QLabel(tr('共 0 个文件'))
         self.count_label.setStyleSheet('color: #6B7280;')
         list_layout.addWidget(self.count_label)
 
         self.file_table = QTableWidget(0, 2)
-        self.file_table.setHorizontalHeaderLabels(['文件', '结果'])
+        self.file_table.setHorizontalHeaderLabels([tr('文件'), tr('结果')])
         self.file_table.verticalHeader().setVisible(False)
         header = self.file_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -175,7 +176,7 @@ class BatchAlignmentCheckPage(QWidget):
         self.file_table.customContextMenuRequested.connect(self._show_entry_context_menu)
         list_layout.addWidget(self.file_table, 1)
 
-        outer.addWidget(_section('待检查文件', list_widget), 1)
+        outer.addWidget(_section(tr('待检查文件'), list_widget), 1)
 
         # --- language + docx layout, all inline in one row (same section
         # as alignment_check/batch_convert) ---
@@ -189,23 +190,23 @@ class BatchAlignmentCheckPage(QWidget):
         self.src_edit.setToolTip(LANG_TOOLTIP)
         self.tgt_edit.setToolTip(LANG_TOOLTIP)
         self.layout_combo = make_layout_combo()
-        self.layout_combo.setToolTip('仅 .docx 需要关心')
+        self.layout_combo.setToolTip(tr('仅 .docx 需要关心'))
         for combo in (self.src_edit, self.tgt_edit, self.layout_combo):
             compact_combo(combo)
 
-        opts_layout.addLayout(labeled_field('原文语言', self.src_edit))
-        opts_layout.addLayout(labeled_field('译文语言', self.tgt_edit))
-        opts_layout.addLayout(labeled_field('文档排版方式', self.layout_combo))
+        opts_layout.addLayout(labeled_field(tr('原文语言'), self.src_edit))
+        opts_layout.addLayout(labeled_field(tr('译文语言'), self.tgt_edit))
+        opts_layout.addLayout(labeled_field(tr('文档排版方式'), self.layout_combo))
         opts_layout.addStretch(1)
-        outer.addWidget(_section('语言与排版方式（应用到本批所有文件）', opts_widget))
+        outer.addWidget(_section(tr('语言与排版方式（应用到本批所有文件）'), opts_widget))
 
         action_row = QHBoxLayout()
-        self.start_btn = QPushButton('开始批量检查')
+        self.start_btn = QPushButton(tr('开始批量检查'))
         self.start_btn.setObjectName('primaryButton')
         self.start_btn.clicked.connect(self._start_batch)
-        self.export_btn = QPushButton('导出汇总 CSV…')
+        self.export_btn = QPushButton(tr('导出汇总 CSV…'))
         self.export_btn.setEnabled(False)
-        self.export_btn.setToolTip('导出每个文件的条数/GAP/QA 标记数汇总（含失败的），不受显示影响')
+        self.export_btn.setToolTip(tr('导出每个文件的条数/GAP/QA 标记数汇总（含失败的），不受显示影响'))
         self.export_btn.clicked.connect(self._start_export)
         action_row.addWidget(self.start_btn)
         action_row.addWidget(self.export_btn)
@@ -218,7 +219,7 @@ class BatchAlignmentCheckPage(QWidget):
 
     # ------------------------------------------------------------ file list
     def _add_files(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, '选择文件', self._last_dir, _BILINGUAL_FILTER)
+        paths, _ = QFileDialog.getOpenFileNames(self, tr('选择文件'), self._last_dir, _BILINGUAL_FILTER)
         if not paths:
             return
         self._clear_completed_rows()
@@ -228,7 +229,7 @@ class BatchAlignmentCheckPage(QWidget):
         self._refresh_count()
 
     def _add_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, '选择文件夹', self._last_dir)
+        folder = QFileDialog.getExistingDirectory(self, tr('选择文件夹'), self._last_dir)
         if not folder:
             return
         self._clear_completed_rows()
@@ -283,9 +284,9 @@ class BatchAlignmentCheckPage(QWidget):
         selected = sorted({idx.row() for idx in table.selectedIndexes()})
         menu = QMenu(self)
         if len(selected) > 1:
-            action = menu.addAction('复制选中 %d 行' % len(selected))
+            action = menu.addAction(tr('复制选中 %d 行') % len(selected))
         else:
-            action = menu.addAction('复制该行')
+            action = menu.addAction(tr('复制该行'))
         if menu.exec(table.viewport().mapToGlobal(pos)) is action:
             self._copy_rows(selected)
 
@@ -314,7 +315,7 @@ class BatchAlignmentCheckPage(QWidget):
         self._refresh_count()
 
     def _refresh_count(self):
-        self.count_label.setText('共 %d 个文件' % len(self._paths))
+        self.count_label.setText(tr('共 %d 个文件') % len(self._paths))
 
     def _set_row_status(self, row, text, kind):
         item = QTableWidgetItem(text)
@@ -348,9 +349,9 @@ class BatchAlignmentCheckPage(QWidget):
     def _validate(self):
         """Returns an error string, or None if the form is valid."""
         if not self._paths:
-            return '请先添加要检查的文件'
+            return tr('请先添加要检查的文件')
         if not lang_combo_code(self.src_edit) or not lang_combo_code(self.tgt_edit):
-            return '请先填写原文语言和译文语言（双语文档没有自带语言信息）'
+            return tr('请先填写原文语言和译文语言（双语文档没有自带语言信息）')
         return None
 
     def _set_controls_enabled(self, enabled):
@@ -380,10 +381,10 @@ class BatchAlignmentCheckPage(QWidget):
 
         for row in range(self.file_table.rowCount()):
             self._set_row_status(row, _STATUS_RUNNING, 'info')
-        self.summary_label.setText('正在检查 %d 个文件…' % len(self._paths))
+        self.summary_label.setText(tr('正在检查 %d 个文件…') % len(self._paths))
         self.summary_label.setStyleSheet('color: #4B5262;')
         self._set_controls_enabled(False)
-        set_button_busy(self.start_btn, True, '检查中…')
+        set_button_busy(self.start_btn, True, tr('检查中…'))
 
         self._worker = BatchAlignWorker(list(self._paths), shared, parent=self)
         self._worker.file_done.connect(self._on_file_done)
@@ -405,14 +406,14 @@ class BatchAlignmentCheckPage(QWidget):
         self._set_controls_enabled(True)
         set_button_busy(self.start_btn, False)
         if failed == 0 and needs_review == 0:
-            text = '全部完成：%d 个文件全部对齐正常，没有发现问题' % checked
+            text = tr('全部完成：%d 个文件全部对齐正常，没有发现问题') % checked
             kind = 'success'
         elif failed == 0:
-            text = ('全部完成：%d 个文件已检查，其中 %d 个需要人工看一眼（详见上面各行的结果）'
+            text = (tr('全部完成：%d 个文件已检查，其中 %d 个需要人工看一眼（详见上面各行的结果）')
                     % (checked, needs_review))
             kind = 'info'
         else:
-            text = '完成：%d 个已检查，%d 个失败（详情见上面各行的结果）' % (checked, failed)
+            text = tr('完成：%d 个已检查，%d 个失败（详情见上面各行的结果）') % (checked, failed)
             kind = 'error'
         self.summary_label.setText(text)
         self.summary_label.setStyleSheet('color: %s;' % LOG_COLORS[kind])
@@ -422,7 +423,7 @@ class BatchAlignmentCheckPage(QWidget):
         if self._ran_count <= 0:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, '导出汇总 CSV', os.path.join(settings.effective_start_dir(self._last_dir), '批量对齐检查汇总'), _CSV_FILTER)
+            self, tr('导出汇总 CSV'), os.path.join(settings.effective_start_dir(self._last_dir), tr('批量对齐检查汇总')), _CSV_FILTER)
         if not path:
             return
         if not path.lower().endswith('.csv'):
@@ -431,10 +432,10 @@ class BatchAlignmentCheckPage(QWidget):
         try:
             self._write_summary_csv(path)
         except OSError as e:
-            self.summary_label.setText('导出失败：%s' % e)
+            self.summary_label.setText(tr('导出失败：%s') % e)
             self.summary_label.setStyleSheet('color: %s;' % LOG_COLORS['error'])
             return
-        self.summary_label.setText('汇总 CSV 已导出到 %s' % path)
+        self.summary_label.setText(tr('汇总 CSV 已导出到 %s') % path)
         self.summary_label.setStyleSheet('color: %s;' % LOG_COLORS['success'])
 
     def _write_summary_csv(self, path):
@@ -449,7 +450,7 @@ class BatchAlignmentCheckPage(QWidget):
                 status_item = self.file_table.item(row, 1)
                 status = status_item.text() if status_item else ''
                 if s is None:
-                    writer.writerow([input_path, '', '', '', status or '未检查'])
+                    writer.writerow([input_path, '', '', '', status or tr('未检查')])
                 else:
                     writer.writerow([input_path, s['total'], s['gap_count'],
                                      s['qa_flagged'], status])

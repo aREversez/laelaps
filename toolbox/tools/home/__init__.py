@@ -5,6 +5,7 @@ the stack's default page -- main_window.py orders by ToolSpec.order and
 never hardcodes anything about this (or any) specific tool."""
 import os
 
+from toolbox.i18n import tr
 from toolbox.registry import ToolSpec, register
 from toolbox.tools.home.page import HomePage
 
@@ -13,10 +14,10 @@ _ICON = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
 
 register(ToolSpec(
     id='home',
-    name='首页',
-    description='所有工具总览，点击卡片直达对应工具',
+    name=tr('首页'),
+    description=tr('所有工具总览，点击卡片直达对应工具'),
     icon=_ICON,
-    group='概览',
+    group=tr('概览'),
     order=0,
     page_factory=HomePage,
 ))
