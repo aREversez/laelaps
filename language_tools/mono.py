@@ -69,16 +69,25 @@ def read_source(path, src_lang, tgt_lang, *, granularity='sentence', repair_path
     ]
 
 
-def read_candidates(path, src_lang=None, tgt_lang=None, *, granularity='sentence', repair_path=None):
+def read_candidates(path, src_lang=None, tgt_lang=None, *, granularity='sentence', repair_path=None,
+                    tm_units=None):
     """Leverage-analysis input dispatch: a .tmx/.sdltm corpus is read as it
     always was (its units carry their own language pair; ``src_lang`` /
     ``tgt_lang`` are ignored); a monolingual source goes through
     ``read_source``. Anything else raises ``ValueError``.
+
+    For a monolingual source, passing the reference ``tm_units`` makes the
+    (src, tgt) pair be validated against the TM first (and ``tgt_lang`` be
+    inferred when the TM has a single target for ``src_lang``) -- see
+    ``resolve_language_pair``. Callers that will analyze against a TM should
+    always pass it.
     """
     ext = os.path.splitext(path)[1].lower()
     if ext in tm_io.SUPPORTED_EXTS:
         return tm_io.read_corpus(path)
     if ext in MONOLINGUAL_READERS:
+        if tm_units is not None:
+            src_lang, tgt_lang = resolve_language_pair(tm_units, src_lang, tgt_lang)
         return read_source(path, src_lang, tgt_lang, granularity=granularity, repair_path=repair_path)
     raise ValueError(_unsupported_message(path, ext))
 

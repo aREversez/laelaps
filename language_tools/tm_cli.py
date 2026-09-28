@@ -48,6 +48,7 @@ import os
 import sys
 
 from language_tools import align_report
+from language_tools import mono as mono_module
 from language_tools import semantic_review
 from language_tools.cli import _build_reader_opts, setup_console_encoding
 from language_tools.readers import docx_preflight
@@ -287,7 +288,23 @@ def _cmd_qa(args):
 
 def _cmd_leverage(args):
     tm_units = tm_io.read_corpus(args.tm)
-    candidate_units = tm_io.read_corpus(args.input)
+    ext = os.path.splitext(args.input)[1].lower()
+    if ext in mono_module.SUPPORTED_EXTS:
+        if not args.src:
+            raise ValueError('--src is required for a monolingual source input (%s carries no '
+                             'language info of its own); --tgt may be omitted if the TM has a '
+                             'single target language for it' % args.input)
+    else:
+        given = [flag for flag, value in (('--src', args.src), ('--tgt', args.tgt),
+                                           ('--granularity', args.granularity),
+                                           ('--repair', args.repair)) if value is not None]
+        if given:
+            raise ValueError('%s only apply to a monolingual source input (%s); %s is a corpus '
+                             'file that already carries its own language pair'
+                             % (', '.join(given), ', '.join(mono_module.SUPPORTED_EXTS), args.input))
+    candidate_units = mono_module.read_candidates(
+        args.input, args.src, args.tgt, granularity=args.granularity or 'sentence',
+        repair_path=args.repair, tm_units=tm_units)
     leverage_module.analyze(tm_units, candidate_units, fuzzy_floor=args.fuzzy_floor)
     s = leverage_module.summarize(candidate_units)
     print('Total=%d Words=%d' % (s['total'], s['total_words']))
@@ -330,7 +347,7 @@ def _cmd_term_check(args):
     return 0
 
 
-def _read_batch_units(paths, src_lang, tgt_lang, args):
+def _read_batch_units(paths, src_lang, tgt_lang, args, mono=False, tm_units=None):
     """Reads a batch of mixed bilingual-source/corpus files into a
     ``{label: [TranslationUnit, ...]}`` dict, dispatching by extension the
     same way ``align`` does -- shared by ``quote`` and ``term-extract`` so
@@ -340,7 +357,15 @@ def _read_batch_units(paths, src_lang, tgt_lang, args):
     file_units = {}
     for label, path in zip(tm_io.make_labels(paths), paths):
         ext = os.path.splitext(path)[1].lower()
-        if ext in _BILINGUAL_EXTS:
+        if mono:
+            # --mono: every input is a corpus or a monolingual source; a
+            # .docx is read as one language only, never as a bilingual file
+            # (an unsupported monolingual format errors, it is not re-read
+            # as bilingual).
+            file_units[label] = mono_module.read_candidates(
+                path, src_lang, tgt_lang, granularity=getattr(args, 'granularity', None) or 'sentence',
+                repair_path=args.repair, tm_units=tm_units)
+        elif ext in _BILINGUAL_EXTS:
             if not src_lang or not tgt_lang:
                 raise ValueError(
                     '--src/--tgt are required to read bilingual source file %r; a .tmx/'
@@ -362,7 +387,7 @@ def _cmd_quote(args):
     tm_units = tm_io.read_corpus(args.tm)
     weights = quote_module.load_weights(args.weights) if args.weights else None
 
-    file_units = _read_batch_units(args.inputs, args.src, args.tgt, args)
+    file_units = _read_batch_units(args.inputs, args.src, args.tgt, args, mono=args.mono, tm_units=tm_units)
 
     result = quote_module.quote_batch(
         file_units, tm_units, fuzzy_floor=args.fuzzy_floor, weights=weights)
@@ -577,9 +602,24 @@ def build_parser():
     leverage_p = sub.add_parser(
         'leverage', help='analyze how much of a corpus can be leveraged from an existing TM '
                           '(Exact/Fuzzy/Repetition/No Match word-count breakdown)')
-    leverage_p.add_argument('input', help='candidate .tmx or .sdltm file to analyze')
+    leverage_p.add_argument('input', help='file to analyze: a monolingual source (.docx -- the '
+                                           'normal case: a new document you have not translated '
+                                           'yet) or an existing .tmx/.sdltm corpus')
     leverage_p.add_argument('--tm', required=True,
                              help='reference .tmx or .sdltm file to match candidates against')
+    leverage_p.add_argument('--src', help='source language code exactly as the TM stores it, e.g. '
+                                           'en-US -- required for a monolingual source input; not '
+                                           'valid for a corpus input')
+    leverage_p.add_argument('--tgt', help='target language code, e.g. zh-CN -- monolingual input '
+                                           'only; may be omitted when the TM has exactly one '
+                                           'target language for --src')
+    leverage_p.add_argument('--granularity', choices=list(mono_module.GRANULARITIES),
+                             help='monolingual input only: segment the document into sentences '
+                                  '(default; matches a TM built by `align`) or keep whole '
+                                  'paragraphs (for a TM built paragraph by paragraph)')
+    leverage_p.add_argument('--repair', metavar='PATH',
+                             help='monolingual input only: repairs.json rule file applied before '
+                                  'sentence splitting, same format as `align --repair`')
     leverage_p.add_argument('--fuzzy-floor', type=float, default=0.50,
                              help='lowest match ratio (0-1) still counted as a match; below it '
                                   'a segment is No Match (default: 0.50)')
@@ -623,7 +663,17 @@ def build_parser():
                       'DEFAULT_WEIGHTS and --weights)')
     quote_p.add_argument('inputs', nargs='+',
                           help='one or more files to quote: bilingual sources (docx/xlsx/csv/tsv) '
-                               'or already-converted .tmx/.sdltm corpora -- mixed batches allowed')
+                               'or already-converted .tmx/.sdltm corpora -- mixed batches allowed; '
+                               'with --mono, monolingual .docx files (and corpora) instead')
+    quote_p.add_argument('--mono', action='store_true',
+                          help='read .docx inputs as monolingual documents (one language, not '
+                               'source/target pairs) -- the normal case for quoting a document '
+                               'that has not been translated yet. Explicit because a .docx is '
+                               'otherwise read as a bilingual file; with --mono every input must '
+                               'be a monolingual .docx or a .tmx/.sdltm corpus, and --src is '
+                               'required (--tgt can be inferred from the TM)')
+    quote_p.add_argument('--granularity', choices=list(mono_module.GRANULARITIES),
+                          help='--mono only: sentence (default) or whole paragraphs')
     quote_p.add_argument('--tm', required=True,
                           help='reference .tmx or .sdltm file to leverage every input against')
     quote_p.add_argument('--src', help='source language code, e.g. en-US -- required if any '
@@ -645,7 +695,7 @@ def build_parser():
     quote_header.add_argument('--no-header', dest='header', action='store_false',
                                help='treat the first row as data, not a header')
     quote_p.add_argument('--repair', metavar='PATH',
-                          help='path to a repairs.json rule file (bilingual inputs only)')
+                          help='path to a repairs.json rule file (bilingual and --mono inputs)')
     quote_p.add_argument('--fuzzy-floor', type=float, default=0.50,
                           help='lowest match ratio (0-1) still counted as a match; below it a '
                                'segment is No Match (default: 0.50)')

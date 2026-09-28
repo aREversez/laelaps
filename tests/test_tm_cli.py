@@ -1010,3 +1010,108 @@ def test_write_report_surfaces_missing_reportlab_cleanly(tmp_path, monkeypatch, 
     rc = tm_cli._write_report(str(tmp_path / 'r.pdf'), None)
     assert rc == 1
     assert 'reportlab' in capsys.readouterr().err
+
+
+# ---- leverage / quote on a monolingual source file ---------------------------
+
+def _mono_docx(tmp_path, *paragraphs, name='new.docx'):
+    from tests import docx_builder as d
+    return d.write(tmp_path / name, ''.join(d.para(p) for p in paragraphs))
+
+
+def _leverage_tm(tmp_path):
+    tm = tmp_path / 'tm.tmx'
+    _write_tmx(tm, [_u('Click OK to continue.', '点击确定以继续。'),
+                    _u('Save the file before closing the application.', '关闭应用程序前请保存文件。')])
+    return tm
+
+
+def test_leverage_reads_a_monolingual_docx_and_bands_it_against_the_tm(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    doc = _mono_docx(tmp_path,
+                     'Click OK to continue. Save the file before closing the program.',
+                     'Something entirely different.')
+    result = _run(['leverage', doc, '--tm', str(tm), '--src', 'en-US'])
+    assert result.returncode == 0, result.stderr
+    assert 'Total=3' in result.stdout
+    assert '  exact: 1 segments, 4 words' in result.stdout
+    assert '  no_match: 1 segments, 3 words' in result.stdout
+    # the near-match lands in a fuzzy band, not silently in No Match
+    assert '  75-84: 1' in result.stdout or '  85-94: 1' in result.stdout
+
+
+def test_leverage_monolingual_export_and_report_work(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    doc = _mono_docx(tmp_path, 'Click OK to continue.', 'Something entirely different.')
+    csv_out, html_out = tmp_path / 'out.csv', tmp_path / 'out.html'
+    result = _run(['leverage', doc, '--tm', str(tm), '--src', 'en-US', '--tgt', 'zh-CN',
+                   '--export', str(csv_out), '--report', str(html_out)])
+    assert result.returncode == 0, result.stderr
+    csv_text = csv_out.read_text(encoding='utf-8-sig')
+    assert 'Click OK to continue.' in csv_text and 'leverage_band' in csv_text
+    assert html_out.exists() and html_out.stat().st_size > 0
+
+
+def test_leverage_paragraph_granularity_keeps_paragraphs_whole(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    doc = _mono_docx(tmp_path, 'Click OK to continue. Save the file before closing the application.')
+    sentence = _run(['leverage', doc, '--tm', str(tm), '--src', 'en-US'])
+    paragraph = _run(['leverage', doc, '--tm', str(tm), '--src', 'en-US', '--granularity', 'paragraph'])
+    assert 'Total=2' in sentence.stdout and '  exact: 2 segments' in sentence.stdout
+    assert 'Total=1' in paragraph.stdout and '  exact:' not in paragraph.stdout
+
+
+def test_leverage_monolingual_requires_src(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    result = _run(['leverage', _mono_docx(tmp_path, 'Hello.'), '--tm', str(tm)])
+    assert result.returncode == 1
+    assert '--src is required' in result.stderr
+
+
+def test_leverage_monolingual_language_code_mismatch_is_an_error_not_all_no_match(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    result = _run(['leverage', _mono_docx(tmp_path, 'Click OK to continue.'), '--tm', str(tm),
+                   '--src', 'en', '--tgt', 'zh'])
+    assert result.returncode == 1
+    assert 'en-US->zh-CN' in result.stderr and 'Total=' not in result.stdout
+
+
+def test_leverage_corpus_input_rejects_monolingual_only_flags(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    cand = tmp_path / 'cand.tmx'
+    _write_tmx(cand, [_u('Click OK to continue.', 'x')])
+    result = _run(['leverage', str(cand), '--tm', str(tm), '--src', 'en-US'])
+    assert result.returncode == 1
+    assert '--src only apply to a monolingual source input' in result.stderr
+
+
+def test_leverage_xlsx_input_says_monolingual_is_not_supported_yet(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    result = _run(['leverage', str(tmp_path / 'a.xlsx'), '--tm', str(tm)])
+    assert result.returncode == 1
+    assert 'only readable as a bilingual source' in result.stderr
+
+
+def test_quote_mono_reads_docx_as_one_language_and_prices_it(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    doc = _mono_docx(tmp_path, 'Click OK to continue.', 'Something entirely different.')
+    result = _run(['quote', doc, '--tm', str(tm), '--mono', '--src', 'en-US'])
+    assert result.returncode == 0, result.stderr
+    # exact (4 words) is free, the new sentence (3 words) is full price
+    assert 'Segments=2 Words=7 WeightedWords=3.0' in result.stdout
+
+
+def test_quote_mono_rejects_a_bilingual_only_format(tmp_path):
+    tm = _leverage_tm(tmp_path)
+    result = _run(['quote', str(tmp_path / 'a.xlsx'), '--tm', str(tm), '--mono', '--src', 'en-US'])
+    assert result.returncode == 1
+    assert 'only readable as a bilingual source' in result.stderr
+
+
+def test_quote_without_mono_still_reads_docx_as_bilingual(tmp_path):
+    from tests.conftest import fixture_path
+    tm = _leverage_tm(tmp_path)
+    result = _run(['quote', fixture_path('basic.docx'), '--tm', str(tm),
+                   '--src', 'en-US', '--tgt', 'zh-CN'])
+    assert result.returncode == 0, result.stderr
+    assert 'Segments=' in result.stdout
